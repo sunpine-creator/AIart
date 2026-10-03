@@ -26,27 +26,46 @@ try {
 console.log(`interactions API: ${typeof ai.interactions?.create === 'function' ? '있음' : '없음 (SDK 업데이트 필요)'}`);
 
 if (process.argv[2] === 'video') {
-  try {
-    console.log(`Omni(${env.OMNI_MODEL})로 3초 영상 1개 만드는 중… (1~3분)`);
-    const it0 = await ai.interactions.create({
-      model: env.OMNI_MODEL,
-      input: 'A child smiling at a smart speaker in a cozy living room. Bright, gentle picture-book animation, safe for children.',
-      background: true,
-      generation_config: { video_config: { task: 'text_to_video' } },
-      response_format: { aspect_ratio: '16:9', duration: '3s', resolution: '360p' },
-    });
-    let it = it0;
-    while (!['completed', 'failed', 'cancelled'].includes(it.status)) {
-      await new Promise((r) => setTimeout(r, 10000));
-      it = await ai.interactions.get(it0.id);
-      console.log(`  상태: ${it.status}`);
+  // 모델 ID × 해상도 조합을 차례로 시험한다. 성공하면 멈춘다.
+  const candidates = [...new Set([process.argv[3], env.OMNI_MODEL, 'gemini-omni-1.1-flash', 'gemini-omni-flash', 'gemini-omni-flash-preview'].filter(Boolean))];
+  const summarize = (it) => JSON.stringify({ status: it.status, error: it.error, steps: (it.steps ?? []).map((s) => ({ type: s.type, content: (s.content ?? []).map((c) => ({ type: c.type, text: c.text?.slice?.(0, 300), mime: c.mime_type, data: !!c.data, uri: c.uri })) })) }, null, 1).slice(0, 2500);
+  let done = false;
+  for (const model of candidates) {
+    for (const resolution of ['360p', '720p']) {
+      if (done) break;
+      try {
+        console.log(`\nOmni(${model}, ${resolution})로 3초 영상 1개 만드는 중… (1~5분)`);
+        const it0 = await ai.interactions.create({
+          model,
+          input: 'A child smiling at a smart speaker in a cozy living room. Bright, gentle picture-book animation, safe for children.',
+          background: true,
+          generation_config: { video_config: { task: 'text_to_video' } },
+          response_format: { type: 'video', delivery: 'inline', aspect_ratio: '16:9', duration: '3s', resolution },
+        });
+        let it = it0;
+        while (!['completed', 'failed', 'cancelled'].includes(it.status)) {
+          await new Promise((r) => setTimeout(r, 10000));
+          it = await ai.interactions.get(it0.id);
+          console.log(`  상태: ${it.status}`);
+        }
+        if (it.status !== 'completed') {
+          console.log(`❌ 실패 (${model}, ${resolution}) 자세한 응답:\n${summarize(it)}`);
+          continue;
+        }
+        const parts = [...(it.steps ?? []).filter((s) => s.type === 'model_output').flatMap((s) => s.content ?? []), ...(it.outputs ?? [])];
+        const m = parts.find((c) => c?.data || c?.uri);
+        console.log('  응답 구조:', JSON.stringify(parts.map((p) => ({ type: p.type, mime: p.mime_type ?? p.mimeType, data: !!p.data, uri: p.uri }))));
+        if (m?.data) { writeFileSync('omni-test.mp4', Buffer.from(m.data, 'base64')); ok(`영상 저장: functions/omni-test.mp4 (모델 ID: ${model}, ${resolution})`); }
+        else if (m?.uri) ok(`영상 주소: ${m.uri} (모델 ID: ${model}, ${resolution})`);
+        else console.log(`❌ 응답에서 영상을 찾지 못함:\n${summarize(it)}`);
+        console.log(`👉 OMNI_MODEL=${model} · 되는 해상도: ${resolution}`);
+        done = true;
+      } catch (e) {
+        const msg = String(e?.message ?? e);
+        bad(`Omni(${model}, ${resolution}) 요청 오류`, e);
+        if (/not.?found|404|does not exist|unknown model|invalid model/i.test(msg)) break; // 이 모델은 없음 → 다음 모델
+      }
     }
-    if (it.status !== 'completed') throw new Error(JSON.stringify(it.error ?? it.status));
-    const parts = [...(it.steps ?? []).filter((s) => s.type === 'model_output').flatMap((s) => s.content ?? []), ...(it.outputs ?? [])];
-    const m = parts.find((c) => c?.data || c?.uri);
-    console.log('  응답 구조:', JSON.stringify(parts.map((p) => ({ type: p.type, mime: p.mime_type ?? p.mimeType, data: !!p.data, uri: p.uri }))));
-    if (m?.data) { writeFileSync('omni-test.mp4', Buffer.from(m.data, 'base64')); ok('영상 저장: functions/omni-test.mp4'); }
-    else if (m?.uri) ok(`영상 주소: ${m.uri}`);
-    else bad('응답에서 영상을 찾지 못함', JSON.stringify(it).slice(0, 400));
-  } catch (e) { bad(`Omni(${env.OMNI_MODEL}) 실패`, e); }
+    if (done) break;
+  }
 }

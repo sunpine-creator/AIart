@@ -7,8 +7,9 @@ import { api, auth, db, errText, storage } from './firebase';
 // ───────────── 설정값 (서버 functions/src/config.ts 와 같게 유지) ─────────────
 export const PRICE = { '360p': 0.03, '720p': 0.1 } as const;
 export const CREDIT_PER_SEC = { '360p': 1, '720p': 3 } as const;
-export const DRAFT = { res: '360p' as const, sec: 3 };
-export const FINAL = { res: '720p' as const, sec: 5 };
+// Vertex Omni 미리보기는 720p 만 만든다. 초안을 고르면 그대로 장면으로 확정한다.
+export const DRAFT = { res: '720p' as const, sec: 3 };
+export const FINAL = DRAFT;
 export const MAX_EDITS = 2;
 export const CLASS_SIZE = 30;
 
@@ -81,7 +82,7 @@ export type State = {
 const NICKS = ['파랑고래', '초록거북', '노랑병아리', '빨강여우', '하늘다람쥐', '보라문어', '주황호랑이', '분홍돌고래', '하양토끼', '검정고양이', '민트펭귄', '갈색곰', '은빛늑대', '황금사자', '연두개구리', '남색부엉이', '살구판다', '회색코끼리', '하늘고래', '바다수달'];
 export const nickOf = (no: number) => NICKS[(no * 7) % NICKS.length];
 
-const newScene = (i: number, who = '', where = ''): Scene => ({ id: `s${Date.now().toString(36)}${i}`, line: '', builder: { who, what: '', where, how: '' }, edits: 0, dur: 5, caption: '', voice: '없음' });
+const newScene = (i: number, who = '', where = ''): Scene => ({ id: `s${Date.now().toString(36)}${i}`, line: '', builder: { who, what: '', where, how: '' }, edits: 0, dur: 3, caption: '', voice: '없음' });
 
 function emptyProject(band: Band) {
   return {
@@ -337,7 +338,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,
       scenario: p.scenario ?? base.scenario,
-      scenes: ((p.scenes ?? []) as Scene[]).map((sc) => ({ ...sc, edits: editsOf(sc.id) })),
+      // 영상 장면은 만든 영상 길이(3초)보다 길게 쓸 수 없다
+      scenes: ((p.scenes ?? []) as Scene[]).map((sc) => {
+        const g = gens.find((x) => x.id === sc.selectedGenId);
+        return { ...sc, edits: editsOf(sc.id), dur: g && !g.img ? Math.min(sc.dur, g.sec) : sc.dur };
+      }),
       gens,
       logs,
       intro: p.intro ?? base.intro,

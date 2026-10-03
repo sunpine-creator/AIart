@@ -17,8 +17,9 @@ export const CONFIG = {
 };
 
 // 생성 종류별 해상도·길이·크레딧 (작업지시서 §8)
-export const DRAFT = { res: '360p' as const, sec: 3 };
-export const FINAL = { res: '720p' as const, sec: 5 };
+// Vertex 의 Omni 미리보기는 720p 만 만든다. 초안이 곧 완성 화질이라, 학생이 고르면 그대로 장면으로 확정한다(추가 생성 없음).
+export const DRAFT = { res: '720p' as const, sec: 3 };
+export const FINAL = DRAFT;
 export const CREDIT_PER_SEC = { '360p': 1, '720p': 3 } as const;
 export const MAX_EDITS = 2;
 export const OPEN_STAGE_FOR_AI = 3; // 3단계 AI로 만들기
@@ -29,8 +30,9 @@ export type Res = '360p' | '720p';
 export function specFor(kind: Kind, img: boolean) {
   const res: Res = kind === 'final' ? FINAL.res : DRAFT.res;
   const sec = kind === 'final' ? FINAL.sec : DRAFT.sec;
-  const credits = img ? (kind === 'final' ? 2 : 1) : CREDIT_PER_SEC[res] * sec;
   const p = CONFIG.price();
+  if (kind === 'final') return { res, sec, credits: 0, costUsd: 0 }; // 확정은 새로 만들지 않는다
+  const credits = img ? 1 : CREDIT_PER_SEC[res] * sec;
   const costUsd = img ? p.image : p[res] * sec;
   return { res, sec, credits, costUsd };
 }

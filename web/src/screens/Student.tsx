@@ -482,7 +482,7 @@ function S3() {
       <ScreenHead
         n={3}
         title={`장면마다 AI로 ${word === "영상" ? "영상을" : "이미지를"} 만들어요`}
-        lead={`활동지를 보며 장면을 AI로 만들어 봐요. 먼저 ${word === '영상' ? '3초짜리 초안' : '초안'}으로 확인하고, 마음에 들면 완성본을 만들어요. 이야기로 엮는 건 다음 단계에서 해요.`}
+        lead={`활동지를 보며 장면을 AI로 만들어 봐요. ${word === '영상' ? '3초짜리 영상' : '이미지'}을 만들어 보고, 마음에 들면 그 결과로 장면을 정해요. 고치고 싶으면 두 번까지 고칠 수 있어요. 이야기로 엮는 건 다음 단계에서 해요.`}
       />
       <SheetSummary />
       <div className="make">
@@ -531,7 +531,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const live = moderate(ko);
   const img = s.band === 'middle' && !s.cls.videoInMiddle;
   const draftCost = img ? 1 : CREDIT_PER_SEC[DRAFT.res] * DRAFT.sec;
-  const finalCost = img ? 2 : CREDIT_PER_SEC[FINAL.res] * FINAL.sec;
+  const finalCost = 0; // 고른 결과를 그대로 쓰므로 추가 비용 없음
   const lastGood = [...gens].reverse().find((g) => g.status === 'succeeded' && g.kind !== 'final');
   const final = gens.find((g) => g.kind === 'final' && g.status === 'succeeded');
   return (
@@ -590,7 +590,7 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
   const [fit, setFit] = useState<Fit | undefined>(g.judgement?.fit);
   const [reason, setReason] = useState(g.judgement?.reason ?? '');
   const word = g.img ? '이미지' : '영상';
-  const label = g.kind === 'final' ? '완성본' : g.kind === 'edit' ? '수정본' : '초안';
+  const label = g.kind === 'final' ? '확정한 장면' : g.kind === 'edit' ? '수정본' : '초안';
   const time = new Date(g.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   if (g.status === 'blocked') {
     const [why, tip] = (g.rejectReason ?? '|').split('|');
@@ -654,7 +654,7 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
             </p>
           )}
           {g.kind === 'final' ? (
-            <p className="good-text">이 장면이 완성됐어요. 편집 단계에서 사용할 수 있어요.</p>
+            <p className="good-text">이 장면으로 정했어요. 편집 단계에서 사용할 수 있어요.</p>
           ) : (
             <>
               <fieldset className="judge" disabled={judged && !isLatestGood}>
@@ -716,9 +716,9 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
                   {g.judgement!.fit !== 'no' && (
                     <div className="actions">
                       <button className="btn primary" disabled={s.cls.paused} onClick={() => d({ t: 'request', sceneId: scene.id, kind: 'final', parentId: g.id })}>
-                        이 장면으로 정하고 완성본 만들기
+                        이 결과로 장면 정하기
                       </button>
-                      <span className="cost mono">{g.img ? '이미지 고화질' : `${FINAL.res} · ${FINAL.sec}초`} · {finalCost}크레딧</span>
+                      <span className="cost mono">추가 크레딧 없음 · {finalCost === 0 ? '만든 것을 그대로 써요' : ''}</span>
                     </div>
                   )}
                 </div>
@@ -817,7 +817,7 @@ function S4() {
     else d({ t: 'scene', id: cur.key, patch });
   };
   const maxDur =
-    cur.kind === 'scene' ? (s.band === 'elementary' ? 5 : 10) : cur.kind === 'upload' ? Math.max(1, Math.min(Math.floor(cur.upload!.srcDur) || 1, limit)) : 5;
+    cur.kind === 'scene' ? (cur.gen && !cur.gen.img ? cur.gen.sec : s.band === 'elementary' ? 5 : 10) : cur.kind === 'upload' ? Math.max(1, Math.min(Math.floor(cur.upload!.srcDur) || 1, limit)) : 5;
 
   const moveTo = (key: string, target: number) => {
     const arr = middleKeys.filter((k) => k !== key);
@@ -973,7 +973,7 @@ function S4() {
           }}
         />
         {over && <p className="danger-text">영상이 {limit}초를 넘었어요. 길이를 줄이거나 클립을 빼야 저장할 수 있어요.</p>}
-        {missing > 0 && <p className="muted">완성본이 없는 장면이 {missing}개 있어요. 3단계에서 완성본을 만들어 주세요.</p>}
+        {missing > 0 && <p className="muted">아직 정하지 않은 장면이 {missing}개 있어요. 3단계에서 마음에 드는 결과로 장면을 정해 주세요.</p>}
         <div className="actions">
           <button className="btn primary" disabled={over || s.rendering} onClick={() => d({ t: 'render' })}>
             {s.rendering ? '영상을 합치는 중… (1분쯤 걸려요)' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}

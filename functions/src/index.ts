@@ -148,7 +148,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   const promptKo = kind === 'edit' ? `${parent!.promptKo} → 수정: ${editText}` : kind === 'final' ? parent!.promptKo : buildPromptKo(builder);
   const checkText = kind === 'edit' ? editText : promptKo;
   if (!checkText) throw new HttpsError('invalid-argument', '빈칸을 채워 주세요.');
-  const kindLabel = (img ? '이미지 ' : '영상 ') + (kind === 'draft' ? '초안' : kind === 'edit' ? '대화형 수정' : '완성본');
+  const kindLabel = (img ? '이미지 ' : '영상 ') + (kind === 'draft' ? '초안' : kind === 'edit' ? '대화형 수정' : '장면 확정');
   const genRef = db.collection('generations').doc();
   const base = { classId, no, sceneId, kind, img, promptKo, editText: kind === 'edit' ? editText : null, res: spec.res, sec: spec.sec, hue: hueOf(genRef.id), parentId: parentId ?? null, createdAt: FieldValue.serverTimestamp() };
 
@@ -161,8 +161,19 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     return { genId: genRef.id, blocked: true, category, reason, suggestion };
   };
 
-  // 1단계: 규칙 검사 (완성본은 이미 검사한 원본 프롬프트라 다시 하지 않는다)
-  if (kind !== 'final') {
+  // 장면 확정: 학생이 고른 결과를 그대로 장면으로 쓴다. 새로 만들지 않으므로 비용·크레딧이 없다.
+  if (kind === 'final') {
+    await genRef.set({
+      ...base, status: 'succeeded', promptEn: parent!.promptEn ?? '', editEn: null, credits: 0, costUsd: 0,
+      storagePath: parent!.storagePath ?? null, mimeType: parent!.mimeType ?? null, interactionId: parent!.interactionId ?? null,
+      mock: !!parent!.mock, res: parent!.res, sec: parent!.sec, hue: parent!.hue ?? base.hue, doneAt: FieldValue.serverTimestamp(),
+    });
+    await log({ classId, no, kind: kindLabel, textKo: promptKo, verdict: 'pass', action: `확정 (판단: ${parent!.judgement?.fit ?? '-'})` });
+    return { genId: genRef.id, blocked: false };
+  }
+
+  // 1단계: 규칙 검사
+  {
     const r = moderateRules(checkText);
     if (!r.pass) return block(r.category!, r.reason!, r.suggestion!, 'rule');
   }
@@ -170,7 +181,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   let promptEn = parent?.promptEn ?? '';
   let editEn: string | undefined;
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
-  if (kind !== 'final') {
+  {
     if (useAi) {
       const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
       if (!c.safe) return block(c.category ?? '기타', c.reasonKo ?? '안전하지 않은 표현이 있어요.', c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', 'ai');
@@ -180,7 +191,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     }
   }
 
-  const needApproval = cls.approval && kind !== 'final';
+  const needApproval = !!cls.approval;
   const status = needApproval ? 'awaiting_approval' : 'queued';
   const studentRef = db.doc(`classes/${classId}/students/${no}`);
   await db.runTransaction(async (tx) => {
@@ -379,7 +390,8 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
         const voice = await voiceFor(sc, i);
         if (g?.storagePath) {
           const src = await fetchFile(g.storagePath, `gen_${i}`);
-          clips.push({ kind: g.img ? 'image' : 'video', dur: sc.dur, src, caption: sc.caption, voice, aiBadge: true });
+          const dur = g.img ? sc.dur : Math.min(sc.dur, g.sec ?? sc.dur);
+          clips.push({ kind: g.img ? 'image' : 'video', dur, src, caption: sc.caption, voice, aiBadge: true });
         } else {
           clips.push({ kind: 'placeholder', dur: sc.dur, text: sc.line || `장면 ${i}`, caption: sc.caption, voice });
         }

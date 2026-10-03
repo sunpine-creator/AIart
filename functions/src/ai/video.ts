@@ -85,7 +85,7 @@ export const omniProvider: VideoProvider = {
       input,
       background: true,
       generation_config: { video_config: { task } },
-      response_format: { aspect_ratio: '16:9', duration: `${job.sec}s`, resolution: job.res },
+      response_format: { type: 'video', delivery: 'inline', aspect_ratio: '16:9', duration: `${job.sec}s`, resolution: job.res },
     });
     const it = created.status === 'completed' ? created : await waitDone(created.id);
     if (it.status !== 'completed') {
