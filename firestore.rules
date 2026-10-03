@@ -1,0 +1,73 @@
+rules_version = '2';
+// 원칙: 학생은 자기 것만, 교사는 자기 반만. 프롬프트 기록·크레딧·생성 상태는 서버(Cloud Functions)만 쓴다.
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function isStudent() { return signedIn() && request.auth.token.role == 'student'; }
+    function inClass(classId) { return isStudent() && request.auth.token.classId == classId; }
+    function isStudentNo(classId, no) { return inClass(classId) && string(request.auth.token.no) == string(no); }
+    function isTeacher() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && exists(/databases/$(db)/documents/teachers/$(request.auth.uid))
+        && get(/databases/$(db)/documents/teachers/$(request.auth.uid)).data.approved == true;
+    }
+    function ownsClass(classId) {
+      return isTeacher() && get(/databases/$(db)/documents/classes/$(classId)).data.teacherUid == request.auth.uid;
+    }
+    function onlyChanges(fields) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields); }
+
+    match /teachers/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false; // 운영자가 콘솔에서 approved: true 로 만든다
+    }
+
+    match /classes/{classId} {
+      allow read: if ownsClass(classId) || inClass(classId);
+      allow update: if ownsClass(classId) && onlyChanges(['open', 'paused', 'approval', 'videoInMiddle', 'budgetUsd']);
+      allow create, delete: if false; // createClass 함수만
+
+      match /students/{no} {
+        allow read: if ownsClass(classId) || inClass(classId);
+        allow update: if (isStudentNo(classId, no) && onlyChanges(['stage', 'lastSeen']))
+                      || (ownsClass(classId) && onlyChanges(['credits']));
+        allow create, delete: if false;
+      }
+      match /private/{doc} {
+        allow read: if ownsClass(classId); // PIN 목록은 교사만
+        allow write: if false;
+      }
+    }
+
+    match /projects/{projectId} {
+      // projectId = {classId}_{no}
+      allow read: if (isStudent() && projectId == request.auth.token.classId + '_' + string(request.auth.token.no))
+                  || ownsClass(resource.data.classId)
+                  || (inClass(resource.data.classId) && resource.data.submitted == true);
+      allow create: if isStudent() && projectId == request.auth.token.classId + '_' + string(request.auth.token.no)
+                    && request.resource.data.classId == request.auth.token.classId
+                    && request.resource.data.no == request.auth.token.no;
+      allow update: if isStudent() && projectId == request.auth.token.classId + '_' + string(request.auth.token.no)
+                    && request.resource.data.classId == resource.data.classId
+                    && request.resource.data.no == resource.data.no;
+      allow delete: if false;
+    }
+
+    match /generations/{genId} {
+      allow read: if isStudentNo(resource.data.classId, resource.data.no) || ownsClass(resource.data.classId);
+      allow update: if isStudentNo(resource.data.classId, resource.data.no) && onlyChanges(['judgement']);
+      allow create, delete: if false;
+    }
+
+    match /promptLogs/{id} {
+      allow read: if ownsClass(resource.data.classId);
+      allow write: if false; // 지울 수 없고 서버만 추가한다
+    }
+
+    match /usage/{id} {
+      allow read: if ownsClass(resource.data.classId);
+      allow write: if false;
+    }
+
+    match /{other=**} { allow read, write: if false; }
+  }
+}

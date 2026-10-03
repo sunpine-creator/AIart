@@ -1,0 +1,28 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isStudentNo(classId, no) {
+      return request.auth != null && request.auth.token.role == 'student'
+        && request.auth.token.classId == classId && string(request.auth.token.no) == no;
+    }
+    function ownsClass(classId) {
+      return request.auth != null
+        && firestore.get(/databases/(default)/documents/classes/$(classId)).data.teacherUid == request.auth.uid;
+    }
+    // AI가 만든 결과물: 서버만 쓴다
+    match /classes/{classId}/{no}/gens/{file} {
+      allow read: if isStudentNo(classId, no) || ownsClass(classId);
+      allow write: if false;
+    }
+    // 학생이 올린 영상: 100MB 이하 영상만
+    match /classes/{classId}/{no}/uploads/{file} {
+      allow read: if isStudentNo(classId, no) || ownsClass(classId);
+      allow create: if isStudentNo(classId, no)
+        && request.resource.size < 100 * 1024 * 1024
+        && request.resource.contentType.matches('video/.*');
+      allow delete: if isStudentNo(classId, no);
+      allow update: if false;
+    }
+    match /{all=**} { allow read, write: if false; }
+  }
+}
