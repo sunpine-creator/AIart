@@ -2,8 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, Scene, Stage, Upload, maxSec, mediaWord, nickOf, useStore } from '../store';
 import { buildPromptKo, moderate } from '../moderation';
 import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
-import { api, errText, storage } from '../firebase';
-import { getDownloadURL, ref as sref } from 'firebase/storage';
+import { api, errText } from '../firebase';
 
 export const STAGES: { n: Stage; name: string; el: number; mid: number }[] = [
   { n: 1, name: '시작하기', el: 20, mid: 20 },
@@ -83,11 +82,25 @@ function Join() {
   return (
     <div className="join">
       <div className="join-card">
-        <div className="clap" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
+        <div className="slate-wrap" aria-hidden="true">
+          <div className="clapper">
+            {Array.from({ length: 7 }, (_, i) => <span key={i} />)}
+          </div>
+          <div className="slate-board">
+            <div className="sb-row">
+              <span className="sb-k">PROD.</span>
+              <span className="sb-v">AI 스튜디오</span>
+            </div>
+            <div className="sb-row">
+              <span className="sb-k">TITLE</span>
+              <span className="sb-v">AI로 달라진 나의 일상</span>
+            </div>
+            <div className="sb-grid">
+              <div><span className="sb-k">SCENE</span><span className="sb-v">1</span></div>
+              <div><span className="sb-k">TAKE</span><span className="sb-v">1</span></div>
+              <div><span className="sb-k">DATE</span><span className="sb-v">{new Date().toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}</span></div>
+            </div>
+          </div>
         </div>
         <h1 className="join-title">오늘의 촬영장에 들어가기</h1>
         <p className="muted">이름은 쓰지 않아요. 선생님이 준 카드의 반 코드, 번호, 비밀 숫자만 넣어요.</p>
@@ -742,7 +755,6 @@ function Progress({ text, running }: { text: string; running?: boolean }) {
 
 // ───────────── 5단계 영상 편집 (함수 이름 S4) ─────────────
 const VOICES = ['없음', '내 목소리', 'AI 목소리 · 맑은', 'AI 목소리 · 차분한', 'AI 목소리 · 씩씩한'];
-const BGMS = ['없음', '산뜻한 아침', '통통 튀는 하루', '잔잔한 저녁'];
 const MAX_UPLOAD_MB = 100;
 
 type Item = {
@@ -869,7 +881,6 @@ function S4() {
             <span className="mono">
               {tc(playing ? t : 0)} / {tc(total)}
             </span>
-            <span className="muted">배경음악: {s.bgm}</span>
           </div>
         </div>
         <div className="inspector">
@@ -910,13 +921,6 @@ function S4() {
               이 영상 빼기
             </button>
           )}
-          <label htmlFor="ins-bgm">배경음악 (무료 라이선스 목록)</label>
-          <select id="ins-bgm" value={s.bgm} onChange={(e) => d({ t: 'set', patch: { bgm: e.target.value } })}>
-            {BGMS.map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
-          <BgmPreview name={s.bgm} timelinePlaying={playing} />
         </div>
       </div>
       <div className="timeline-wrap">
@@ -994,57 +998,6 @@ function S4() {
         )}
       </div>
       <NextBar to={6} />
-    </div>
-  );
-}
-
-// 배경음악 미리 듣기. Storage 의 bgm/{이름}.mp3 를 재생한다.
-// "처음부터 재생" 중에는 완성 영상과 같은 크기(18%)로 함께 깔린다.
-function BgmPreview({ name, timelinePlaying }: { name: string; timelinePlaying: boolean }) {
-  const [url, setUrl] = useState<string | undefined>(undefined);
-  const [state, setState] = useState<'none' | 'loading' | 'ready' | 'missing'>('none');
-  const [solo, setSolo] = useState(false);
-  const [why, setWhy] = useState('');
-  const audioRef = React.useRef<HTMLAudioElement | null>(null);
-  useEffect(() => {
-    setSolo(false);
-    if (!name || name === '없음') return void (setUrl(undefined), setState('none'));
-    setState('loading');
-    // Mac 에서 올린 한글 파일 이름은 자모가 풀어진(NFD) 형태라 두 형태를 모두 찾는다
-    const tryName = (n: string) => getDownloadURL(sref(storage, `bgm/${n}.mp3`));
-    tryName(name.normalize('NFC'))
-      .catch(() => tryName(name.normalize('NFD')))
-      .then(
-      (u) => (setUrl(u), setState('ready')),
-      (e: any) => (setUrl(undefined), setWhy(`${e?.code ?? e} · 찾은 위치: ${storage.app.options.storageBucket}/bgm/${name}.mp3`), setState('missing')),
-    );
-  }, [name]);
-  useEffect(() => {
-    const a = audioRef.current;
-    if (!a) return;
-    const on = solo || timelinePlaying;
-    a.volume = timelinePlaying && !solo ? 0.18 : 0.8;
-    if (on) {
-      if (timelinePlaying) a.currentTime = 0;
-      a.play().catch(() => {});
-    } else a.pause();
-  }, [solo, timelinePlaying, url]);
-  if (state === 'none') return null;
-  if (state === 'missing')
-    return (
-      <p className="tiny muted">
-        이 음악 파일이 아직 없어요. 선생님이 올리면 들을 수 있어요.
-        <br />
-        <span className="mono">{why}</span>
-      </p>
-    );
-  return (
-    <div className="bgm-preview">
-      <audio ref={audioRef} src={url} loop preload="auto" onEnded={() => setSolo(false)} />
-      <button className="btn tiny" disabled={state !== 'ready'} onClick={() => setSolo(!solo)}>
-        {state === 'loading' ? '불러오는 중…' : solo ? '■ 멈추기' : '▶ 미리 듣기'}
-      </button>
-      <span className="tiny muted">“처음부터 재생”을 누르면 영상에 깔리는 크기로 함께 들려요.</span>
     </div>
   );
 }

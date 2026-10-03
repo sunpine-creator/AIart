@@ -24,6 +24,8 @@ if (import.meta.env.VITE_USE_EMULATORS === '1') {
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
 }
 
+export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null };
+
 const call = <I, O>(name: string) => async (data: I) => (await httpsCallable<I, O>(functions, name)(data)).data;
 export const api = {
   createClass: call<{ title: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
@@ -35,7 +37,10 @@ export const api = {
   reviewGeneration: call<{ genId: string; approve: boolean; reason?: string }, { ok: boolean }>('reviewGeneration'),
   resetPin: call<{ classId: string; no: number }, { pin: string }>('resetPin'),
   draftScenario: call<{ goal: string; role: string; content: string; cond: string; topic?: string }, { blocked: boolean; reason?: string; lines: string[] }>('draftScenario'),
-  renderVideo: call<Record<string, never>, { path: string; bgmMissing: boolean }>('renderVideo'),
+  renderVideo: call<Record<string, never>, { path: string }>('renderVideo'),
+  claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean }>('claimTeacher'),
+  adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),
+  setTeacherApproval: call<{ uid: string; approved: boolean }, { ok: boolean }>('setTeacherApproval'),
   devApproveTeacher: call<Record<string, never>, { ok: boolean }>('devApproveTeacher'),
   logEvent: call<{ kind: string; textKo: string; action: string }, { ok: boolean }>('logEvent'),
 };

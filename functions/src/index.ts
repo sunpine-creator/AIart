@@ -406,25 +406,13 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     }
     clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, text: p.outro?.caption || '' });
 
-    // 배경음악: Storage 의 bgm/{이름}.mp3 (라이선스를 확인한 파일만 올려 두기)
-    let bgm: string | undefined;
-    if (p.bgm && p.bgm !== '없음') {
-      // Mac 에서 올린 한글 파일 이름은 자모가 풀어진(NFD) 형태일 수 있어 두 형태를 모두 찾는다
-      for (const n of [String(p.bgm).normalize('NFC'), String(p.bgm).normalize('NFD')]) {
-        if ((await bucket.file(`bgm/${n}.mp3`).exists())[0]) {
-          bgm = await fetchFile(`bgm/${n}.mp3`, 'bgm.mp3');
-          break;
-        }
-      }
-    }
-
-    const out = await renderAll(clips, dir, bgm);
+    const out = await renderAll(clips, dir);
     const exportId = `${Date.now()}`;
     const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
     await bucket.upload(out, { destination: path, contentType: 'video/mp4', metadata: { metadata: { aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
-    await projRef.update({ lastExport: { path, at: Date.now(), dur: total, bgmMissing: !!(p.bgm && p.bgm !== '없음' && !bgm) }, rendering: FieldValue.delete() });
+    await projRef.update({ lastExport: { path, at: Date.now(), dur: total }, rendering: FieldValue.delete() });
     await log({ classId, no, kind: '완성 영상', textKo: `${total}초 · 클립 ${clips.length}개`, verdict: 'pass', action: '영상 저장' });
-    return { path, bgmMissing: !!(p.bgm && p.bgm !== '없음' && !bgm) };
+    return { path };
   } catch (e: any) {
     logger.error('render failed', { pid, err: String(e?.message ?? e) });
     await projRef.update({ rendering: FieldValue.delete() });
@@ -442,5 +430,66 @@ export const devApproveTeacher = onCall(async (req) => {
   const a = req.auth;
   if (!a || a.token.firebase?.sign_in_provider !== 'google.com') throw new HttpsError('unauthenticated', 'Google 계정으로 로그인해 주세요.');
   await db.doc(`teachers/${a.uid}`).set({ approved: true, email: a.token.email ?? null, approvedBy: 'emulator', at: FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true };
+});
+
+// ───────── 교사 승인 ─────────
+// 관리자: functions/.env 의 ADMIN_EMAILS(쉼표로 구분)에 있는 계정.
+// ADMIN_EMAILS 가 비어 있으면, 배포 뒤 처음 로그인한 교사가 관리자가 된다(config/admin 에 기록).
+const adminEmails = () => (process.env.ADMIN_EMAILS ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+function googleUser(req: CallableRequest) {
+  const a = req.auth;
+  if (!a || a.token.firebase?.sign_in_provider !== 'google.com') throw new HttpsError('unauthenticated', 'Google 계정으로 로그인해 주세요.');
+  return { uid: a.uid, email: String(a.token.email ?? '').toLowerCase(), name: String(a.token.name ?? '') };
+}
+async function isAdmin(uid: string, email: string) {
+  if (email && adminEmails().includes(email)) return true;
+  const c = await db.doc('config/admin').get();
+  return c.exists && c.data()?.uid === uid;
+}
+
+// 교사가 로그인하면 부른다: 관리자면 바로 승인, 아니면 승인 요청을 남긴다.
+export const claimTeacher = onCall(async (req) => {
+  const u = googleUser(req);
+  const tRef = db.doc(`teachers/${u.uid}`);
+  const aRef = db.doc('config/admin');
+  return db.runTransaction(async (tx) => {
+    const [t, a] = await Promise.all([tx.get(tRef), tx.get(aRef)]);
+    const listed = !!u.email && adminEmails().includes(u.email);
+    const first = !a.exists && adminEmails().length === 0;
+    const admin = listed || first || (a.exists && a.data()?.uid === u.uid);
+    if (first) tx.set(aRef, { uid: u.uid, email: u.email, at: FieldValue.serverTimestamp() });
+    if (admin) {
+      tx.set(tRef, { approved: true, admin: true, email: u.email, name: u.name, approvedBy: 'admin-self', at: FieldValue.serverTimestamp() }, { merge: true });
+      return { approved: true, admin: true };
+    }
+    if (t.exists && t.data()?.approved === true) return { approved: true, admin: false };
+    if (!t.exists) tx.set(tRef, { approved: false, email: u.email, name: u.name, requestedAt: FieldValue.serverTimestamp() });
+    return { approved: false, admin: false };
+  });
+});
+
+// 관리자: 교사 목록 보기
+export const adminTeachers = onCall(async (req) => {
+  const u = googleUser(req);
+  if (!(await isAdmin(u.uid, u.email))) throw new HttpsError('permission-denied', '관리자만 볼 수 있어요.');
+  const qs = await db.collection('teachers').limit(200).get();
+  const list = qs.docs.map((d) => {
+    const x = d.data();
+    const ms = (v: any) => (v instanceof Timestamp ? v.toMillis() : null);
+    return { uid: d.id, email: x.email ?? '', name: x.name ?? '', approved: x.approved === true, admin: x.admin === true, requestedAt: ms(x.requestedAt) };
+  });
+  list.sort((a, b) => Number(a.approved) - Number(b.approved) || (b.requestedAt ?? 0) - (a.requestedAt ?? 0));
+  return { list };
+});
+
+// 관리자: 승인하기 / 승인 취소
+export const setTeacherApproval = onCall<{ uid: string; approved: boolean }>(async (req) => {
+  const u = googleUser(req);
+  if (!(await isAdmin(u.uid, u.email))) throw new HttpsError('permission-denied', '관리자만 할 수 있어요.');
+  const { uid, approved } = req.data ?? ({} as any);
+  if (typeof uid !== 'string' || !uid) throw new HttpsError('invalid-argument', '교사를 골라 주세요.');
+  if (uid === u.uid && !approved) throw new HttpsError('failed-precondition', '내 계정의 승인은 취소할 수 없어요.');
+  await db.doc(`teachers/${uid}`).set({ approved: !!approved, approvedBy: u.email, at: FieldValue.serverTimestamp() }, { merge: true });
   return { ok: true };
 });

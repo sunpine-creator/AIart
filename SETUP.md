@@ -44,7 +44,7 @@ npm --prefix web run dev           # 다른 창. http://localhost:5173
 4. "승인됐는지 다시 확인" → 반 만들기 → 학생 입장 카드 확인
 5. 다른 브라우저(또는 시크릿 창)에서 http://localhost:5173/?code=반코드 로 학생 입장
 
-`VIDEO_PROVIDER=mock` 이라 생성은 몇 초 뒤 그림판 결과로 끝납니다. 검사·승인·대기열·기록·크레딧은 실제와 똑같이 동작해요.
+`VIDEO_PROVIDER=mock` 이라 생성은 몇 초 뒤 그림판 결과로 끝납니다. 연습 모드에서 실제 AI를 쓰려면 `functions/.env.local` 에 `VIDEO_PROVIDER=omni` 를 넣고 `gcloud auth application-default login` 을 해 둡니다. 검사·승인·대기열·기록·크레딧은 실제와 똑같이 동작해요.
 
 ## 3. 실제 AI 켜기 (비용 발생)
 
@@ -57,7 +57,26 @@ npm --prefix web run dev           # 다른 창. http://localhost:5173
 5. `functions/.env` 에서 `VIDEO_PROVIDER=omni` 로 바꿉니다.
 6. **약관 확인**: 초중등 학생 대상 서비스에서 Vertex AI 생성형 모델을 써도 되는지 Google Cloud 에 서면으로 확인합니다. (AI Studio API 키 방식은 18세 미만 대상 서비스에 쓸 수 없어 이 앱은 쓰지 않습니다.)
 
-## 4. 배포
+## 4. 온라인 배포
+
+1. Firebase 콘솔에서 아래를 만들거나 켭니다 (위치는 모두 **asia-northeast3 (서울)**)
+   - Firestore Database 만들기 (프로덕션 모드)
+   - Storage 시작하기
+   - Authentication > 로그인 방법 > Google 사용
+   - 프로젝트 설정 > 내 앱 > 웹 앱 추가 → 나온 값을 `web/.env.production` 에 넣고 `VITE_USE_EMULATORS=0`
+2. 실제 서버 설정: `functions/.env.<프로젝트ID>` 에 `VIDEO_PROVIDER=omni`
+3. Cloud Functions 서비스 계정 권한 (터미널)
+
+```bash
+PROJECT=aiart-studio-61766
+NUM=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+SA=$NUM-compute@developer.gserviceaccount.com
+for ROLE in roles/aiplatform.user roles/cloudtasks.enqueuer roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:$SA --role=$ROLE --condition=None
+done
+```
+
+4. 배포
 
 ```bash
 npm --prefix web run build
@@ -66,7 +85,7 @@ firebase deploy
 
 - 학생 주소: `https://프로젝트ID.web.app/?code=반코드`
 - 교사 주소: `https://프로젝트ID.web.app/teacher`
-- 운영 환경에서 교사 승인: Firebase 콘솔 > Firestore > `teachers/{UID}` 에 `approved: true`
+- 교사 승인: 배포 뒤 **처음 로그인한 교사가 관리자**가 됩니다(또는 `functions/.env.<프로젝트ID>` 에 `ADMIN_EMAILS=메일1,메일2`). 다른 교사는 로그인하면 승인 요청이 자동으로 남고, 관리자가 `/teacher` 화면의 "교사 승인 관리"에서 승인합니다.
 
 ## 5. 처음 실제로 돌릴 때 꼭 볼 것
 

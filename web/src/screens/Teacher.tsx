@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Log, Stage, useStore } from '../store';
 import { STAGES } from './Student';
-import { api, auth, errText } from '../firebase';
+import { TeacherRow, api, auth, errText } from '../firebase';
 
 const REJECT_REASONS = ['장면 이야기와 맞지 않아요', '더 구체적으로 써 보세요', '안전하지 않은 표현이 있어요'];
 
@@ -44,7 +44,8 @@ function TeacherPending() {
       <div className="join-card">
         <h1 className="join-title">승인을 기다리고 있어요</h1>
         <p>
-          유료 AI를 쓰는 서비스라 운영자가 교사 계정을 승인해야 해요. 아래 정보를 운영자에게 보내 주세요.
+          유료 AI를 쓰는 서비스라 관리자가 교사 계정을 승인해야 해요. 승인 요청은 자동으로 보냈어요.
+          관리자가 승인하면 아래 "다시 확인"을 눌러 주세요.
         </p>
         <p className="mono">{s.teacherEmail}</p>
         <p className="mono tiny">UID: {auth.currentUser?.uid}</p>
@@ -96,6 +97,7 @@ function ClassList() {
         ))}
         {s.classes.length === 0 && <p className="muted">아직 만든 반이 없어요. 아래에서 첫 반을 만들어 보세요.</p>}
       </div>
+      <AdminPanel />
       <section className="panel">
         <h3>새 반 만들기</h3>
         <div className="grid3">
@@ -120,6 +122,52 @@ function ClassList() {
         </button>
       </section>
     </div>
+  );
+}
+
+// 관리자에게만 보이는 교사 승인 관리. 관리자가 아니면 아무것도 그리지 않는다.
+function AdminPanel() {
+  const { d } = useStore();
+  const [list, setList] = useState<TeacherRow[] | null>(null);
+  const [busy, setBusy] = useState('');
+  const load = () => api.adminTeachers({}).then((r) => setList(r.list), () => setList(null));
+  useEffect(() => void load(), []);
+  if (!list) return null;
+  const pending = list.filter((t) => !t.approved).length;
+  const set = (uid: string, approved: boolean) => {
+    setBusy(uid);
+    api
+      .setTeacherApproval({ uid, approved })
+      .then(load, (e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(''));
+  };
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h3>교사 승인 관리 (관리자)</h3>
+        <span className="tiny muted">승인 대기 {pending}명 · <button className="link" onClick={load}>새로고침</button></span>
+      </div>
+      {list.length === 0 && <p className="muted">아직 로그인한 교사가 없어요.</p>}
+      <table className="admin-table">
+        <tbody>
+          {list.map((t) => (
+            <tr key={t.uid}>
+              <td>{t.name || '(이름 없음)'}</td>
+              <td className="mono">{t.email}</td>
+              <td>{t.admin ? '관리자' : t.approved ? '승인됨' : <strong>대기 중</strong>}</td>
+              <td>
+                {!t.admin &&
+                  (t.approved ? (
+                    <button className="btn tiny" disabled={busy === t.uid} onClick={() => set(t.uid, false)}>승인 취소</button>
+                  ) : (
+                    <button className="btn tiny primary" disabled={busy === t.uid} onClick={() => set(t.uid, true)}>승인하기</button>
+                  ))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 

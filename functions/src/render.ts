@@ -96,7 +96,7 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
     args.push('-loop', '1', '-t', String(c.dur), '-i', c.src);
     vchain = `[0:v]${fit}`;
   } else {
-    const bg = c.kind === 'outro' ? '0xE85D24' : c.kind === 'title' ? '0x17203A' : '0x2B3550';
+    const bg = c.kind === 'outro' ? '0x7FA6F0' : c.kind === 'title' ? '0x17203A' : '0x2B3550';
     args.push('-f', 'lavfi', '-t', String(c.dur), '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}`);
     vchain = '[0:v]null';
   }
@@ -159,7 +159,7 @@ export async function renderAll(clips: Clip[], dir: string, bgm?: string): Promi
   const joined = join(dir, 'joined.mp4');
   await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', joined]);
   const final = join(dir, 'final.mp4');
-  const meta = ['-metadata', 'comment=AI 생성 콘텐츠 포함 (OO 스튜디오)', '-metadata', 'title=AI로 달라진 나의 일상'];
+  const meta = ['-metadata', 'comment=AI 생성 콘텐츠 포함 (AI 스튜디오)', '-metadata', 'title=AI로 달라진 나의 일상'];
   if (bgm) {
     await run(bin('ffmpeg'), [
       '-y', '-hide_banner', '-loglevel', 'error', '-i', joined, '-stream_loop', '-1', '-i', bgm,

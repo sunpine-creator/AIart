@@ -194,8 +194,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           setClaims({ classId: String(tok.claims.classId), no: Number(tok.claims.no) });
           setRole('student');
         } else {
+          let ok = false;
           const t = await getDoc(doc(db, 'teachers', u.uid)).catch(() => null);
-          setRole(t?.exists() && t.data()?.approved ? 'teacher' : 'teacher-pending');
+          ok = !!(t?.exists() && t.data()?.approved === true);
+          // 아직 승인 전이면 서버에 알린다(관리자면 바로 승인, 아니면 승인 요청이 남는다)
+          if (!ok && u.providerData.some((p) => p.providerId === 'google.com')) {
+            ok = await api.claimTeacher({}).then((r) => r.approved, () => false);
+          }
+          setRole(ok ? 'teacher' : 'teacher-pending');
         }
       }),
     [],
@@ -457,7 +463,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         window.setTimeout(() => {
           api
             .renderVideo({})
-            .then((r) => toast(r.bgmMissing ? '영상을 저장했어요. (고른 배경음악 파일이 아직 없어서 음악 없이 만들었어요)' : '영상을 저장했어요!'))
+            .then(() => toast('영상을 저장했어요!'))
             .catch((e) => toast(errText(e)))
             .finally(() => setLocal((l) => ({ ...l, rendering: false })));
         }, 900);

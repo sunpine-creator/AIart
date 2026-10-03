@@ -1,49 +1,46 @@
 /* 레이아웃: 촬영장 슬레이트처럼 단계(S1~S5)를 위에 두고, 아래에 작업대. 주황 = 내가 한 일, 청록 = AI가 한 일 */
 /* 디자인: 깔끔하고 세련된 느낌. 흰 바탕 + 회색 단계 + 포인트 색 하나(파랑 = 내가 한 일). AI가 한 일은 보라로 작게 표시 */
 :root {
-  /* 파스텔 톤: 하늘색 바탕 + 파스텔 파랑(내가 한 일) + 파스텔 보라(AI가 한 일) */
-  --paper: #f3f7fd;
+  --paper: #f7f8fa;
   --surface: #ffffff;
-  --sunk: #eef3fa;
-  --ink: #1e2a44;
-  --muted: #69758c;
-  --line: #e1e8f3;
-  --human: #3f72e0;       /* 글자·테두리용 파랑 */
-  --human-soft: #cfe0ff;  /* 버튼 바탕용 파스텔 파랑 */
-  --human-tint: #eaf1ff;
-  --ai: #7a62d6;
-  --ai-soft: #e3dbff;
-  --ai-tint: #f4f0ff;
-  --good: #2f9e63;
-  --good-tint: #e6f7ee;
-  --warn: #b7791f;
-  --warn-tint: #fff5e3;
-  --critical: #d94848;
-  --critical-tint: #fdeeee;
+  --sunk: #f1f3f6;
+  --ink: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --human: #2f5bea;
+  --human-tint: #eef2fe;
+  --ai: #7055d8;
+  --ai-tint: #f3f0fd;
+  --good: #16a34a;
+  --good-tint: #ecfdf3;
+  --warn: #b45309;
+  --warn-tint: #fff7e8;
+  --critical: #dc2626;
+  --critical-tint: #fef2f2;
   --slate: #ffffff;
-  --on-slate: #1e2a44;
-  --film: #26324f;
-  --on-film: #f4f7fd;
-  --shadow: 0 1px 2px rgba(30, 42, 68, 0.04);
+  --on-slate: #111827;
+  --film: #111827;
+  --on-film: #f9fafb;
+  --shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
   --f-display: 'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
   --f-body: 'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
   --f-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
-  --r: 16px;
+  --r: 14px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --paper: #0e121b; --surface: #161b27; --sunk: #1c2230; --ink: #eef2f9; --muted: #9aa5ba; --line: #283044;
-    --human: #8fb0ff; --human-soft: #2a3a66; --human-tint: #1a2440; --ai: #b5a3f5; --ai-soft: #352c5c; --ai-tint: #221d38;
-    --good: #5fd39a; --good-tint: #11291d; --warn: #f2bd62; --warn-tint: #2c2312; --critical: #f58b8b; --critical-tint: #2e1719;
-    --slate: #161b27; --on-slate: #eef2f9; --film: #0a0e16; --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --paper: #0b0d12; --surface: #14171e; --sunk: #1b1f28; --ink: #f3f4f6; --muted: #9ca3af; --line: #262b36;
+    --human: #6b8cff; --human-tint: #18213d; --ai: #a08bf0; --ai-tint: #221d38;
+    --good: #4ade80; --good-tint: #10261a; --warn: #f5b041; --warn-tint: #2c2110; --critical: #f87171; --critical-tint: #2d1517;
+    --slate: #14171e; --on-slate: #f3f4f6; --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
 }
 :root[data-theme='dark'] {
-  --paper: #0e121b; --surface: #161b27; --sunk: #1c2230; --ink: #eef2f9; --muted: #9aa5ba; --line: #283044;
-  --human: #8fb0ff; --human-soft: #2a3a66; --human-tint: #1a2440; --ai: #b5a3f5; --ai-soft: #352c5c; --ai-tint: #221d38;
-  --good: #5fd39a; --good-tint: #11291d; --warn: #f2bd62; --warn-tint: #2c2312; --critical: #f58b8b; --critical-tint: #2e1719;
-  --slate: #161b27; --on-slate: #eef2f9; --film: #0a0e16; --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --paper: #0b0d12; --surface: #14171e; --sunk: #1b1f28; --ink: #f3f4f6; --muted: #9ca3af; --line: #262b36;
+  --human: #6b8cff; --human-tint: #18213d; --ai: #a08bf0; --ai-tint: #221d38;
+  --good: #4ade80; --good-tint: #10261a; --warn: #f5b041; --warn-tint: #2c2110; --critical: #f87171; --critical-tint: #2d1517;
+  --slate: #14171e; --on-slate: #f3f4f6; --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
 
@@ -479,6 +476,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--human); box-shad
 
 /* 입장 */
 .join-card { border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 40px rgba(17, 24, 39, 0.06); padding: 32px; }
+.clap { display: none; }
 .join-title { font-size: 1.6rem; }
 
 /* 카드·패널: 그림자 대신 얇은 선 */
@@ -575,47 +573,3 @@ input:focus, select:focus, textarea:focus { border-color: var(--human); box-shad
 .t-bar .seg { color: var(--muted); }
 .demobar .seg { border-color: var(--line); }
 .demobar .seg .seg-b { border: 0; }
-
-/* ═════════ 파스텔 톤 ═════════ */
-.btn.primary { background: var(--human-soft); border-color: transparent; color: color-mix(in srgb, var(--human) 70%, var(--ink)); font-weight: 700; }
-.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--human-soft) 82%, var(--human)); }
-.btn.ai { background: var(--ai-soft); border-color: transparent; color: color-mix(in srgb, var(--ai) 70%, var(--ink)); }
-.btn.ai:hover:not(:disabled) { background: color-mix(in srgb, var(--ai-soft) 82%, var(--ai)); }
-.btn.danger { background: var(--critical-tint); border-color: transparent; color: var(--critical); }
-.brand-mark { background: linear-gradient(135deg, #a9c6fa, #c9b8f5); }
-.step.on { border-bottom-color: #8fb3f7; }
-.slate { background: var(--human-tint); color: var(--human); }
-.meter-fill { background: linear-gradient(90deg, #a9c6fa, #c9b8f5); }
-.title-card.outro, .clip.outro { background: #a9c6fa; color: var(--ink); }
-.clip.intro, .title-card { background: var(--film); }
-.badge { background: #8fb3f7; color: #fff; }
-.gen.final { box-shadow: 0 0 0 3px var(--good-tint); }
-.seat.on { outline-color: #8fb3f7; }
-
-/* ═════════ 첫 화면: 촬영 슬레이트 ═════════ */
-.join { background: radial-gradient(1200px 500px at 50% -10%, #dfeaff 0%, transparent 60%), radial-gradient(800px 400px at 90% 110%, #ece5ff 0%, transparent 60%); }
-.join-card { padding: 0 28px 28px; overflow: hidden; }
-.slate-wrap { margin: 0 -28px 6px; }
-.clapper {
-  display: grid; grid-template-columns: repeat(7, 1fr); height: 26px; margin: 18px 22px 0;
-  border-radius: 6px 6px 2px 2px; overflow: hidden; transform-origin: 2px 100%;
-  transform: rotate(-7deg); animation: clap 0.9s 0.3s cubic-bezier(.3,1.6,.5,1) both;
-}
-.clapper span { transform: skewX(-30deg) scaleX(1.2); }
-.clapper span:nth-child(odd) { background: #26324f; }
-.clapper span:nth-child(even) { background: #a9c6fa; }
-.clapper span:nth-child(4n) { background: #c9b8f5; }
-@keyframes clap { 0% { transform: rotate(-22deg); } 70% { transform: rotate(0deg); } 100% { transform: rotate(-7deg); } }
-.slate-board { margin: 2px 22px 0; background: #26324f; color: #eef3ff; border-radius: 4px 4px 12px 12px; padding: 14px 16px 12px; display: grid; gap: 8px; }
-.sb-row { display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: baseline; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(238, 243, 255, 0.18); }
-.sb-k { font-family: var(--f-mono); font-size: 0.68rem; letter-spacing: 0.08em; color: #a9c6fa; }
-.sb-v { font-weight: 700; font-size: 1rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.sb-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.sb-grid > div { display: grid; gap: 2px; padding: 2px 10px; border-left: 1px solid rgba(238, 243, 255, 0.18); }
-.sb-grid > div:first-child { border-left: 0; padding-left: 0; }
-.sb-grid .sb-v { font-family: var(--f-mono); font-size: 1.15rem; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .join { background: none; } }
-.join-card { padding-top: 0; }
-.clapper { margin-top: 56px; transform: rotate(-5deg); }
-@keyframes clap { 0% { transform: rotate(-16deg); } 70% { transform: rotate(0deg); } 100% { transform: rotate(-5deg); } }
-.badge { color: var(--ink); background: var(--human-soft); }

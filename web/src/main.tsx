@@ -13,7 +13,7 @@ function TopBar() {
     <div className="demobar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true" />
-        <span className="brand-name">OO 스튜디오</span>
+        <span className="brand-name">AI 스튜디오</span>
         {isTeacherPath() && <span className="brand-tag">교사</span>}
       </div>
       {s.role === 'student' && (
