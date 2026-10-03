@@ -3,11 +3,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{db}/documents {
     function signedIn() { return request.auth != null; }
-    function isStudent() { return signedIn() && request.auth.token.role == 'student'; }
-    function inClass(classId) { return isStudent() && request.auth.token.classId == classId; }
-    function isStudentNo(classId, no) { return inClass(classId) && string(request.auth.token.no) == string(no); }
+    // 토큰에 없는 칸을 읽으면 오류가 나므로 get(키, 기본값)으로 읽는다
+    function tok(k) { return request.auth.token.get(k, ''); }
+    function isStudent() { return signedIn() && tok('role') == 'student'; }
+    function myProjectId() { return string(tok('classId')) + '_' + string(tok('no')); }
+    function inClass(classId) { return isStudent() && tok('classId') == classId; }
+    function isStudentNo(classId, no) { return inClass(classId) && string(tok('no')) == string(no); }
     function isTeacher() {
-      return signedIn() && request.auth.token.firebase.sign_in_provider == 'google.com'
+      return signedIn() && tok('firebase').get('sign_in_provider', '') == 'google.com'
         && exists(/databases/$(db)/documents/teachers/$(request.auth.uid))
         && get(/databases/$(db)/documents/teachers/$(request.auth.uid)).data.approved == true;
     }
@@ -40,13 +43,13 @@ service cloud.firestore {
 
     match /projects/{projectId} {
       // projectId = {classId}_{no}
-      allow read: if (isStudent() && projectId == request.auth.token.classId + '_' + string(request.auth.token.no))
+      allow read: if (isStudent() && projectId == myProjectId())
                   || ownsClass(resource.data.classId)
                   || (inClass(resource.data.classId) && resource.data.submitted == true);
-      allow create: if isStudent() && projectId == request.auth.token.classId + '_' + string(request.auth.token.no)
-                    && request.resource.data.classId == request.auth.token.classId
-                    && request.resource.data.no == request.auth.token.no;
-      allow update: if isStudent() && projectId == request.auth.token.classId + '_' + string(request.auth.token.no)
+      allow create: if isStudent() && projectId == myProjectId()
+                    && request.resource.data.classId == tok('classId')
+                    && request.resource.data.no == tok('no');
+      allow update: if isStudent() && projectId == myProjectId()
                     && request.resource.data.classId == resource.data.classId
                     && request.resource.data.no == resource.data.no;
       allow delete: if false;
@@ -64,7 +67,8 @@ service cloud.firestore {
     }
 
     match /usage/{id} {
-      allow read: if ownsClass(resource.data.classId);
+      // 문서 ID = {classId}_{yyyymmdd}. 아직 없는 문서도 읽을 수 있게 ID로 판단한다
+      allow read: if ownsClass(id.split('_')[0]);
       allow write: if false;
     }
 

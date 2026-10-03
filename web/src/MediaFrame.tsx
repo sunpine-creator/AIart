@@ -76,3 +76,23 @@ export function GenMedia({
     </div>
   );
 }
+
+// Storage 에 저장된 영상·소리를 재생한다 (완성 영상, 녹음)
+export function useStorageUrl(path?: string) {
+  const [url, setUrl] = React.useState<string | undefined>(path ? urlCache.get(path) : undefined);
+  React.useEffect(() => {
+    if (!path) return void setUrl(undefined);
+    if (urlCache.has(path)) return void setUrl(urlCache.get(path));
+    getDownloadURL(sref(storage, path)).then((u) => (urlCache.set(path, u), setUrl(u)), () => setUrl(undefined));
+  }, [path]);
+  return url;
+}
+
+export function StoredVideo({ path, label, size = 'md' }: { path: string; label: string; size?: 'sm' | 'md' | 'lg' }) {
+  const url = useStorageUrl(path);
+  return (
+    <div className={`frame frame-${size} video-frame`} aria-label={label}>
+      {url ? <video src={url} controls playsInline preload="metadata" /> : <span className="no-preview">불러오는 중…</span>}
+    </div>
+  );
+}

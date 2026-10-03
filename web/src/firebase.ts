@@ -35,6 +35,8 @@ export const api = {
   reviewGeneration: call<{ genId: string; approve: boolean; reason?: string }, { ok: boolean }>('reviewGeneration'),
   resetPin: call<{ classId: string; no: number }, { pin: string }>('resetPin'),
   draftScenario: call<{ goal: string; role: string; content: string; cond: string; topic?: string }, { blocked: boolean; reason?: string; lines: string[] }>('draftScenario'),
+  renderVideo: call<Record<string, never>, { path: string; bgmMissing: boolean }>('renderVideo'),
+  devApproveTeacher: call<Record<string, never>, { ok: boolean }>('devApproveTeacher'),
   logEvent: call<{ kind: string; textKo: string; action: string }, { ok: boolean }>('logEvent'),
 };
 

@@ -48,6 +48,14 @@ function TeacherPending() {
         </p>
         <p className="mono">{s.teacherEmail}</p>
         <p className="mono tiny">UID: {auth.currentUser?.uid}</p>
+        {import.meta.env.VITE_USE_EMULATORS === '1' && (
+          <button
+            className="btn primary"
+            onClick={() => api.devApproveTeacher({}).then(() => location.reload(), (e) => d({ t: 'toast', msg: errText(e) }))}
+          >
+            연습 모드: 바로 승인하기
+          </button>
+        )}
         <button className="btn" onClick={() => location.reload()}>승인됐는지 다시 확인</button>
         <button className="link" onClick={() => d({ t: 'signOut' })}>다른 계정으로 로그인</button>
       </div>
@@ -83,7 +91,7 @@ function ClassList() {
           <button key={c.id} className="class-card" onClick={() => d({ t: 'openClass', classId: c.id })}>
             <strong>{c.title}</strong>
             <span className="muted">{c.band === 'elementary' ? '초등' : '중등'} · {c.size}명 · 열린 단계 {c.open}</span>
-            <span className="mono">{c.code}</span>
+            <span className="mono strong">반 코드 {c.code}</span>
           </button>
         ))}
         {s.classes.length === 0 && <p className="muted">아직 만든 반이 없어요. 아래에서 첫 반을 만들어 보세요.</p>}

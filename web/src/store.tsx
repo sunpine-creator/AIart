@@ -18,7 +18,7 @@ export type Res = '360p' | '720p';
 export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded' | 'blocked' | 'rejected';
 export type Fit = 'yes' | 'partial' | 'no';
 export type Builder = { who: string; what: string; where: string; how: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
@@ -26,7 +26,8 @@ export type Gen = {
   storagePath?: string; mimeType?: string; mock?: boolean;
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
-export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; dur: number; caption: string; voice: string; playable: boolean };
+export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string };
+export type ExportInfo = { path: string; at: number; dur: number; bgmMissing?: boolean };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done' };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string };
 export type ClassInfo = { id: string; title: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
@@ -68,7 +69,9 @@ export type State = {
   approvals: Approval[];
   otherQueue: number;
   selectedStudent: number;
-  peers: { no: number; nick: string }[];
+  peers: { no: number; nick: string; exportPath?: string }[];
+  lastExport?: ExportInfo;
+  rendering: boolean;
   classes: ClassInfo[];
   pins: Record<string, string>;
   teacherEmail: string;
@@ -108,7 +111,7 @@ const base: State = {
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
-  selectedStudent: 1, peers: [], classes: [], pins: {}, teacherEmail: '',
+  selectedStudent: 1, peers: [], classes: [], pins: {}, teacherEmail: '', rendering: false,
 };
 
 // ───────────── 액션 (시안과 같은 이름을 유지해 화면 코드를 그대로 쓴다) ─────────────
@@ -125,6 +128,8 @@ export type Action =
   | { t: 'log'; entry: { kind: string; textKo: string; action: string } }
   | { t: 'upload'; file: File; meta: Upload }
   | { t: 'removeUpload'; id: string }
+  | { t: 'voice'; key: string; blob: Blob }
+  | { t: 'render' }
   | { t: 'join'; code: string; no: number; pin: string }
   | { t: 'openClass'; classId: string }
   | { t: 'signOut' }
@@ -154,7 +159,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<State['role']>('loading');
   const [claims, setClaims] = useState<{ classId?: string; no?: number }>({});
-  const [local, setLocal] = useState({ tab: 1 as Stage, selectedStudent: 1, toast: undefined as string | undefined, classId: '' });
+  const [local, setLocal] = useState({ tab: 1 as Stage, selectedStudent: 1, toast: undefined as string | undefined, classId: '', rendering: false });
   const [cls, setCls] = useState<any>(null);
   const [student, setStudent] = useState<any>(null);
   const [project, setProject] = useState<Record<string, any> | null>(null);
@@ -165,12 +170,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [usage, setUsage] = useState(0);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [pins, setPins] = useState<Record<string, string>>({});
-  const [peers, setPeers] = useState<{ no: number; nick: string }[]>([]);
+  const [peers, setPeers] = useState<{ no: number; nick: string; exportPath?: string }[]>([]);
   const [uploadUrls, setUploadUrls] = useState<Record<string, string>>({});
   const saveTimer = useRef<number | undefined>(undefined);
   const projectRef = useRef<Record<string, any> | null>(null);
 
   const toast = (msg?: string) => setLocal((l) => ({ ...l, toast: msg }));
+  // 실시간 구독이 권한 등으로 실패하면 조용히 멈추지 않고 화면과 콘솔에 알린다
+  const onErr = (what: string) => (e: any) => {
+    console.error(`[구독 실패] ${what}`, e);
+    toast(`${what}을(를) 불러오지 못했어요: ${e?.code ?? e?.message ?? e}`);
+  };
 
   // 로그인 상태와 역할
   useEffect(
@@ -196,8 +206,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const { classId, no } = claims as { classId: string; no: number };
     const pid = `${classId}_${no}`;
     const unsubs = [
-      onSnapshot(doc(db, 'classes', classId), (d) => setCls({ id: d.id, ...d.data() })),
-      onSnapshot(doc(db, 'classes', classId, 'students', String(no)), (d) => setStudent(d.data())),
+      onSnapshot(doc(db, 'classes', classId), (d) => setCls({ id: d.id, ...d.data() }), onErr('반 정보')),
+      onSnapshot(doc(db, 'classes', classId, 'students', String(no)), (d) => setStudent(d.data()), onErr('내 정보')),
       onSnapshot(doc(db, 'projects', pid), (d) => {
         if (!d.exists()) {
           const p: Record<string, any> = { ...emptyProject('elementary'), classId, no };
@@ -208,13 +218,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (saveTimer.current) return;
         projectRef.current = d.data();
         setProject(d.data());
-      }),
+      }, onErr('내 작업')),
       onSnapshot(query(collection(db, 'generations'), where('classId', '==', classId), where('no', '==', no), orderBy('createdAt', 'asc')), (q) =>
         setGens(q.docs.map((x) => toGen(x.id, x.data()))),
-      ),
+      onErr('내 생성 기록')),
       onSnapshot(query(collection(db, 'projects'), where('classId', '==', classId), where('submitted', '==', true), limit(30)), (q) =>
-        setPeers(q.docs.map((x) => ({ no: x.data().no, nick: nickOf(x.data().no) })).filter((p) => p.no !== no)),
-      ),
+        setPeers(q.docs.map((x) => ({ no: x.data().no, nick: nickOf(x.data().no), exportPath: x.data().lastExport?.path })).filter((p) => p.no !== no)),
+      onErr('친구 작품')),
     ];
     return () => unsubs.forEach((u) => u());
   }, [role, claims.classId, claims.no]);
@@ -229,19 +239,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           return { id: d.id, title: x.title, code: x.code, band: x.band, open: x.open, paused: x.paused, approval: x.approval, videoInMiddle: x.videoInMiddle, budget: x.budgetUsd, size: x.size };
         }),
       ),
-    );
+    onErr('내 반 목록'));
   }, [role, user]);
   useEffect(() => {
     if (role !== 'teacher' || !local.classId) return;
     const c = local.classId;
     const day = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10).replace(/-/g, '');
     const unsubs = [
-      onSnapshot(doc(db, 'classes', c), (d) => setCls({ id: d.id, ...d.data() })),
-      onSnapshot(collection(db, 'classes', c, 'students'), (q) => setStudents(q.docs.map((d) => d.data()).sort((a, b) => a.no - b.no))),
-      onSnapshot(doc(db, 'classes', c, 'private', 'pins'), (d) => setPins(d.data()?.pins ?? {})),
+      onSnapshot(doc(db, 'classes', c), (d) => setCls({ id: d.id, ...d.data() }), onErr('반 정보')),
+      onSnapshot(collection(db, 'classes', c, 'students'), (q) => setStudents(q.docs.map((d) => d.data()).sort((a, b) => a.no - b.no)), onErr('학생 명단')),
+      onSnapshot(doc(db, 'classes', c, 'private', 'pins'), (d) => setPins(d.data()?.pins ?? {}), onErr('입장 카드')),
       onSnapshot(query(collection(db, 'generations'), where('classId', '==', c), where('status', '==', 'awaiting_approval'), orderBy('createdAt', 'asc')), (q) =>
         setPending(q.docs.map((d) => ({ id: d.id, ...d.data() }))),
-      ),
+      onErr('승인 대기')),
       onSnapshot(query(collection(db, 'promptLogs'), where('classId', '==', c), orderBy('at', 'desc'), limit(500)), (q) =>
         setLogs(
           q.docs
@@ -251,8 +261,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             })
             .reverse(),
         ),
-      ),
-      onSnapshot(doc(db, 'usage', `${c}_${day}`), (d) => setUsage(d.data()?.costUsd ?? 0)),
+      onErr('프롬프트 기록')),
+      onSnapshot(doc(db, 'usage', `${c}_${day}`), (d) => setUsage(d.data()?.costUsd ?? 0), onErr('오늘 비용')),
     ];
     return () => unsubs.forEach((u) => u());
   }, [role, local.classId]);
@@ -345,6 +355,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       approvals: pending.map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '' })),
       selectedStudent: local.selectedStudent,
       peers,
+      lastExport: p.lastExport,
+      rendering: local.rendering || (!!p.rendering && Date.now() - p.rendering < 10 * 60_000),
       classes,
       pins,
       teacherEmail: user?.email ?? '',
@@ -421,6 +433,30 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         patchProject({ uploads: (projectRef.current?.uploads ?? []).filter((x: Upload) => x.id !== a.id), order: (projectRef.current?.order ?? []).filter((k: string) => k !== a.id) });
         return;
       }
+      case 'voice': {
+        const path = `classes/${claims.classId}/${claims.no}/voices/${a.key}.webm`;
+        toast('녹음을 저장하는 중이에요…');
+        uploadBytes(sref(storage, path), a.blob, { contentType: a.blob.type || 'audio/webm' })
+          .then(() => {
+            const cur = projectRef.current ?? {};
+            if ((cur.scenes ?? []).some((x: Scene) => x.id === a.key)) patchProject({ scenes: cur.scenes.map((x: Scene) => (x.id === a.key ? { ...x, voicePath: path, voice: '내 목소리' } : x)) });
+            else patchProject({ uploads: (cur.uploads ?? []).map((u: Upload) => (u.id === a.key ? { ...u, voicePath: path, voice: '내 목소리' } : u)) });
+            toast('녹음을 저장했어요.');
+          })
+          .catch((e) => toast(`녹음을 저장하지 못했어요: ${errText(e)}`));
+        return;
+      }
+      case 'render':
+        setLocal((l) => ({ ...l, rendering: true }));
+        // 편집 내용이 저장된 뒤에 합치도록 잠깐 기다린다
+        window.setTimeout(() => {
+          api
+            .renderVideo({})
+            .then((r) => toast(r.bgmMissing ? '영상을 저장했어요. (고른 배경음악 파일이 아직 없어서 음악 없이 만들었어요)' : '영상을 저장했어요!'))
+            .catch((e) => toast(errText(e)))
+            .finally(() => setLocal((l) => ({ ...l, rendering: false })));
+        }, 900);
+        return;
       case 'join':
         api
           .joinClass({ code: a.code, no: a.no, pin: a.pin })

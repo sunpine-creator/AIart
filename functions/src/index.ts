@@ -12,6 +12,11 @@ import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, specFor } from './c
 import { Builder, buildPromptKo, moderateRules } from './moderation';
 import { checkAndTranslate } from './ai/text';
 import { SafetyBlockedError, provider } from './ai/video';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pjoin } from 'node:path';
+import { Clip, renderAll } from './render';
+import { isAiVoice, speak } from './ai/tts';
 
 initializeApp();
 setGlobalOptions({ region: REGION, maxInstances: 20 });
@@ -324,4 +329,106 @@ export const draftScenario = onCall({ timeoutSeconds: 60 }, async (req) => {
   }
   await log({ classId, no, kind: '시나리오 초안', textKo: joined, textEn: lines.join(' | '), verdict: 'pass', action: 'AI 초안 받음', layer: useAi ? 'ai' : 'rule' });
   return { blocked: false, lines };
+});
+
+// ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
+
+export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 15 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const pid = `${classId}_${no}`;
+  const projRef = db.doc(`projects/${pid}`);
+  const p = (await projRef.get()).data();
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (!p || !cls) throw new HttpsError('not-found', '작업을 찾을 수 없어요.');
+  if (p.rendering && Date.now() - p.rendering < 10 * 60_000) throw new HttpsError('failed-precondition', '이미 영상을 만들고 있어요. 잠시만 기다려 주세요.');
+  const limit = cls.band === 'elementary' ? 30 : 60;
+
+  // 타임라인 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (화면과 같은 규칙)
+  const scenes: any[] = p.scenes ?? [];
+  const uploads: any[] = p.uploads ?? [];
+  const all = [...scenes.map((s) => s.id), ...uploads.map((u) => u.id)];
+  const kept = (p.order ?? []).filter((k: string) => all.includes(k));
+  const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
+  const total = (p.intro?.dur ?? 3) + (p.outro?.dur ?? 3) + keys.reduce((a, k) => a + ((scenes.find((s) => s.id === k) ?? uploads.find((u) => u.id === k))?.dur ?? 0), 0);
+  if (total > limit) throw new HttpsError('failed-precondition', `영상이 ${limit}초를 넘었어요. 길이를 줄여 주세요.`);
+
+  await projRef.update({ rendering: Date.now() });
+  const dir = mkdtempSync(pjoin(tmpdir(), 'render-'));
+  const bucket = getStorage().bucket();
+  const fetchFile = async (path: string, name: string) => {
+    const local = pjoin(dir, name);
+    await bucket.file(path).download({ destination: local });
+    return local;
+  };
+  const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
+  const gens = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+
+  try {
+    const voiceFor = async (item: any, i: number) => {
+      if (item.voice === '내 목소리' && item.voicePath) return fetchFile(item.voicePath, `voice_${i}`);
+      if (isAiVoice(item.voice) && item.caption && useAi) return speak(item.caption, item.voice, pjoin(dir, `tts_${i}.wav`)).catch(() => undefined);
+      return undefined;
+    };
+    const clips: Clip[] = [{ kind: 'title', dur: p.intro?.dur ?? 3, text: p.intro?.caption || p.topic || 'AI로 달라진 나의 일상' }];
+    let i = 0;
+    for (const k of keys) {
+      i++;
+      const sc = scenes.find((s) => s.id === k);
+      if (sc) {
+        const g = gens.find((x) => x.id === sc.selectedGenId) ?? gens.filter((x) => x.sceneId === sc.id && x.status === 'succeeded').pop();
+        const voice = await voiceFor(sc, i);
+        if (g?.storagePath) {
+          const src = await fetchFile(g.storagePath, `gen_${i}`);
+          clips.push({ kind: g.img ? 'image' : 'video', dur: sc.dur, src, caption: sc.caption, voice, aiBadge: true });
+        } else {
+          clips.push({ kind: 'placeholder', dur: sc.dur, text: sc.line || `장면 ${i}`, caption: sc.caption, voice });
+        }
+        continue;
+      }
+      const u = uploads.find((x) => x.id === k);
+      if (u?.path) {
+        const src = await fetchFile(u.path, `up_${i}`);
+        const voice = await voiceFor(u, i);
+        clips.push({ kind: 'video', dur: u.dur, src, caption: u.caption, keepAudio: u.voice === '원래 소리', voice });
+      }
+    }
+    clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, text: p.outro?.caption || '' });
+
+    // 배경음악: Storage 의 bgm/{이름}.mp3 (라이선스를 확인한 파일만 올려 두기)
+    let bgm: string | undefined;
+    if (p.bgm && p.bgm !== '없음') {
+      // Mac 에서 올린 한글 파일 이름은 자모가 풀어진(NFD) 형태일 수 있어 두 형태를 모두 찾는다
+      for (const n of [String(p.bgm).normalize('NFC'), String(p.bgm).normalize('NFD')]) {
+        if ((await bucket.file(`bgm/${n}.mp3`).exists())[0]) {
+          bgm = await fetchFile(`bgm/${n}.mp3`, 'bgm.mp3');
+          break;
+        }
+      }
+    }
+
+    const out = await renderAll(clips, dir, bgm);
+    const exportId = `${Date.now()}`;
+    const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
+    await bucket.upload(out, { destination: path, contentType: 'video/mp4', metadata: { metadata: { aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
+    await projRef.update({ lastExport: { path, at: Date.now(), dur: total, bgmMissing: !!(p.bgm && p.bgm !== '없음' && !bgm) }, rendering: FieldValue.delete() });
+    await log({ classId, no, kind: '완성 영상', textKo: `${total}초 · 클립 ${clips.length}개`, verdict: 'pass', action: '영상 저장' });
+    return { path, bgmMissing: !!(p.bgm && p.bgm !== '없음' && !bgm) };
+  } catch (e: any) {
+    logger.error('render failed', { pid, err: String(e?.message ?? e) });
+    await projRef.update({ rendering: FieldValue.delete() });
+    if (e instanceof HttpsError) throw e;
+    throw new HttpsError('internal', '영상을 합치지 못했어요. 잠시 뒤 다시 해 보세요.');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ───────── 연습 모드(에뮬레이터) 전용: 교사 계정 바로 승인 ─────────
+// 실제 배포 환경에서는 FUNCTIONS_EMULATOR 가 없으므로 항상 거절된다.
+export const devApproveTeacher = onCall(async (req) => {
+  if (process.env.FUNCTIONS_EMULATOR !== 'true') throw new HttpsError('permission-denied', '연습 모드에서만 쓸 수 있어요.');
+  const a = req.auth;
+  if (!a || a.token.firebase?.sign_in_provider !== 'google.com') throw new HttpsError('unauthenticated', 'Google 계정으로 로그인해 주세요.');
+  await db.doc(`teachers/${a.uid}`).set({ approved: true, email: a.token.email ?? null, approvedBy: 'emulator', at: FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true };
 });

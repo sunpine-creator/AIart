@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, Scene, Stage, Upload, maxSec, mediaWord, nickOf, useStore } from '../store';
 import { buildPromptKo, moderate } from '../moderation';
-import { GenMedia, MediaFrame } from '../MediaFrame';
-import { api, errText } from '../firebase';
+import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
+import { api, errText, storage } from '../firebase';
+import { getDownloadURL, ref as sref } from 'firebase/storage';
 
 export const STAGES: { n: Stage; name: string; el: number; mid: number }[] = [
   { n: 1, name: '시작하기', el: 20, mid: 20 },
@@ -27,7 +28,7 @@ export function StudentApp() {
           <span className="avatar" aria-hidden="true">{s.me.no}</span>
           <div>
             <div className="st-nick">{s.me.no}번 {s.me.nick}</div>
-            <div className="st-class">{s.cls.title} · {s.band === 'elementary' ? '30초 영상' : '60초 영상'}</div>
+            <div className="st-class">{s.cls.title} · 반 코드 <span className="mono">{s.cls.code}</span> · {s.band === 'elementary' ? '30초 영상' : '60초 영상'}</div>
           </div>
         </div>
         <div className="credit" title="생성할 때마다 길이만큼 줄어들어요">
@@ -900,7 +901,7 @@ function S4() {
                   <option key={v}>{v}</option>
                 ))}
               </select>
-              {cur.voice === '내 목소리' && <span className="tiny muted">녹음 기능은 다음 단계에서 연결돼요.</span>}
+              {cur.voice === '내 목소리' && <VoiceRecorder key={cur.key} itemKey={cur.key} maxSec={cur.dur} path={cur.scene?.voicePath ?? cur.upload?.voicePath} />}
               <p className="tiny muted">AI 목소리는 정해진 목소리만 쓸 수 있어요. 내 목소리를 AI로 흉내 내지 않아요.</p>
             </>
           )}
@@ -915,6 +916,7 @@ function S4() {
               <option key={v}>{v}</option>
             ))}
           </select>
+          <BgmPreview name={s.bgm} timelinePlaying={playing} />
         </div>
       </div>
       <div className="timeline-wrap">
@@ -973,13 +975,134 @@ function S4() {
         {over && <p className="danger-text">영상이 {limit}초를 넘었어요. 길이를 줄이거나 클립을 빼야 저장할 수 있어요.</p>}
         {missing > 0 && <p className="muted">완성본이 없는 장면이 {missing}개 있어요. 3단계에서 완성본을 만들어 주세요.</p>}
         <div className="actions">
-          <button className="btn primary" disabled={over} onClick={() => d({ t: 'toast', msg: '편집한 순서와 자막은 자동으로 저장돼요. 한 편의 MP4로 합치는 기능은 다음 단계에서 연결돼요.' })}>
-            영상 저장하기
+          <button className="btn primary" disabled={over || s.rendering} onClick={() => d({ t: 'render' })}>
+            {s.rendering ? '영상을 합치는 중… (1분쯤 걸려요)' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}
           </button>
-          <span className="tiny muted">저장할 때 영상 끝에 “AI 생성 콘텐츠 포함” 표시가 자동으로 들어가요.</span>
+          <span className="tiny muted">장면을 한 편의 MP4로 합쳐요. 끝 화면에 “AI 생성 콘텐츠 포함” 표시가 자동으로 들어가요.</span>
         </div>
+        {s.lastExport && (
+          <div className="export">
+            <div className="panel-head">
+              <strong>저장한 완성 영상</strong>
+              <span className="tiny muted mono">
+                {new Date(s.lastExport.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} · {s.lastExport.dur}초
+              </span>
+            </div>
+            <StoredVideo path={s.lastExport.path} label="내 완성 영상" />
+            <p className="tiny muted">편집을 바꿨다면 “다시 저장하기”를 눌러야 완성 영상에 반영돼요.</p>
+          </div>
+        )}
       </div>
       <NextBar to={6} />
+    </div>
+  );
+}
+
+// 배경음악 미리 듣기. Storage 의 bgm/{이름}.mp3 를 재생한다.
+// "처음부터 재생" 중에는 완성 영상과 같은 크기(18%)로 함께 깔린다.
+function BgmPreview({ name, timelinePlaying }: { name: string; timelinePlaying: boolean }) {
+  const [url, setUrl] = useState<string | undefined>(undefined);
+  const [state, setState] = useState<'none' | 'loading' | 'ready' | 'missing'>('none');
+  const [solo, setSolo] = useState(false);
+  const [why, setWhy] = useState('');
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    setSolo(false);
+    if (!name || name === '없음') return void (setUrl(undefined), setState('none'));
+    setState('loading');
+    // Mac 에서 올린 한글 파일 이름은 자모가 풀어진(NFD) 형태라 두 형태를 모두 찾는다
+    const tryName = (n: string) => getDownloadURL(sref(storage, `bgm/${n}.mp3`));
+    tryName(name.normalize('NFC'))
+      .catch(() => tryName(name.normalize('NFD')))
+      .then(
+      (u) => (setUrl(u), setState('ready')),
+      (e: any) => (setUrl(undefined), setWhy(`${e?.code ?? e} · 찾은 위치: ${storage.app.options.storageBucket}/bgm/${name}.mp3`), setState('missing')),
+    );
+  }, [name]);
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const on = solo || timelinePlaying;
+    a.volume = timelinePlaying && !solo ? 0.18 : 0.8;
+    if (on) {
+      if (timelinePlaying) a.currentTime = 0;
+      a.play().catch(() => {});
+    } else a.pause();
+  }, [solo, timelinePlaying, url]);
+  if (state === 'none') return null;
+  if (state === 'missing')
+    return (
+      <p className="tiny muted">
+        이 음악 파일이 아직 없어요. 선생님이 올리면 들을 수 있어요.
+        <br />
+        <span className="mono">{why}</span>
+      </p>
+    );
+  return (
+    <div className="bgm-preview">
+      <audio ref={audioRef} src={url} loop preload="auto" onEnded={() => setSolo(false)} />
+      <button className="btn tiny" disabled={state !== 'ready'} onClick={() => setSolo(!solo)}>
+        {state === 'loading' ? '불러오는 중…' : solo ? '■ 멈추기' : '▶ 미리 듣기'}
+      </button>
+      <span className="tiny muted">“처음부터 재생”을 누르면 영상에 깔리는 크기로 함께 들려요.</span>
+    </div>
+  );
+}
+
+// 내 목소리 녹음. 클립 길이만큼만 녹음되고, 다시 녹음할 수 있다.
+function VoiceRecorder({ itemKey, maxSec, path }: { itemKey: string; maxSec: number; path?: string }) {
+  const { d } = useStore();
+  const saved = useStorageUrl(path);
+  const [state, setState] = useState<'idle' | 'rec' | 'done'>('idle');
+  const [left, setLeft] = useState(maxSec);
+  const [local, setLocalUrl] = useState<string | undefined>(undefined);
+  const [err, setErr] = useState('');
+  const recRef = React.useRef<MediaRecorder | null>(null);
+  const start = async () => {
+    setErr('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => chunks.push(e.data);
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        setLocalUrl(URL.createObjectURL(blob));
+        setState('done');
+        d({ t: 'voice', key: itemKey, blob });
+      };
+      recRef.current = rec;
+      rec.start();
+      setState('rec');
+      setLeft(maxSec);
+      let n = maxSec;
+      const timer = window.setInterval(() => {
+        n -= 1;
+        setLeft(n);
+        if (n <= 0 || rec.state !== 'recording') {
+          window.clearInterval(timer);
+          if (rec.state === 'recording') rec.stop();
+        }
+      }, 1000);
+    } catch {
+      setErr('마이크를 쓸 수 없어요. 브라우저에서 마이크 사용을 허용해 주세요.');
+    }
+  };
+  const src = local ?? saved;
+  return (
+    <div className="recorder">
+      {state === 'rec' ? (
+        <button className="btn danger tiny" onClick={() => recRef.current?.stop()}>
+          ■ 멈추기 · {left}초 남음
+        </button>
+      ) : (
+        <button className="btn tiny human" onClick={start}>
+          ● {src ? '다시 녹음하기' : `녹음하기 (최대 ${maxSec}초)`}
+        </button>
+      )}
+      {src && state !== 'rec' && <audio controls src={src} preload="metadata" />}
+      {err && <span className="danger-text tiny">{err}</span>}
     </div>
   );
 }
@@ -1061,6 +1184,7 @@ function S5() {
   const { s, d } = useStore();
   const allChecked = CHECKS.every(([k]) => s.checklist[k]);
   const peers = s.peers.map((p) => p.no);
+  const exportOf = (no: number) => s.peers.find((p) => p.no === no)?.exportPath;
   return (
     <div className="screen">
       <ScreenHead n={6} title="검토하고, 친구들과 나눠요" lead="완성도만 보지 않아요. AI를 어떻게 쓰고 어떻게 판단했는지가 더 중요해요." />
@@ -1167,7 +1291,11 @@ function S5() {
         <div className="gallery">
           {peers.map((no) => (
             <div className="peer" key={no}>
-              <MediaFrame hue={(no * 47) % 360} label={`${no}번 ${nickOf(no)}의 영상`} size="sm" badge="AI 생성 포함" />
+              {exportOf(no) ? (
+                <StoredVideo path={exportOf(no)!} label={`${no}번 ${nickOf(no)}의 영상`} size="sm" />
+              ) : (
+                <MediaFrame hue={(no * 47) % 360} label={`${no}번 ${nickOf(no)}의 영상`} size="sm" badge="저장한 영상 없음" />
+              )}
               <div className="peer-meta">
                 <strong>{no}번 {nickOf(no)}</strong>
               </div>

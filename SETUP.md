@@ -32,11 +32,11 @@ cp functions/.env.example functions/.env
 npm --prefix functions install
 npm --prefix web install
 npm --prefix functions run build
-firebase emulators:start          # 창 하나
+firebase emulators:start --import=./emulator-data --export-on-exit   # 창 하나 (끌 때 데이터 저장, 켤 때 불러오기)
 npm --prefix web run dev           # 다른 창. http://localhost:5173
 ```
 
-에뮬레이터에서 처음 교사로 쓰려면 승인 문서가 필요합니다.
+에뮬레이터에서 처음 교사로 쓰려면 승인이 필요합니다. 연습 모드에서는 로그인 후 **"연습 모드: 바로 승인하기"** 버튼을 누르면 끝이에요. (아래는 직접 하는 방법)
 
 1. http://localhost:5173/teacher 에서 Google로 로그인 (에뮬레이터는 가짜 계정 창이 뜹니다)
 2. 화면에 나온 UID를 복사

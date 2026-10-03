@@ -2,8 +2,8 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     function isStudentNo(classId, no) {
-      return request.auth != null && request.auth.token.role == 'student'
-        && request.auth.token.classId == classId && string(request.auth.token.no) == no;
+      return request.auth != null && request.auth.token.get('role', '') == 'student'
+        && request.auth.token.get('classId', '') == classId && string(request.auth.token.get('no', '')) == no;
     }
     function ownsClass(classId) {
       return request.auth != null
@@ -22,6 +22,26 @@ service firebase.storage {
         && request.resource.contentType.matches('video/.*');
       allow delete: if isStudentNo(classId, no);
       allow update: if false;
+    }
+    // 학생 목소리 녹음: 5MB 이하 소리 파일만
+    match /classes/{classId}/{no}/voices/{file} {
+      allow read: if isStudentNo(classId, no) || ownsClass(classId);
+      allow create, update: if isStudentNo(classId, no)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('audio/.*');
+      allow delete: if isStudentNo(classId, no);
+    }
+    // 완성 영상: 서버가 만든다. 본인·교사, 그리고 제출한 작품은 같은 반 친구도 볼 수 있다
+    match /classes/{classId}/{no}/exports/{file} {
+      allow read: if isStudentNo(classId, no) || ownsClass(classId)
+        || (request.auth != null && request.auth.token.get('classId', '') == classId
+            && firestore.get(/databases/(default)/documents/projects/$(classId + '_' + no)).data.submitted == true);
+      allow write: if false;
+    }
+    // 배경음악: 로그인한 사람은 들을 수 있고, 올리기는 콘솔(운영자)에서만
+    match /bgm/{file} {
+      allow read: if request.auth != null;
+      allow write: if false;
     }
     match /{all=**} { allow read, write: if false; }
   }
