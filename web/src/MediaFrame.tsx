@@ -45,6 +45,7 @@ export function GenMedia({
   still,
   controls,
   autoPlay,
+  start,
 }: {
   g?: { hue: number; img: boolean; storagePath?: string; url?: string; mimeType?: string; mock?: boolean };
   label: string;
@@ -54,6 +55,7 @@ export function GenMedia({
   still?: boolean;
   controls?: boolean;
   autoPlay?: boolean;
+  start?: number; // 앞부분을 자른 만큼 건너뛰고 재생
 }) {
   // 서버가 저장해 둔 주소(g.url)를 먼저 쓰고, 없으면 Storage 에서 주소를 받아 온다
   const [url, setUrl] = React.useState<string | undefined>(g?.url ?? (g?.storagePath ? urlCache.get(g.storagePath) : undefined));
@@ -78,7 +80,7 @@ export function GenMedia({
       {isImage ? (
         <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       ) : (
-        <video key={`${url}-${autoPlay ? 'p' : ''}`} src={url} controls={controls && size !== 'sm'} autoPlay={autoPlay} muted={size === 'sm' || autoPlay} loop={size === 'sm'} playsInline preload="metadata" />
+        <video key={`${url}-${autoPlay ? 'p' : ''}-${start ?? 0}`} src={start ? `${url}#t=${start}` : url} controls={controls && size !== 'sm'} autoPlay={autoPlay} muted={size === 'sm' || autoPlay} loop={size === 'sm'} playsInline preload="metadata" />
       )}
       {badge && <span className="frame-badge">{badge}</span>}
       {caption && <span className="frame-caption">{caption}</span>}

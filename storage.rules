@@ -1,9 +1,11 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // 번호는 숫자로 비교한다 (실제 서버에서는 토큰의 번호가 1.0 처럼 소수로 들어와 글자 비교가 틀릴 수 있다)
     function isStudentNo(classId, no) {
       return request.auth != null && request.auth.token.get('role', '') == 'student'
-        && request.auth.token.get('classId', '') == classId && string(request.auth.token.get('no', '')) == no;
+        && request.auth.token.get('classId', '') == classId
+        && no.matches('^[0-9]+$') && int(request.auth.token.get('no', -1)) == int(no);
     }
     function ownsClass(classId) {
       return request.auth != null

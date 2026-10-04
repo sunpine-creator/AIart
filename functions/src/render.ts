@@ -7,6 +7,7 @@ import { join } from 'node:path';
 export type Clip = {
   kind: 'title' | 'outro' | 'video' | 'image' | 'placeholder';
   dur: number; // 초
+  start?: number; // 영상 앞부분을 자를 길이(초)
   text?: string; // 제목 화면·자리표시 화면의 글자
   caption?: string; // 자막·말풍선
   src?: string; // 영상·이미지 파일 경로
@@ -90,6 +91,7 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
 
   // 영상 입력 (0번)
   if (c.kind === 'video' && c.src) {
+    if (c.start && c.start > 0) args.push('-ss', String(c.start));
     args.push('-i', c.src);
     vchain = `[0:v]${fit},tpad=stop_mode=clone:stop_duration=${c.dur}`;
   } else if (c.kind === 'image' && c.src) {

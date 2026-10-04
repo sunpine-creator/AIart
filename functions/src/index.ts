@@ -398,7 +398,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   // 타임라인 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (화면과 같은 규칙)
   const scenes: any[] = p.scenes ?? [];
   const uploads: any[] = p.uploads ?? [];
-  const all = [...scenes.map((s) => s.id), ...uploads.map((u) => u.id)];
+  const all = [...scenes.filter((s) => !s.skip).map((s) => s.id), ...uploads.map((u) => u.id)];
   const kept = (p.order ?? []).filter((k: string) => all.includes(k));
   const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
   const total = (p.intro?.dur ?? 3) + (p.outro?.dur ?? 3) + keys.reduce((a, k) => a + ((scenes.find((s) => s.id === k) ?? uploads.find((u) => u.id === k))?.dur ?? 0), 0);
@@ -431,8 +431,9 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
         const voice = await voiceFor(sc, i);
         if (g?.storagePath) {
           const src = await fetchFile(g.storagePath, `gen_${i}`);
-          const dur = g.img ? sc.dur : Math.min(sc.dur, g.sec ?? sc.dur);
-          clips.push({ kind: g.img ? 'image' : 'video', dur, src, caption: sc.caption, voice, aiBadge: true });
+          const start = g.img ? 0 : Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1));
+          const dur = g.img ? sc.dur : Math.min(sc.dur, (g.sec ?? sc.dur) - start);
+          clips.push({ kind: g.img ? 'image' : 'video', dur, start, src, caption: sc.caption, voice, aiBadge: true });
         } else {
           clips.push({ kind: 'placeholder', dur: sc.dur, text: sc.line || `장면 ${i}`, caption: sc.caption, voice });
         }
@@ -442,7 +443,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       if (u?.path) {
         const src = await fetchFile(u.path, `up_${i}`);
         const voice = await voiceFor(u, i);
-        clips.push({ kind: 'video', dur: u.dur, src, caption: u.caption, keepAudio: u.voice === '원래 소리', voice });
+        clips.push({ kind: 'video', dur: u.dur, start: Math.max(0, Number(u.start) || 0), src, caption: u.caption, keepAudio: u.voice === '원래 소리', voice });
       }
     }
     clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, text: p.outro?.caption || '' });

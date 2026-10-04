@@ -1133,7 +1133,8 @@ function S4() {
 
   // 타임라인 가운데 클립 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 붙인다
   const middleKeys = useMemo(() => {
-    const all = [...s.scenes.map((x) => x.id), ...s.uploads.map((u) => u.id)];
+    // 편집에서 뺀 장면은 타임라인에 넣지 않는다
+    const all = [...s.scenes.filter((x) => !x.skip).map((x) => x.id), ...s.uploads.map((u) => u.id)];
     const kept = s.order.filter((k) => all.includes(k));
     return [...kept, ...all.filter((k) => !kept.includes(k))];
   }, [s.order, s.scenes, s.uploads]);
@@ -1158,7 +1159,7 @@ function S4() {
   const total = items.reduce((a, b) => a + b.dur, 0);
   const limit = maxSec(s.band);
   const over = total > limit;
-  const missing = items.filter((i) => i.kind === 'scene' && !i.scene!.selectedGenId).length;
+  const missing = items.filter((i) => i.kind === 'scene' && !i.scene!.selectedGenId).length; // 뺀 장면은 items 에 없다
   const cur = items.find((i) => i.key === sel) ?? items[0];
   const curIdx = middleKeys.indexOf(cur.key);
 
@@ -1175,14 +1176,18 @@ function S4() {
     }) ?? items[0];
   const show = playing ? atItem : cur;
 
-  const setItem = (patch: { dur?: number; caption?: string; voice?: string }) => {
+  const setItem = (patch: { dur?: number; caption?: string; voice?: string; start?: number }) => {
     if (cur.kind === 'intro') d({ t: 'set', patch: { intro: { ...s.intro, ...patch } } });
     else if (cur.kind === 'outro') d({ t: 'set', patch: { outro: { ...s.outro, ...patch } } });
     else if (cur.kind === 'upload') d({ t: 'set', patch: { uploads: s.uploads.map((u) => (u.id === cur.key ? { ...u, ...patch } : u)) } });
     else d({ t: 'scene', id: cur.key, patch });
   };
+  // 자를 수 있는 원본 길이(영상만). 앞부분을 자르면 쓸 수 있는 길이가 그만큼 줄어든다
+  const srcLen = cur.kind === 'scene' && cur.gen && !cur.gen.img ? cur.gen.sec : cur.kind === 'upload' ? Math.max(1, Math.floor(cur.upload!.srcDur) || 1) : 0;
+  const start = cur.kind === 'scene' ? cur.scene!.start ?? 0 : cur.kind === 'upload' ? cur.upload!.start ?? 0 : 0;
   const maxDur =
-    cur.kind === 'scene' ? (cur.gen && !cur.gen.img ? cur.gen.sec : s.band === 'elementary' ? 5 : 10) : cur.kind === 'upload' ? Math.max(1, Math.min(Math.floor(cur.upload!.srcDur) || 1, limit)) : 5;
+    srcLen > 0 ? Math.max(1, Math.min(Math.floor(srcLen - start), limit)) : cur.kind === 'scene' ? (s.band === 'elementary' ? 5 : 10) : 5;
+  const skipped = s.scenes.filter((x) => x.skip);
 
   const moveTo = (key: string, target: number) => {
     const arr = middleKeys.filter((k) => k !== key);
@@ -1207,7 +1212,7 @@ function S4() {
           {show.kind === 'upload' ? (
             <div className="frame frame-lg video-frame">
               {show.upload!.playable ? (
-                <video key={show.key + (playing ? '-p' : '')} src={show.upload!.url} muted playsInline autoPlay={playing} controls={!playing} />
+                <video key={show.key + (playing ? '-p' : '')} src={`${show.upload!.url}#t=${show.upload!.start ?? 0}`} muted playsInline autoPlay={playing} controls={!playing} />
               ) : (
                 <span className="no-preview">이 브라우저에서는 미리 볼 수 없는 형식이에요. 저장할 때 자동으로 바꿔서 넣어요.</span>
               )}
@@ -1215,7 +1220,7 @@ function S4() {
               {show.caption && <span className="frame-caption">{show.caption}</span>}
             </div>
           ) : show.kind === 'scene' && show.gen ? (
-            <GenMedia g={show.gen} label={show.scene!.line} caption={show.caption} badge="AI 생성" size="lg" autoPlay={playing} controls={!playing} />
+            <GenMedia g={show.gen} label={show.scene!.line} caption={show.caption} badge="AI 생성" size="lg" autoPlay={playing} controls={!playing} start={show.scene!.start} />
           ) : show.kind === 'scene' ? (
             <div className="frame frame-lg empty-frame">
               <span>아직 만든 장면이 없어요</span>
@@ -1269,9 +1274,34 @@ function S4() {
               <p className="tiny muted">AI 목소리는 정해진 목소리만 쓸 수 있어요. 내 목소리를 AI로 흉내 내지 않아요.</p>
             </>
           )}
+          {srcLen > 1 && (
+            <>
+              <label htmlFor="ins-start">
+                앞부분 자르기 <span className="mono">{start}초</span>
+              </label>
+              <input
+                id="ins-start"
+                type="range"
+                min={0}
+                max={Math.max(0, srcLen - 1)}
+                step={0.5}
+                value={start}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setItem({ start: v, dur: Math.max(1, Math.min(cur.dur, Math.floor(srcLen - v))) });
+                }}
+              />
+              <p className="tiny muted">마음에 안 드는 앞부분은 자르고, 뒷부분은 “길이”를 줄여서 빼요.</p>
+            </>
+          )}
           {cur.kind === 'upload' && (
             <button className="btn tiny" onClick={() => removeUpload(cur.key)}>
               이 영상 빼기
+            </button>
+          )}
+          {cur.kind === 'scene' && (
+            <button className="btn tiny" onClick={() => (d({ t: 'scene', id: cur.key, patch: { skip: true } }), setSel('intro'))}>
+              이 장면 빼기
             </button>
           )}
         </div>
@@ -1321,6 +1351,16 @@ function S4() {
             );
           })}
         </div>
+        {skipped.length > 0 && (
+          <div className="skipped">
+            <span className="tiny muted">뺀 장면</span>
+            {skipped.map((x) => (
+              <button key={x.id} className="btn tiny" onClick={() => d({ t: 'scene', id: x.id, patch: { skip: false } })}>
+                #{s.scenes.indexOf(x) + 1} 다시 넣기
+              </button>
+            ))}
+          </div>
+        )}
         <UploadBox
           onAdd={(u, file) => {
             d({ t: 'set', patch: { order: [...middleKeys, u.id] } });

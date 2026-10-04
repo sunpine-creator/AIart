@@ -661,3 +661,4 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 }
 .danger-panel { border: 1px solid var(--critical) !important; background: var(--critical-tint); }
 .danger-panel .btn.danger:not(:disabled) { background: var(--critical); color: #fff; }
+.skipped { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

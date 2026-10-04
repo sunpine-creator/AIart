@@ -19,7 +19,7 @@ export type Res = '360p' | '720p';
 export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded' | 'blocked' | 'rejected';
 export type Fit = 'yes' | 'partial' | 'no';
 export type Builder = { who: string; what: string; where: string; how: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; mood?: string; part?: string; intent?: string };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
@@ -27,7 +27,7 @@ export type Gen = {
   storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number;
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
-export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string };
+export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done' };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string };
@@ -369,7 +369,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 영상 장면은 만든 영상 길이(3초)보다 길게 쓸 수 없다
       scenes: ((p.scenes ?? []) as Scene[]).map((sc) => {
         const g = gens.find((x) => x.id === sc.selectedGenId);
-        return { ...sc, edits: editsOf(sc.id), dur: g && !g.img ? Math.min(sc.dur, g.sec) : sc.dur };
+        return { ...sc, edits: editsOf(sc.id), dur: g && !g.img ? Math.max(1, Math.min(sc.dur, g.sec - (sc.start ?? 0))) : sc.dur };
       }),
       gens,
       logs,
