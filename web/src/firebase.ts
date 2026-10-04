@@ -35,6 +35,7 @@ export const api = {
     { genId: string; blocked: boolean; category?: string; reason?: string; suggestion?: string }
   >('requestGeneration'),
   reviewGeneration: call<{ genId: string; approve: boolean; reason?: string }, { ok: boolean }>('reviewGeneration'),
+  deleteClass: call<{ classId: string }, { ok: boolean }>('deleteClass'),
   resetPin: call<{ classId: string; no: number; name?: string }, { ok: boolean }>('resetPin'),
   draftScenario: call<{ goal: string; role: string; content: string; cond: string; topic?: string }, { blocked: boolean; reason?: string; lines: string[] }>('draftScenario'),
   renderVideo: call<Record<string, never>, { path: string }>('renderVideo'),

@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 import { getFunctions } from 'firebase-admin/functions';
 import { getStorage } from 'firebase-admin/storage';
 import { setGlobalOptions } from 'firebase-functions/v2';
@@ -507,5 +507,33 @@ export const setTeacherApproval = onCall<{ uid: string; approved: boolean }>(asy
   if (typeof uid !== 'string' || !uid) throw new HttpsError('invalid-argument', '교사를 골라 주세요.');
   if (uid === u.uid && !approved) throw new HttpsError('failed-precondition', '내 계정의 승인은 취소할 수 없어요.');
   await db.doc(`teachers/${uid}`).set({ approved: !!approved, approvedBy: u.email, at: FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true };
+});
+
+// ───────── 교사: 반 삭제 (연습한 반 정리) ─────────
+// 반 문서와 학생 명단, 학생 작업, 생성 기록, 프롬프트 기록, 비용 기록, 저장된 영상까지 모두 지운다. 되돌릴 수 없다.
+export const deleteClass = onCall({ timeoutSeconds: 300, memory: '512MiB' }, async (req) => {
+  const uid = await requireTeacher(req);
+  const classId = String(req.data?.classId ?? '');
+  if (!classId) throw new HttpsError('invalid-argument', '지울 반을 골라 주세요.');
+  const c = await ownedClass(uid, classId);
+  const code = c.data()?.code as string | undefined;
+  const dropQuery = async (q: FirebaseFirestore.Query) => {
+    for (;;) {
+      const snap = await q.limit(400).get();
+      if (snap.empty) return;
+      const b = db.batch();
+      snap.docs.forEach((d) => b.delete(d.ref));
+      await b.commit();
+    }
+  };
+  await dropQuery(db.collection('projects').where('classId', '==', classId));
+  await dropQuery(db.collection('generations').where('classId', '==', classId));
+  await dropQuery(db.collection('promptLogs').where('classId', '==', classId));
+  await dropQuery(db.collection('usage').where(FieldPath.documentId(), '>=', `${classId}_`).where(FieldPath.documentId(), '<', `${classId}_~`));
+  if (code) await db.doc(`codes/${code}`).delete().catch(() => {});
+  await db.recursiveDelete(db.doc(`classes/${classId}`));
+  await getStorage().bucket().deleteFiles({ prefix: `classes/${classId}/` }).catch((e) => logger.warn('반 파일 삭제 실패', e));
+  logger.info('반 삭제', { classId, by: uid });
   return { ok: true };
 });

@@ -659,3 +659,5 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
   .parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .frag, .flow-q { grid-template-columns: minmax(0, 1fr); }
 }
+.danger-panel { border: 1px solid var(--critical) !important; background: var(--critical-tint); }
+.danger-panel .btn.danger:not(:disabled) { background: var(--critical); color: #fff; }

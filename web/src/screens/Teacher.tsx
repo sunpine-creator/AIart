@@ -228,9 +228,42 @@ function PinCards() {
   );
 }
 
+// 반 삭제: 반 이름을 그대로 써야 지울 수 있다(실수 방지). 되돌릴 수 없다.
+function DeleteClass({ onClose }: { onClose: () => void }) {
+  const { s, d } = useStore();
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const run = () => {
+    setBusy(true);
+    api
+      .deleteClass({ classId: s.classId })
+      .then(() => (d({ t: 'toast', msg: `「${s.cls.title}」 반을 삭제했어요.` }), d({ t: 'openClass', classId: '' })))
+      .catch((e) => (d({ t: 'toast', msg: errText(e) }), setBusy(false)));
+  };
+  return (
+    <section className="panel danger-panel" role="alertdialog" aria-label="반 삭제 확인">
+      <h3>이 반을 삭제할까요?</h3>
+      <p>
+        학생 명단, 학생 작업, AI로 만든 영상, 프롬프트 기록, 완성 영상이 <strong>모두 지워지고 되돌릴 수 없어요.</strong> 반 코드로도 더 이상 들어올 수 없어요.
+      </p>
+      <label htmlFor="del-typed">확인을 위해 반 이름 「{s.cls.title}」을 그대로 써 주세요</label>
+      <input id="del-typed" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+      <div className="actions">
+        <button className="btn danger" disabled={typed.trim() !== s.cls.title.trim() || busy} onClick={run}>
+          {busy ? '지우는 중…' : '영구 삭제'}
+        </button>
+        <button className="btn" onClick={onClose} disabled={busy}>
+          취소
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Dashboard() {
   const { s, d } = useStore();
   const [showPins, setShowPins] = useState(false);
+  const [askDelete, setAskDelete] = useState(false);
   const roster = s.others;
   const me = roster[0] ?? { no: 0, nick: '', stage: 1 as Stage, credits: 0, status: 'idle' as const };
   const blocked = s.logs.filter((l) => l.verdict === 'blocked').slice(-4).reverse();
@@ -254,12 +287,16 @@ function Dashboard() {
           <button className="btn" onClick={() => setShowPins(!showPins)}>
             {showPins ? '현황판 보기' : '학생 명단·입장 안내'}
           </button>
+          <button className="btn" onClick={() => setAskDelete(!askDelete)}>
+            반 삭제
+          </button>
           <button className={`btn ${s.cls.paused ? 'danger' : ''}`} onClick={() => d({ t: 'cls', patch: { paused: !s.cls.paused } })}>
             {s.cls.paused ? '화면 다시 열기' : '모든 화면 멈추기'}
           </button>
         </div>
       </header>
 
+      {askDelete && <DeleteClass onClose={() => setAskDelete(false)} />}
       {showPins ? <PinCards /> : <>
       <section className="t-bar">
         <div className="t-block">
