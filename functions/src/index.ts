@@ -12,10 +12,10 @@ import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, specFor } from './c
 import { Builder, buildPromptKo, moderateRules } from './moderation';
 import { checkAndTranslate } from './ai/text';
 import { SafetyBlockedError, provider } from './ai/video';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
-import { Clip, renderAll } from './render';
+import { Clip, Layers, renderAll } from './render';
 import { isAiVoice, speak } from './ai/tts';
 
 initializeApp();
@@ -429,7 +429,25 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       if (isAiVoice(item.voice) && item.caption && useAi) return speak(item.caption, item.voice, pjoin(dir, `tts_${i}.wav`)).catch(() => undefined);
       return undefined;
     };
-    const clips: Clip[] = [{ kind: 'title', dur: p.intro?.dur ?? 3, text: p.intro?.caption || p.topic || 'AI로 달라진 나의 일상' }];
+    // 브라우저가 그려 보낸 글자 그림(PNG)을 파일로 저장한다. 키: intro / outro / 장면 id / 올린 영상 id
+    const ovIn = (req.data?.overlays ?? {}) as Record<string, { fixed?: string; cap?: string[]; anim?: string }>;
+    let pngN = 0;
+    const savePng = (dataUrl?: string) => {
+      const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? ''));
+      if (!m || pngN > 400) return undefined;
+      const buf = Buffer.from(m[1], 'base64');
+      if (buf.length > 3 * 1024 * 1024) return undefined;
+      const f = pjoin(dir, `ov_${pngN++}.png`);
+      writeFileSync(f, buf);
+      return f;
+    };
+    const layersOf = (key: string): Layers | undefined => {
+      const o = ovIn[key];
+      if (!o) return undefined;
+      const anim = (['none', 'fade', 'slide', 'type'].includes(String(o.anim)) ? o.anim : 'none') as Layers['anim'];
+      return { fixed: savePng(o.fixed), cap: (Array.isArray(o.cap) ? o.cap.slice(0, 20) : []).map(savePng).filter((x): x is string => !!x), anim };
+    };
+    const clips: Clip[] = [{ kind: 'title', dur: p.intro?.dur ?? 3, layers: layersOf('intro') }];
     let i = 0;
     for (const k of keys) {
       i++;
@@ -441,9 +459,9 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
         if (g && src) {
           const start = g.img ? 0 : Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1));
           const dur = g.img ? sc.dur : Math.min(sc.dur, (g.sec ?? sc.dur) - start);
-          clips.push({ kind: g.img ? 'image' : 'video', dur, start, src, caption: sc.caption, capStyle: sc.capStyle, voice, aiBadge: true });
+          clips.push({ kind: g.img ? 'image' : 'video', dur, start, src, voice, layers: layersOf(sc.id) });
         } else {
-          clips.push({ kind: 'placeholder', dur: sc.dur, text: sc.line || `장면 ${i}`, caption: sc.caption, capStyle: sc.capStyle, voice });
+          clips.push({ kind: 'placeholder', dur: sc.dur, voice, layers: layersOf(sc.id) });
         }
         continue;
       }
@@ -452,10 +470,10 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       if (u && usrc) {
         const src = usrc;
         const voice = await voiceFor(u, i);
-        clips.push({ kind: 'video', dur: u.dur, start: Math.max(0, Number(u.start) || 0), src, caption: u.caption, capStyle: u.capStyle, keepAudio: u.voice === '원래 소리', voice });
+        clips.push({ kind: 'video', dur: u.dur, start: Math.max(0, Number(u.start) || 0), src, keepAudio: u.voice === '원래 소리', voice, layers: layersOf(u.id) });
       }
     }
-    clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, text: p.outro?.caption || '' });
+    clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, layers: layersOf('outro') });
 
     const out = await renderAll(clips, dir);
     const exportId = `${Date.now()}`;

@@ -39,7 +39,7 @@ export const api = {
   resetPin: call<{ classId: string; no: number; name?: string }, { ok: boolean }>('resetPin'),
   draftScenario: call<{ goal: string; role: string; content: string; cond: string; topic?: string }, { blocked: boolean; reason?: string; lines: string[] }>('draftScenario'),
   startUpload: call<{ kind: 'upload' | 'voice'; id: string; contentType: string; size: number; ext: string }, { path: string; sessionUrl: string; url: string }>('startUpload'),
-  renderVideo: call<Record<string, never>, { path: string; missing?: number }>('renderVideo'),
+  renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo'),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean }>('claimTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),
   setTeacherApproval: call<{ uid: string; approved: boolean }, { ok: boolean }>('setTeacherApproval'),

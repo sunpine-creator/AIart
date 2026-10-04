@@ -3,6 +3,7 @@ import { onAuthStateChanged, signInWithCustomToken, signOut, User } from 'fireba
 import { collection, doc, getDoc, limit, onSnapshot, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref as sref, uploadBytes } from 'firebase/storage';
 import { api, auth, db, errText, storage } from './firebase';
+import { OverlayItem, buildOverlays } from './overlays';
 
 // ───────────── 설정값 (서버 functions/src/config.ts 와 같게 유지) ─────────────
 export const PRICE = { '360p': 0.03, '720p': 0.1 } as const;
@@ -506,13 +507,36 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
       case 'render':
         setLocal((l) => ({ ...l, rendering: true }));
-        // 편집 내용이 저장된 뒤에 합치도록 잠깐 기다린다
-        window.setTimeout(() => {
-          api
-            .renderVideo({})
-            .then((r) => toast(r.missing ? `영상을 저장했어요. 불러오지 못한 조각 ${r.missing}개는 빼고 만들었어요.` : '영상을 저장했어요!'))
-            .catch((e) => toast(errText(e)))
-            .finally(() => setLocal((l) => ({ ...l, rendering: false })));
+        // 편집 내용이 저장된 뒤에 합치도록 잠깐 기다리고, 글자 그림을 만들어 함께 보낸다
+        window.setTimeout(async () => {
+          try {
+            const p = projectRef.current ?? {};
+            const scenes = ((p.scenes ?? []) as Scene[]).filter((x) => !x.skip);
+            const uploads = (p.uploads ?? []) as Upload[];
+            const all = [...scenes.map((x) => x.id), ...uploads.map((u) => u.id)];
+            const kept = ((p.order ?? []) as string[]).filter((k) => all.includes(k));
+            const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
+            const items: OverlayItem[] = [{ key: 'intro', text: p.intro?.caption || p.topic || 'AI로 달라진 나의 일상' }];
+            keys.forEach((k, i) => {
+              const sc = scenes.find((x) => x.id === k);
+              if (sc) {
+                const g = gens.find((x) => x.id === sc.selectedGenId) ?? [...gens].reverse().find((x) => x.sceneId === sc.id && x.status === 'succeeded');
+                const has = !!g?.storagePath;
+                items.push({ key: sc.id, kind: 'scene', caption: sc.caption ?? '', capStyle: sc.capStyle, aiBadge: has, placeholder: has ? undefined : sc.line || `장면 ${i + 1}` });
+              } else {
+                const u = uploads.find((x) => x.id === k)!;
+                items.push({ key: u.id, kind: 'upload', caption: u.caption ?? '', capStyle: u.capStyle });
+              }
+            });
+            items.push({ key: 'outro', text: p.outro?.caption || '' });
+            const overlays = await buildOverlays(items);
+            const r = await api.renderVideo({ overlays });
+            toast(r.missing ? `영상을 저장했어요. 불러오지 못한 조각 ${r.missing}개는 빼고 만들었어요.` : '영상을 저장했어요!');
+          } catch (e) {
+            toast(errText(e));
+          } finally {
+            setLocal((l) => ({ ...l, rendering: false }));
+          }
         }, 900);
         return;
       case 'join':

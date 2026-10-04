@@ -4,13 +4,11 @@ import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// 자막 꾸미기 (중등 편집 기능). 값이 없으면 기본 자막(아래, 보통 크기, 흰 글자, 검은 상자).
-export type CapStyle = {
-  kind?: 'sub' | 'bubble'; // 자막 / 말풍선
-  size?: 'S' | 'M' | 'L';
-  color?: string; // #RRGGBB
-  pos?: 'top' | 'mid' | 'bottom';
-  box?: boolean; // 자막 뒤 어두운 상자
+// 글자(제목·자막·말풍선·AI 표시)는 브라우저가 투명 PNG 로 그려서 보내고, 여기서는 영상 위에 겹치기만 한다.
+// (클라우드의 ffmpeg 에는 글자 그리기(drawtext) 기능이 없어서 overlay 만 쓴다)
+export type Layers = {
+  fixed?: string; // 처음부터 끝까지 보이는 글자 그림 (제목, AI 표시 등)
+  cap?: string[]; // 자막 그림. 타자 치듯 움직임이면 여러 장
   anim?: 'none' | 'fade' | 'slide' | 'type';
 };
 
@@ -18,13 +16,10 @@ export type Clip = {
   kind: 'title' | 'outro' | 'video' | 'image' | 'placeholder';
   dur: number; // 초
   start?: number; // 영상 앞부분을 자를 길이(초)
-  text?: string; // 제목 화면·자리표시 화면의 글자
-  caption?: string; // 자막·말풍선
-  capStyle?: CapStyle;
   src?: string; // 영상·이미지 파일 경로
   keepAudio?: boolean; // 올린 영상의 원래 소리 쓰기
   voice?: string; // 녹음·AI 목소리 파일 경로
-  aiBadge?: boolean; // 화면 왼쪽 위 "AI 생성" 표시
+  layers?: Layers;
 };
 
 export const W = 1280;
@@ -41,11 +36,6 @@ function bin(name: 'ffmpeg' | 'ffprobe'): string {
   } catch {
     return name;
   }
-}
-
-export function fontPath(): string | undefined {
-  const p = join(__dirname, '..', 'assets', 'NotoSansKR-Bold.otf');
-  return existsSync(p) ? p : process.env.CAPTION_FONT;
 }
 
 function run(cmd: string, args: string[]): Promise<string> {
@@ -69,57 +59,6 @@ export async function hasAudio(file: string): Promise<boolean> {
   }
 }
 
-// drawtext 는 글자를 파일로 넘겨 특수문자 문제를 피한다
-function textFilter(dir: string, name: string, text: string, opts: { size: number; y: string; box?: boolean; color?: string }) {
-  const font = fontPath();
-  if (!font || !text.trim()) return '';
-  const tf = join(dir, `${name}.txt`);
-  writeFileSync(tf, text.replace(/\r/g, ''));
-  const box = opts.box ? ':box=1:boxcolor=black@0.6:boxborderw=18' : '';
-  return `drawtext=fontfile='${font}':textfile='${tf}':expansion=none:fontsize=${opts.size}:fontcolor=${opts.color ?? 'white'}:line_spacing=10:x=(w-text_w)/2:y=${opts.y}${box}`;
-}
-
-const SIZE_PX = { S: 34, M: 46, L: 62 } as const;
-const hex = (c: string | undefined, d: string) => (c && /^#[0-9a-fA-F]{6}$/.test(c) ? `0x${c.slice(1)}` : d);
-
-// 자막 한 개를 drawtext 필터들로 만든다. 각 조각 영상의 시간 t 는 0초부터 시작한다.
-export function captionFilters(dir: string, i: number, text: string, st: CapStyle = {}, dur: number): string[] {
-  const font = fontPath();
-  if (!font || !text.trim()) return [];
-  const bubble = st.kind === 'bubble';
-  const size = SIZE_PX[st.size ?? 'M'] ?? 46;
-  const color = hex(st.color, bubble ? '0x1E2A44' : 'white');
-  const pos = st.pos ?? (bubble ? 'top' : 'bottom');
-  const baseY = pos === 'top' ? '60' : pos === 'mid' ? '(h-text_h)/2' : 'h-text_h-70';
-  const x = bubble ? '80' : `'(w-text_w)/2'`;
-  const anim = st.anim ?? 'none';
-  const y = anim === 'slide' ? `'${baseY}+max(0,0.6-t)*160'` : `'${baseY}'`;
-  const alpha = anim === 'fade' || anim === 'slide' ? `:alpha='min(1,t/0.6)'` : '';
-  const deco = bubble
-    ? ':box=1:boxcolor=white@0.95:boxborderw=22'
-    : st.box === false
-      ? ':borderw=3:bordercolor=black@0.85'
-      : ':box=1:boxcolor=black@0.6:boxborderw=18';
-  const wrapped = wrap(text, size >= 62 ? 16 : size <= 34 ? 28 : 22);
-  const one = (name: string, t: string, enable = '') => {
-    const tf = join(dir, `${name}.txt`);
-    writeFileSync(tf, t.replace(/\r/g, ''));
-    return `drawtext=fontfile='${font}':textfile='${tf}':expansion=none:fontsize=${size}:fontcolor=${color}:line_spacing=10:x=${x}:y=${y}${deco}${alpha}${enable}`;
-  };
-  if (anim !== 'type') return [one(`c${i}`, wrapped)];
-  // 타자 치듯: 글자를 조금씩 늘려 가며 보여 준다
-  const chars = [...wrapped];
-  const steps = Math.min(chars.length, 14);
-  const step = Math.min(1.6, dur * 0.6) / steps;
-  const out: string[] = [];
-  for (let k = 1; k <= steps; k++) {
-    const part = chars.slice(0, Math.ceil((chars.length * k) / steps)).join('');
-    const en = k < steps ? `:enable='between(t,${((k - 1) * step).toFixed(2)},${(k * step).toFixed(2)})'` : `:enable='gte(t,${((k - 1) * step).toFixed(2)})'`;
-    out.push(one(`c${i}_${k}`, part, en));
-  }
-  return out;
-}
-
 // 긴 자막은 한 줄 22자 안팎으로 나눈다
 export function wrap(text: string, max = 22): string {
   const words = text.split(/\s+/);
@@ -139,62 +78,70 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
   const out = join(dir, `seg_${String(i).padStart(2, '0')}.mp4`);
   const args: string[] = ['-y', '-hide_banner', '-loglevel', 'error'];
   const fit = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${FPS}`;
-  let vchain: string;
+  const d = String(c.dur);
+  const filters: string[] = [];
 
-  // 영상 입력 (0번)
+  // 0번 입력: 바탕(영상·이미지·색)
   if (c.kind === 'video' && c.src) {
     if (c.start && c.start > 0) args.push('-ss', String(c.start));
     args.push('-i', c.src);
-    vchain = `[0:v]${fit},tpad=stop_mode=clone:stop_duration=${c.dur}`;
+    filters.push(`[0:v]${fit},tpad=stop_mode=clone:stop_duration=${c.dur}[b0]`);
   } else if (c.kind === 'image' && c.src) {
-    args.push('-loop', '1', '-t', String(c.dur), '-i', c.src);
-    vchain = `[0:v]${fit}`;
+    args.push('-loop', '1', '-t', d, '-i', c.src);
+    filters.push(`[0:v]${fit}[b0]`);
   } else {
-    const bg = c.kind === 'outro' ? '0x7FA6F0' : c.kind === 'title' ? '0x17203A' : '0x2B3550';
-    args.push('-f', 'lavfi', '-t', String(c.dur), '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}`);
-    vchain = '[0:v]null';
+    const bg = c.kind === 'outro' ? '0x7FA6F0' : c.kind === 'title' ? '0x26324F' : '0x2B3550';
+    args.push('-f', 'lavfi', '-t', d, '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}`);
+    filters.push('[0:v]null[b0]');
   }
 
-  // 글자
-  const parts: string[] = [];
-  if (c.kind === 'title' || c.kind === 'outro' || c.kind === 'placeholder') {
-    const t = textFilter(dir, `t${i}`, wrap(c.text ?? '', 16), { size: c.kind === 'placeholder' ? 44 : 64, y: '(h-text_h)/2-30' });
-    if (t) parts.push(t);
-    if (c.kind === 'outro') {
-      const n = textFilter(dir, `n${i}`, AI_NOTICE, { size: 30, y: 'h-120' });
-      if (n) parts.push(n);
+  // 글자 그림 겹치기
+  let idx = 1;
+  let cur = 'b0';
+  const lay = (png: string, opt: { enable?: string; fade?: boolean; slide?: boolean }) => {
+    args.push('-loop', '1', '-t', d, '-i', png);
+    const o = `o${idx}`;
+    filters.push(`[${idx}:v]format=rgba${opt.fade ? ',fade=in:st=0:d=0.6:alpha=1' : ''}[${o}]`);
+    const y = opt.slide ? `'max(0,0.6-t)*160'` : '0';
+    const next = `v${idx}`;
+    filters.push(`[${cur}][${o}]overlay=x=0:y=${y}:eof_action=pass${opt.enable ? `:enable='${opt.enable}'` : ''}[${next}]`);
+    cur = next;
+    idx++;
+  };
+  const L = c.layers ?? {};
+  if (L.fixed && existsSync(L.fixed)) lay(L.fixed, {});
+  const caps = (L.cap ?? []).filter((p) => existsSync(p));
+  if (caps.length) {
+    const anim = L.anim ?? 'none';
+    if (anim === 'type' && caps.length > 1) {
+      const step = Math.min(1.6, c.dur * 0.6) / caps.length;
+      caps.forEach((p, k) => {
+        const a = (k * step).toFixed(2);
+        const b = ((k + 1) * step).toFixed(2);
+        lay(p, { enable: k < caps.length - 1 ? `between(t,${a},${b})` : `gte(t,${a})` });
+      });
+    } else {
+      lay(caps[caps.length - 1], { fade: anim === 'fade' || anim === 'slide', slide: anim === 'slide' });
     }
-    if (c.kind === 'placeholder') {
-      const n = textFilter(dir, `p${i}`, '(연습 모드: AI 장면 자리)', { size: 26, y: '40', color: 'white@0.7' });
-      if (n) parts.push(n);
-    }
   }
-  if (c.caption?.trim() && c.kind !== 'title' && c.kind !== 'outro') {
-    parts.push(...captionFilters(dir, i, c.caption, c.capStyle, c.dur));
-  }
-  if (c.aiBadge) {
-    const b = textFilter(dir, `b${i}`, 'AI 생성', { size: 24, y: '24', box: true });
-    if (b) parts.push(b.replace('x=(w-text_w)/2', 'x=28'));
-  }
-  vchain += parts.length ? `,${parts.join(',')}` : '';
-  vchain += ',format=yuv420p[v]';
+  filters.push(`[${cur}]format=yuv420p[v]`);
 
-  // 소리 입력 (1번): 목소리 > 원래 소리 > 무음
-  let achain: string;
+  // 소리: 목소리 > 원래 소리 > 무음
+  const ai = idx;
   if (c.voice) {
     args.push('-i', c.voice);
-    achain = `[1:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur}[a]`;
+    filters.push(`[${ai}:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur}[a]`);
   } else if (c.kind === 'video' && c.src && c.keepAudio && (await hasAudio(c.src))) {
-    achain = `[0:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur}[a]`;
+    filters.push(`[0:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur}[a]`);
   } else {
-    args.push('-f', 'lavfi', '-t', String(c.dur), '-i', 'anullsrc=r=48000:cl=stereo');
-    achain = `[1:a]atrim=0:${c.dur}[a]`;
+    args.push('-f', 'lavfi', '-t', d, '-i', 'anullsrc=r=48000:cl=stereo');
+    filters.push(`[${ai}:a]atrim=0:${c.dur}[a]`);
   }
 
   args.push(
-    '-filter_complex', `${vchain};${achain}`,
+    '-filter_complex', filters.join(';'),
     '-map', '[v]', '-map', '[a]',
-    '-t', String(c.dur),
+    '-t', d,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-r', String(FPS),
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2',
     '-movflags', '+faststart',
