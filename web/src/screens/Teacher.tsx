@@ -171,28 +171,56 @@ function AdminPanel() {
   );
 }
 
+// 학생 입장 안내: 반 코드와 주소만 알려 주면, 학생이 번호와 이름으로 들어온다.
+// 처음 들어올 때 쓴 이름이 그 번호에 저장된다. 잘못 등록됐으면 고치거나 지울 수 있다.
 function PinCards() {
   const { s, d } = useStore();
   const link = `${location.origin}/?code=${s.cls.code}`;
+  const [editNo, setEditNo] = useState(0);
+  const [val, setVal] = useState('');
+  const save = (no: number, name: string) =>
+    api
+      .resetPin({ classId: s.classId, no, name })
+      .then(() => (d({ t: 'toast', msg: name ? `${no}번 이름을 고쳤어요.` : `${no}번 이름을 지웠어요. 다음에 들어올 때 새로 등록해요.` }), setEditNo(0)), (e) => d({ t: 'toast', msg: errText(e) }));
+  const joined = s.others.filter((r) => r.nick).length;
   return (
     <section className="panel">
       <div className="panel-head">
-        <h3>학생 입장 카드</h3>
-        <span className="tiny muted">카드를 잘라 나눠 주세요. 학생 주소: <span className="mono">{link}</span></span>
+        <h3>학생 입장 안내</h3>
+        <span className="tiny muted">들어온 학생 {joined} / {s.others.length}명</span>
+      </div>
+      <div className="entry-guide">
+        <div>
+          <span className="tiny muted">반 코드</span>
+          <span className="mono entry-code">{s.cls.code}</span>
+        </div>
+        <div>
+          <span className="tiny muted">학생 주소</span>
+          <span className="mono">{link}</span>
+        </div>
+        <p className="tiny muted">학생은 반 코드, 번호, 이름을 넣고 들어와요. 처음 쓴 이름이 그 번호에 저장되고, 다음부터는 같은 이름이어야 들어올 수 있어요.</p>
       </div>
       <div className="pin-grid">
         {s.others.map((r) => (
           <div className="pin-card" key={r.no}>
-            <span className="tiny muted">반 코드</span>
-            <span className="mono strong">{s.cls.code}</span>
-            <span className="tiny muted">번호 · 비밀 숫자</span>
-            <span className="mono strong">{r.no}번 · {s.pins[r.no] ?? '----'}</span>
-            <button
-              className="link tiny"
-              onClick={() => api.resetPin({ classId: s.classId, no: r.no }).then(() => d({ t: 'toast', msg: `${r.no}번 비밀 숫자를 새로 만들었어요.` }), (e) => d({ t: 'toast', msg: errText(e) }))}
-            >
-              새로 만들기
-            </button>
+            <span className="mono strong">{r.no}번</span>
+            {editNo === r.no ? (
+              <>
+                <input aria-label={`${r.no}번 이름`} value={val} maxLength={12} onChange={(e) => setVal(e.target.value)} />
+                <div className="chip-actions">
+                  <button className="btn tiny primary" disabled={!val.trim()} onClick={() => save(r.no, val.trim())}>저장</button>
+                  <button className="btn tiny" onClick={() => setEditNo(0)}>취소</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className={r.nick ? '' : 'muted'}>{r.nick || '아직 안 들어왔어요'}</span>
+                <div className="chip-actions">
+                  <button className="link tiny" onClick={() => (setEditNo(r.no), setVal(r.nick))}>{r.nick ? '고치기' : '미리 넣기'}</button>
+                  {r.nick && <button className="link tiny" onClick={() => save(r.no, '')}>지우기</button>}
+                </div>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -224,7 +252,7 @@ function Dashboard() {
             ← 내 반 목록
           </button>
           <button className="btn" onClick={() => setShowPins(!showPins)}>
-            {showPins ? '현황판 보기' : '학생 입장 카드'}
+            {showPins ? '현황판 보기' : '학생 명단·입장 안내'}
           </button>
           <button className={`btn ${s.cls.paused ? 'danger' : ''}`} onClick={() => d({ t: 'cls', patch: { paused: !s.cls.paused } })}>
             {s.cls.paused ? '화면 다시 열기' : '모든 화면 멈추기'}
@@ -281,7 +309,7 @@ function Dashboard() {
             {roster.map((r) => (
               <button key={r.no} className={`seat ${r.status} ${s.selectedStudent === r.no ? 'on' : ''}`} onClick={() => d({ t: 'set', patch: { selectedStudent: r.no } })}>
                 <span className="seat-no mono">{r.no}</span>
-                <span className="seat-nick">{r.nick}</span>
+                <span className="seat-nick">{r.nick || '(미입장)'}</span>
                 <span className="seat-stage">{r.stage}단계</span>
                 <span className="seat-cr mono">{r.credits}</span>
               </button>

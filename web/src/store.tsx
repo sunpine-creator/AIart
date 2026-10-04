@@ -19,7 +19,7 @@ export type Res = '360p' | '720p';
 export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded' | 'blocked' | 'rejected';
 export type Fit = 'yes' | 'partial' | 'no';
 export type Builder = { who: string; what: string; where: string; how: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; mood?: string; part?: string; intent?: string };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
@@ -34,7 +34,8 @@ export type Approval = { id: string; no: number; nick: string; promptKo: string;
 export type ClassInfo = { id: string; title: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
 
 // 학생 작업(프로젝트 문서)에 저장되는 칸
-const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted'] as const;
+const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmThink', 'flow', 'editNote', 'reflect'] as const;
+export type PromptPart = 'goal' | 'role' | 'content' | 'cond';
 type ProjectKey = (typeof PROJECT_KEYS)[number];
 
 export type State = {
@@ -48,6 +49,12 @@ export type State = {
   tab: Stage;
   credits: number;
   sortCards: Record<string, 'ai' | 'human' | undefined>;
+  prmCmp: Record<string, { pick?: 'a' | 'b'; missing?: PromptPart[]; checked?: boolean }>;
+  prmSort: Record<string, PromptPart | undefined>;
+  prmThink: string;
+  flow: Record<string, { v?: string; note?: string }>;
+  editNote: string;
+  reflect: string;
   topic: string;
   story: { who: string; where: string; what: string; event: string; feeling: string };
   brief: { audience: string; purpose: string; message: string };
@@ -108,7 +115,7 @@ function emptyProject(band: Band) {
 const base: State = {
   role: 'loading', view: 'student', band: 'elementary', joined: false, me: { no: 0, nick: '' }, classId: '',
   cls: { title: '', code: '', open: 1, paused: false, approval: true, videoInMiddle: false, budget: 0 },
-  tab: 1, credits: 0, sortCards: {}, topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
+  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmThink: '', flow: {}, editNote: '', reflect: '', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
@@ -131,7 +138,7 @@ export type Action =
   | { t: 'removeUpload'; id: string }
   | { t: 'voice'; key: string; blob: Blob }
   | { t: 'render' }
-  | { t: 'join'; code: string; no: number; pin: string }
+  | { t: 'join'; code: string; no: number; name: string }
   | { t: 'openClass'; classId: string }
   | { t: 'signOut' }
   | { t: 'tick' }
@@ -170,7 +177,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [logs, setLogs] = useState<Log[]>([]);
   const [usage, setUsage] = useState(0);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
-  const [pins, setPins] = useState<Record<string, string>>({});
+  const [pins] = useState<Record<string, string>>({});
   const [peers, setPeers] = useState<{ no: number; nick: string; exportPath?: string }[]>([]);
   const [uploadUrls, setUploadUrls] = useState<Record<string, string>>({});
   const saveTimer = useRef<number | undefined>(undefined);
@@ -215,6 +222,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const unsubs = [
       onSnapshot(doc(db, 'classes', classId), (d) => setCls({ id: d.id, ...d.data() }), onErr('반 정보')),
       onSnapshot(doc(db, 'classes', classId, 'students', String(no)), (d) => setStudent(d.data()), onErr('내 정보')),
+      onSnapshot(collection(db, 'classes', classId, 'students'), (q) => setStudents(q.docs.map((d) => d.data()).sort((a, b) => a.no - b.no)), () => {}),
       onSnapshot(doc(db, 'projects', pid), (d) => {
         if (!d.exists()) {
           const p: Record<string, any> = { ...emptyProject('elementary'), classId, no };
@@ -230,7 +238,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setGens(q.docs.map((x) => toGen(x.id, x.data()))),
       onErr('내 생성 기록')),
       onSnapshot(query(collection(db, 'projects'), where('classId', '==', classId), where('submitted', '==', true), limit(30)), (q) =>
-        setPeers(q.docs.map((x) => ({ no: x.data().no, nick: nickOf(x.data().no), exportPath: x.data().lastExport?.path })).filter((p) => p.no !== no)),
+        setPeers(q.docs.map((x) => ({ no: x.data().no, nick: '', exportPath: x.data().lastExport?.path })).filter((p) => p.no !== no)),
       onErr('친구 작품')),
     ];
     return () => unsubs.forEach((u) => u());
@@ -255,7 +263,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const unsubs = [
       onSnapshot(doc(db, 'classes', c), (d) => setCls({ id: d.id, ...d.data() }), onErr('반 정보')),
       onSnapshot(collection(db, 'classes', c, 'students'), (q) => setStudents(q.docs.map((d) => d.data()).sort((a, b) => a.no - b.no)), onErr('학생 명단')),
-      onSnapshot(doc(db, 'classes', c, 'private', 'pins'), (d) => setPins(d.data()?.pins ?? {}), onErr('입장 카드')),
       onSnapshot(query(collection(db, 'generations'), where('classId', '==', c), where('status', '==', 'awaiting_approval'), orderBy('createdAt', 'asc')), (q) =>
         setPending(q.docs.map((d) => ({ id: d.id, ...d.data() }))),
       onErr('승인 대기')),
@@ -325,14 +332,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const band: Band = cls?.band ?? 'elementary';
     const p = project ?? {};
     const editsOf = (sceneId: string) => gens.filter((g) => g.sceneId === sceneId && g.kind === 'edit' && g.status !== 'blocked' && g.status !== 'rejected').length;
-    const nickByNo = (no: number) => students.find((x) => x.no === no)?.nick ?? nickOf(no);
+    const nickByNo = (no: number) => students.find((x) => x.no === no)?.nick || '';
     return {
       ...base,
       role,
       view: role === 'teacher' ? 'teacher' : 'student',
       band,
       joined: role === 'student',
-      me: { no: claims.no ?? 0, nick: student?.nick ?? nickOf(claims.no ?? 0) },
+      me: { no: claims.no ?? 0, nick: student?.nick || '' },
       classId: cls?.id ?? local.classId,
       cls: cls
         ? { title: cls.title, code: cls.code, open: cls.open, paused: cls.paused, approval: cls.approval, videoInMiddle: cls.videoInMiddle, budget: cls.budgetUsd }
@@ -340,6 +347,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       tab: local.tab,
       credits: student?.credits ?? 0,
       sortCards: p.sortCards ?? {},
+      prmCmp: p.prmCmp ?? {},
+      prmSort: p.prmSort ?? {},
+      prmThink: p.prmThink ?? '',
+      flow: p.flow ?? {},
+      editNote: p.editNote ?? '',
+      reflect: p.reflect ?? '',
       topic: p.topic ?? '',
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,
@@ -362,10 +375,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       peer: p.peer ?? {},
       submitted: !!p.submitted,
       spent: Math.round(usage * 100) / 100,
-      others: students.map((x) => ({ no: x.no, nick: x.nick, stage: x.stage, credits: x.credits, status: x.status })),
+      others: students.map((x) => ({ no: x.no, nick: x.nick || '', stage: x.stage, credits: x.credits, status: x.status })),
       approvals: pending.map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '' })),
       selectedStudent: local.selectedStudent,
-      peers,
+      peers: peers.map((p) => ({ ...p, nick: nickByNo(p.no) })),
       lastExport: p.lastExport,
       rendering: local.rendering || (!!p.rendering && Date.now() - p.rendering < 10 * 60_000),
       classes,
@@ -470,7 +483,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return;
       case 'join':
         api
-          .joinClass({ code: a.code, no: a.no, pin: a.pin })
+          .joinClass({ code: a.code, no: a.no, name: a.name })
           .then((r) => signInWithCustomToken(auth, r.token))
           .catch((e) => toast(errText(e)));
         return;

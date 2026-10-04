@@ -23,8 +23,10 @@ setGlobalOptions({ region: REGION, maxInstances: 20 });
 const db = getFirestore();
 
 // ───────── 공통 ─────────
-const NICKS = ['파랑고래', '초록거북', '노랑병아리', '빨강여우', '하늘다람쥐', '보라문어', '주황호랑이', '분홍돌고래', '하양토끼', '검정고양이', '민트펭귄', '갈색곰', '은빛늑대', '황금사자', '연두개구리', '남색부엉이', '살구판다', '회색코끼리', '하늘고래', '바다수달'];
-const nickOf = (no: number) => NICKS[(no * 7) % NICKS.length];
+// 학생 이름: 한글·영어·공백만, 1~12자. 비교할 때는 공백과 대소문자를 무시한다
+const cleanName = (v: unknown) => String(v ?? '').normalize('NFC').trim().replace(/\s+/g, ' ');
+const nameKey = (v: string) => v.replace(/\s/g, '').toLowerCase();
+const validName = (v: string) => v.length >= 1 && v.length <= 12 && /^[가-힣ㄱ-ㅎa-zA-Z ]+$/.test(v);
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 헷갈리는 0·O·1·I 제외
 const today = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10).replace(/-/g, ''); // 서울 날짜
 const hueOf = (id: string) => [...id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
@@ -68,7 +70,6 @@ export const createClass = onCall(async (req) => {
   if (!code) throw new HttpsError('resource-exhausted', '반 코드를 만들지 못했어요. 다시 해 보세요.');
   const classRef = db.collection('classes').doc();
   const credits = Number(creditsPerStudent) || (band === 'elementary' ? 72 : 30);
-  const pins: Record<string, string> = {};
   const batch = db.batch();
   batch.set(classRef, {
     teacherUid: uid, title: String(title).slice(0, 40), band, code, size: n,
@@ -78,35 +79,47 @@ export const createClass = onCall(async (req) => {
   });
   batch.set(db.doc(`codes/${code}`), { classId: classRef.id });
   for (let no = 1; no <= n; no++) {
-    pins[no] = String(randomInt(10000)).padStart(4, '0');
-    batch.set(classRef.collection('students').doc(String(no)), { no, nick: nickOf(no), credits, stage: 1, status: 'idle', lastSeen: null });
+    batch.set(classRef.collection('students').doc(String(no)), { no, nick: '', name: null, credits, stage: 1, status: 'idle', lastSeen: null });
   }
-  batch.set(classRef.collection('private').doc('pins'), { pins });
   await batch.commit();
   return { classId: classRef.id, code };
 });
 
-// ───────── 학생: 반 코드 + 번호 + PIN 으로 입장 ─────────
+// ───────── 학생: 반 코드 + 번호 + 이름으로 입장 ─────────
+// 그 번호로 처음 들어올 때 쓴 이름이 저장되고, 다음부터는 같은 이름이어야 들어올 수 있다.
 export const joinClass = onCall(async (req) => {
   const code = String(req.data?.code ?? '').toUpperCase().trim();
   const no = Number(req.data?.no);
-  const pin = String(req.data?.pin ?? '');
-  if (!/^[A-Z0-9]{6}$/.test(code) || !Number.isInteger(no) || !/^\d{4}$/.test(pin)) throw new HttpsError('invalid-argument', '반 코드, 번호, 비밀 숫자를 다시 확인해 주세요.');
+  const name = cleanName(req.data?.name);
+  if (!/^[A-Z0-9]{6}$/.test(code) || !Number.isInteger(no) || no < 1 || no > 40) throw new HttpsError('invalid-argument', '반 코드와 번호를 다시 확인해 주세요.');
+  if (!validName(name)) throw new HttpsError('invalid-argument', '이름은 한글이나 영어로 12자까지 써 주세요.');
   const codeDoc = await db.doc(`codes/${code}`).get();
   if (!codeDoc.exists) throw new HttpsError('not-found', '반 코드를 찾을 수 없어요.');
   const classId = codeDoc.data()!.classId as string;
-  // 비밀 숫자를 10분에 5번 넘게 틀리면 잠근다
+  // 이름을 10분에 5번 넘게 틀리면 잠근다
   const attemptRef = db.doc(`classes/${classId}/private/attempts_${no}`);
   const att = (await attemptRef.get()).data();
   const now = Date.now();
   if (att && att.count >= 5 && now - att.since < 10 * 60_000) throw new HttpsError('resource-exhausted', '여러 번 틀렸어요. 10분 뒤에 다시 하거나 선생님께 말씀드려요.');
-  const pins = (await db.doc(`classes/${classId}/private/pins`).get()).data()?.pins ?? {};
-  if (pins[no] !== pin) {
+  const stRef = db.doc(`classes/${classId}/students/${no}`);
+  const result = await db.runTransaction(async (tx) => {
+    const st = await tx.get(stRef);
+    if (!st.exists) return 'noseat' as const;
+    const saved = st.data()?.name as string | null | undefined;
+    if (!saved) {
+      tx.update(stRef, { name, nick: name, registeredAt: FieldValue.serverTimestamp() });
+      return 'new' as const;
+    }
+    return nameKey(saved) === nameKey(name) ? ('ok' as const) : ('mismatch' as const);
+  });
+  if (result === 'noseat') throw new HttpsError('not-found', '이 반에 없는 번호예요. 번호를 확인해 주세요.');
+  if (result === 'mismatch') {
     const fresh = !att || now - att.since >= 10 * 60_000;
     await attemptRef.set({ count: fresh ? 1 : att!.count + 1, since: fresh ? now : att!.since });
-    throw new HttpsError('permission-denied', '번호나 비밀 숫자가 맞지 않아요.');
+    throw new HttpsError('permission-denied', '이 번호는 다른 이름으로 이미 들어왔어요. 번호를 확인하고, 맞다면 선생님께 말씀드려요.');
   }
   await attemptRef.delete().catch(() => {});
+  if (result === 'new') await log({ classId, no, kind: '입장', textKo: `처음 입장 · 이름 등록`, verdict: 'pass', action: '입장' });
   const uid = `s_${classId}_${no}`;
   const token = await getAuth().createCustomToken(uid, { role: 'student', classId, no });
   return { token };
@@ -230,15 +243,18 @@ export const reviewGeneration = onCall(async (req) => {
   return { ok: true };
 });
 
-// ───────── 교사: 비밀 숫자 다시 만들기 (한 학생) ─────────
+// ───────── 교사: 학생 이름 고치기·지우기 (함수 이름은 예전 그대로 resetPin) ─────────
+// name 을 주면 그 이름으로 바꾸고, 비우면 지워서 학생이 다음에 들어올 때 새로 등록하게 한다.
 export const resetPin = onCall(async (req) => {
   const uid = await requireTeacher(req);
   const classId = String(req.data?.classId ?? '');
   const no = Number(req.data?.no);
   await ownedClass(uid, classId);
-  const pin = String(randomInt(10000)).padStart(4, '0');
-  await db.doc(`classes/${classId}/private/pins`).set({ pins: { [no]: pin } }, { merge: true });
-  return { pin };
+  const name = cleanName(req.data?.name);
+  if (name && !validName(name)) throw new HttpsError('invalid-argument', '이름은 한글이나 영어로 12자까지 써 주세요.');
+  await db.doc(`classes/${classId}/students/${no}`).update({ name: name || null, nick: name || '' });
+  await db.doc(`classes/${classId}/private/attempts_${no}`).delete().catch(() => {});
+  return { ok: true };
 });
 
 // ───────── 학생: 기록만 남기는 이벤트 (영상 업로드 등) ─────────

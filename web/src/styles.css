@@ -619,3 +619,43 @@ input:focus, select:focus, textarea:focus { border-color: var(--human); box-shad
 .clapper { margin-top: 56px; transform: rotate(-5deg); }
 @keyframes clap { 0% { transform: rotate(-16deg); } 70% { transform: rotate(0deg); } 100% { transform: rotate(-5deg); } }
 .badge { color: var(--ink); background: var(--human-soft); }
+/* 교사: 입장 안내 */
+.entry-guide { display: grid; gap: 8px; padding: 14px; border-radius: 12px; background: var(--sunk); }
+.entry-guide > div { display: grid; gap: 2px; }
+.entry-code { font-size: 1.6rem; font-weight: 700; letter-spacing: 0.08em; }
+.pin-card input { min-height: 36px; padding: 6px 10px; }
+
+/* ═════════ 중등: 프롬프트 비교·구성, 장면 설계, 흐름 점검 ═════════ */
+.cmp-set { display: grid; gap: 10px; padding-top: 6px; }
+.cmp-set + .cmp-set { border-top: 1px solid var(--line); padding-top: 16px; }
+.cmp.pick { display: grid; gap: 8px; text-align: left; cursor: pointer; border: 1px solid var(--line); background: var(--surface); font: inherit; color: inherit; }
+.cmp.pick:hover { border-color: #8fb3f7; }
+.cmp.pick p { font-weight: 500; }
+.cmp.pick.good { border-color: var(--good); background: var(--good-tint); }
+.cmp.pick.weak { border-color: var(--warn); background: var(--warn-tint); }
+.cmp.pick .tag { justify-self: start; background: var(--sunk); }
+.parts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.part { display: grid; gap: 4px; align-content: start; padding: 14px; border-radius: 12px; background: var(--human-tint); }
+.part strong { font-size: 1.1rem; color: var(--human); }
+.frags { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.frag { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); }
+.frag .hint { grid-column: 1 / -1; }
+.frag.ok { border-color: var(--good); background: var(--good-tint); }
+.frag.no { border-color: var(--warn); }
+.frag .pill { min-height: 32px; padding: 2px 12px; }
+.scene-plan { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.plan-card { display: grid; gap: 8px; align-content: start; padding: 14px; border-radius: 12px; border: 1px solid var(--line); border-top: 3px solid #a9c6fa; }
+.plan-top { display: flex; align-items: center; gap: 10px; }
+.plan-top select { width: auto; min-height: 34px; padding: 4px 10px; }
+.plan-top .link { margin-left: auto; }
+.plan-card .pill { min-height: 32px; padding: 2px 12px; }
+.plan-line { display: block; }
+textarea.intent { min-height: 0; font-size: 0.9rem; }
+.flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.flow-q { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; padding: 12px; border-radius: 10px; border: 1px solid var(--line); }
+.flow-q > div:first-child { display: grid; gap: 2px; }
+.flow-q input { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .frag, .flow-q { grid-template-columns: minmax(0, 1fr); }
+}

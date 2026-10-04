@@ -29,13 +29,13 @@ export type TeacherRow = { uid: string; email: string; name: string; approved: b
 const call = <I, O>(name: string) => async (data: I) => (await httpsCallable<I, O>(functions, name)(data)).data;
 export const api = {
   createClass: call<{ title: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
-  joinClass: call<{ code: string; no: number; pin: string }, { token: string }>('joinClass'),
+  joinClass: call<{ code: string; no: number; name: string }, { token: string }>('joinClass'),
   requestGeneration: call<
     { kind: 'draft' | 'edit' | 'final'; sceneId: string; builder?: { who: string; what: string; where: string; how: string }; editText?: string; parentId?: string },
     { genId: string; blocked: boolean; category?: string; reason?: string; suggestion?: string }
   >('requestGeneration'),
   reviewGeneration: call<{ genId: string; approve: boolean; reason?: string }, { ok: boolean }>('reviewGeneration'),
-  resetPin: call<{ classId: string; no: number }, { pin: string }>('resetPin'),
+  resetPin: call<{ classId: string; no: number; name?: string }, { ok: boolean }>('resetPin'),
   draftScenario: call<{ goal: string; role: string; content: string; cond: string; topic?: string }, { blocked: boolean; reason?: string; lines: string[] }>('draftScenario'),
   renderVideo: call<Record<string, never>, { path: string }>('renderVideo'),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean }>('claimTeacher'),
