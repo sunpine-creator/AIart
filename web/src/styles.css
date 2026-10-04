@@ -709,3 +709,7 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 .class-card.add-card { border-style: dashed; align-content: center; justify-items: center; text-align: center; color: var(--human); min-height: 110px; }
 .class-card.add-card:hover { background: var(--human-tint); }
+.school-group { display: grid; gap: 10px; }
+.school-name { font-size: 1rem; color: var(--muted); }
+.school-edit { display: inline-flex; gap: 6px; align-items: center; }
+.school-edit input { width: 180px; min-height: 32px; padding: 4px 8px; }

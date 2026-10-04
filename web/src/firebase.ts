@@ -35,7 +35,7 @@ export type TeacherRow = { uid: string; email: string; name: string; approved: b
 // 기본 기다림은 70초. 오래 걸리는 기능(반 삭제·영상 합치기·작품 모으기)은 더 오래 기다린다
 const call = <I, O>(name: string, timeout = 70_000) => async (data: I) => (await httpsCallable<I, O>(functions, name, { timeout })(data)).data;
 export const api = {
-  createClass: call<{ title: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
+  createClass: call<{ title: string; school?: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
   joinClass: call<{ code: string; no: number; name: string }, { token: string }>('joinClass'),
   requestGeneration: call<
     { kind: 'draft' | 'edit' | 'final'; sceneId: string; builder?: { who: string; what: string; where: string; how: string }; editText?: string; parentId?: string },

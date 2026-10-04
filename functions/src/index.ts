@@ -66,7 +66,7 @@ async function enqueue(genId: string) {
 // ───────── 교사: 반 만들기 ─────────
 export const createClass = onCall(async (req) => {
   const uid = await requireTeacher(req);
-  const { title, band, size = 30, budgetUsd, creditsPerStudent } = req.data ?? {};
+  const { title, band, size = 30, budgetUsd, creditsPerStudent, school } = req.data ?? {};
   if (!title || !['elementary', 'middle'].includes(band)) throw new HttpsError('invalid-argument', '반 이름과 학교급을 정해 주세요.');
   const n = Math.max(1, Math.min(40, Number(size)));
   let code = '';
@@ -82,7 +82,7 @@ export const createClass = onCall(async (req) => {
   const credits = Number(creditsPerStudent) || (band === 'elementary' ? 72 : 30);
   const batch = db.batch();
   batch.set(classRef, {
-    teacherUid: uid, title: String(title).slice(0, 40), band, code, size: n,
+    teacherUid: uid, title: String(title).slice(0, 40), school: String(school ?? '').trim().slice(0, 40), band, code, size: n,
     open: 1, paused: false, approval: true, videoInMiddle: false,
     budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 71 : 29),
     createdAt: FieldValue.serverTimestamp(),

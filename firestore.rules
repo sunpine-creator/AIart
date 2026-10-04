@@ -27,7 +27,7 @@ service cloud.firestore {
     match /classes/{classId} {
       // 목록 조회(where teacherUid == 나)도 통과하도록 문서 자신의 값으로 확인한다
       allow read: if (isTeacher() && resource.data.teacherUid == request.auth.uid) || inClass(classId);
-      allow update: if ownsClass(classId) && onlyChanges(['open', 'paused', 'approval', 'videoInMiddle', 'budgetUsd']);
+      allow update: if ownsClass(classId) && onlyChanges(['open', 'paused', 'approval', 'videoInMiddle', 'budgetUsd', 'school']);
       allow create, delete: if false; // createClass 함수만
 
       match /students/{no} {

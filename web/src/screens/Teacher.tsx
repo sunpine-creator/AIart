@@ -109,6 +109,8 @@ function TeacherPending() {
 function ClassList() {
   const { s, d } = useStore();
   const [title, setTitle] = useState('');
+  const [school, setSchool] = useState('');
+  const [schoolFilter, setSchoolFilter] = useState('');
   const [band, setBand] = useState<'elementary' | 'middle'>('elementary');
   const [size, setSize] = useState(30);
   const [busy, setBusy] = useState(false);
@@ -116,7 +118,7 @@ function ClassList() {
   const create = async () => {
     setBusy(true);
     try {
-      const r = await api.createClass({ title, band, size });
+      const r = await api.createClass({ title, school: school.trim(), band, size });
       setTitle('');
       setAdding(false);
       d({ t: 'openClass', classId: r.classId });
@@ -126,6 +128,11 @@ function ClassList() {
       setBusy(false);
     }
   };
+  // 학교별로 묶기 (여러 학교에 나가는 강사용)
+  const schools = [...new Set(s.classes.map((c) => c.school ?? ''))].sort((x, y) => (x ? (y ? x.localeCompare(y, 'ko') : -1) : 1));
+  const groups: [string, typeof s.classes][] = schools
+    .filter((sc) => !schoolFilter || sc === schoolFilter)
+    .map((sc) => [sc, s.classes.filter((c) => (c.school ?? '') === sc)]);
   return (
     <div className="teacher">
       <header className="t-head">
@@ -139,15 +146,34 @@ function ClassList() {
           {adding ? '닫기' : '+ 새 반 추가'}
         </button>
       </header>
-      <div className="class-grid">
-        {s.classes.map((c) => (
-          <button key={c.id} className="class-card" onClick={() => d({ t: 'openClass', classId: c.id })}>
-            <strong>{c.title}</strong>
-            <span className="muted">{c.band === 'elementary' ? '초등' : '중등'} · {c.size}명 · 열린 단계 {c.open}</span>
-            <span className="mono strong">반 코드 {c.code}</span>
+      {schools.length > 1 && (
+        <div className="pills" role="group" aria-label="학교로 골라 보기">
+          <button className={`pill ${!schoolFilter ? 'on' : ''}`} onClick={() => setSchoolFilter('')}>
+            전체
           </button>
-        ))}
-        {s.classes.length === 0 && !adding && <p className="muted">아직 만든 반이 없어요. 오른쪽 위 “+ 새 반 추가”를 눌러 첫 반을 만들어 보세요.</p>}
+          {schools.map((sc) => (
+            <button key={sc} className={`pill ${schoolFilter === sc ? 'on' : ''}`} onClick={() => setSchoolFilter(sc)}>
+              {sc || '학교 미입력'}
+            </button>
+          ))}
+        </div>
+      )}
+      {groups.map(([sc, list]) => (
+        <section key={sc || '-'} className="school-group">
+          {schools.length > 0 && <h3 className="school-name">{sc || '학교 미입력'}</h3>}
+          <div className="class-grid">
+            {list.map((c) => (
+              <button key={c.id} className="class-card" onClick={() => d({ t: 'openClass', classId: c.id })}>
+                <strong>{c.title}</strong>
+                <span className="muted">{c.band === 'elementary' ? '초등' : '중등'} · {c.size}명 · 열린 단계 {c.open}</span>
+                <span className="mono strong">반 코드 {c.code}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
+      {s.classes.length === 0 && !adding && <p className="muted">아직 만든 반이 없어요. 오른쪽 위 “+ 새 반 추가”를 눌러 첫 반을 만들어 보세요.</p>}
+      <div className="class-grid">
         <button className="class-card add-card" onClick={() => setAdding(true)}>
           <strong>+ 새 반 추가</strong>
           <span className="muted">반을 더 만들 수 있어요</span>
@@ -156,7 +182,16 @@ function ClassList() {
       {(adding || s.classes.length === 0) && (
       <section className="panel" id="new-class">
         <h3>새 반 만들기</h3>
-        <div className="grid3">
+        <div className="grid2">
+          <div className="field">
+            <label htmlFor="c-school">학교 이름</label>
+            <input id="c-school" list="school-list" placeholder="예: 제주초등학교" maxLength={40} value={school} onChange={(e) => setSchool(e.target.value)} />
+            <datalist id="school-list">
+              {schools.filter(Boolean).map((sc) => (
+                <option key={sc} value={sc} />
+              ))}
+            </datalist>
+          </div>
           <div className="field">
             <label htmlFor="c-title">반 이름</label>
             <input id="c-title" placeholder="예: 6학년 2반" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -455,6 +490,30 @@ function StudentWorks() {
   );
 }
 
+// 반의 학교 이름 고치기 (여러 학교에 나가는 강사용)
+function SchoolEdit() {
+  const { s, d } = useStore();
+  const [edit, setEdit] = useState(false);
+  const [v, setV] = useState(s.cls.school ?? '');
+  if (!edit)
+    return (
+      <button className="link" onClick={() => (setV(s.cls.school ?? ''), setEdit(true))}>
+        {s.cls.school ? `학교: ${s.cls.school}` : '학교 이름 넣기'}
+      </button>
+    );
+  return (
+    <span className="school-edit">
+      <input aria-label="학교 이름" value={v} maxLength={40} onChange={(e) => setV(e.target.value)} placeholder="예: 제주초등학교" />
+      <button className="btn tiny primary" onClick={() => (d({ t: 'cls', patch: { school: v.trim() } }), setEdit(false))}>
+        저장
+      </button>
+      <button className="btn tiny" onClick={() => setEdit(false)}>
+        취소
+      </button>
+    </span>
+  );
+}
+
 function Dashboard() {
   const { s, d } = useStore();
   const [showPins, setShowPins] = useState(false);
@@ -473,7 +532,8 @@ function Dashboard() {
         <div>
           <h1 className="t-title">{s.cls.title} · {s.band === 'elementary' ? '초등' : '중등'}</h1>
           <div className="muted">
-            반 코드 <span className="mono strong">{s.cls.code}</span> · 학생 {roster.length}명 · 프로젝트 「AI로 달라진 나의 일상」
+            반 코드 <span className="mono strong">{s.cls.code}</span> · 학생 {roster.length}명 · 프로젝트 「AI로 달라진 나의 일상」 ·{' '}
+            <SchoolEdit />
           </div>
         </div>
         <div className="t-controls">
