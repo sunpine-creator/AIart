@@ -39,16 +39,58 @@ function TeacherSignIn() {
 
 function TeacherPending() {
   const { s, d } = useStore();
+  const [requested, setRequested] = useState<boolean | null>(null);
+  const [f, setF] = useState({ realName: '', school: '', grade: '', klass: '', students: '' });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.claimTeacher({}).then((r) => (r.approved ? location.reload() : setRequested(r.requested)), () => setRequested(false));
+  }, []);
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
+  const ok = f.school.trim() && f.grade && Number(f.students) > 0;
+  const send = () => {
+    setBusy(true);
+    api
+      .requestTeacher({ ...f, students: Number(f.students) })
+      .then(() => (setRequested(true), d({ t: 'toast', msg: '승인 요청을 보냈어요.' })), (e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(false));
+  };
   return (
     <div className="join">
       <div className="join-card">
-        <h1 className="join-title">승인을 기다리고 있어요</h1>
-        <p>
-          유료 AI를 쓰는 서비스라 관리자가 교사 계정을 승인해야 해요. 승인 요청은 자동으로 보냈어요.
-          관리자가 승인하면 아래 "다시 확인"을 눌러 주세요.
-        </p>
-        <p className="mono">{s.teacherEmail}</p>
-        <p className="mono tiny">UID: {auth.currentUser?.uid}</p>
+        <h1 className="join-title">{requested ? '승인을 기다리고 있어요' : '교사 승인 요청하기'}</h1>
+        <p>유료 AI를 쓰는 서비스라 관리자가 교사 계정을 승인해야 해요.</p>
+        <p className="mono tiny">{s.teacherEmail}</p>
+        {requested === false && (
+          <div className="join-form">
+            <label htmlFor="tr-name">선생님 이름</label>
+            <input id="tr-name" value={f.realName} onChange={set('realName')} placeholder="예: 김하늘" maxLength={20} />
+            <label htmlFor="tr-school">학교 이름</label>
+            <input id="tr-school" value={f.school} onChange={set('school')} placeholder="예: 제주초등학교" maxLength={40} />
+            <div className="row3">
+              <div>
+                <label htmlFor="tr-grade">학년</label>
+                <select id="tr-grade" value={f.grade} onChange={set('grade')}>
+                  <option value="">고르기</option>
+                  {['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3'].map((g) => (
+                    <option key={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="tr-klass">반</label>
+                <input id="tr-klass" value={f.klass} onChange={set('klass')} placeholder="예: 2반" maxLength={10} />
+              </div>
+              <div>
+                <label htmlFor="tr-n">학생 수</label>
+                <input id="tr-n" type="number" min={1} max={40} value={f.students} onChange={set('students')} placeholder="예: 25" />
+              </div>
+            </div>
+            <button className="btn primary wide" disabled={!ok || busy} onClick={send}>
+              {busy ? '보내는 중…' : '승인 요청 보내기'}
+            </button>
+          </div>
+        )}
+        {requested && <p className="muted">요청을 보냈어요. 관리자가 승인하면 아래 "다시 확인"을 눌러 주세요.</p>}
         {import.meta.env.VITE_USE_EMULATORS === '1' && (
           <button
             className="btn primary"
@@ -57,7 +99,7 @@ function TeacherPending() {
             연습 모드: 바로 승인하기
           </button>
         )}
-        <button className="btn" onClick={() => location.reload()}>승인됐는지 다시 확인</button>
+        {requested && <button className="btn" onClick={() => location.reload()}>승인됐는지 다시 확인</button>}
         <button className="link" onClick={() => d({ t: 'signOut' })}>다른 계정으로 로그인</button>
       </div>
     </div>
@@ -131,7 +173,11 @@ function AdminPanel() {
   const [list, setList] = useState<TeacherRow[] | null>(null);
   const [busy, setBusy] = useState('');
   const load = () => api.adminTeachers({}).then((r) => setList(r.list), () => setList(null));
-  useEffect(() => void load(), []);
+  useEffect(() => {
+    load();
+    const id = window.setInterval(load, 30_000);
+    return () => window.clearInterval(id);
+  }, []);
   if (!list) return null;
   const pending = list.filter((t) => !t.approved).length;
   const set = (uid: string, approved: boolean) => {
@@ -152,8 +198,22 @@ function AdminPanel() {
         <tbody>
           {list.map((t) => (
             <tr key={t.uid}>
-              <td>{t.name || '(이름 없음)'}</td>
-              <td className="mono">{t.email}</td>
+              <td>
+                <strong>{t.realName || t.name || '(이름 없음)'}</strong>
+                <div className="tiny muted mono">{t.email}</div>
+              </td>
+              <td>
+                {t.school ? (
+                  <>
+                    {t.school}
+                    <div className="tiny muted">
+                      {t.grade} {t.klass} · 학생 {t.students}명
+                    </div>
+                  </>
+                ) : (
+                  <span className="tiny muted">{t.approved ? '' : '아직 요청서를 안 보냈어요'}</span>
+                )}
+              </td>
               <td>{t.admin ? '관리자' : t.approved ? '승인됨' : <strong>대기 중</strong>}</td>
               <td>
                 {!t.admin &&

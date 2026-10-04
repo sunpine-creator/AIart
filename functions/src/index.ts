@@ -70,8 +70,11 @@ export const createClass = onCall(async (req) => {
   if (!title || !['elementary', 'middle'].includes(band)) throw new HttpsError('invalid-argument', '반 이름과 학교급을 정해 주세요.');
   const n = Math.max(1, Math.min(40, Number(size)));
   let code = '';
-  for (let i = 0; i < 10 && !code; i++) {
-    const c = Array.from({ length: 6 }, () => CODE_CHARS[randomInt(CODE_CHARS.length)]).join('');
+  for (let i = 0; i < 30 && !code; i++) {
+    // 초등: E + 숫자 5자리(입력하기 쉽게). 중등: 영어·숫자 6자리
+    const c = band === 'elementary'
+      ? 'E' + String(randomInt(100000)).padStart(5, '0')
+      : Array.from({ length: 6 }, () => CODE_CHARS[randomInt(CODE_CHARS.length)]).join('');
     if (!(await db.doc(`codes/${c}`).get()).exists) code = c;
   }
   if (!code) throw new HttpsError('resource-exhausted', '반 코드를 만들지 못했어요. 다시 해 보세요.');
@@ -513,9 +516,22 @@ function googleUser(req: CallableRequest) {
   return { uid: a.uid, email: String(a.token.email ?? '').toLowerCase(), name: String(a.token.name ?? '') };
 }
 async function isAdmin(uid: string, email: string) {
-  if (email && adminEmails().includes(email)) return true;
+  // ADMIN_EMAILS 를 정해 두면 그 계정만 관리자다(가장 확실한 방법)
+  if (adminEmails().length) return !!email && adminEmails().includes(email);
   const c = await db.doc('config/admin').get();
   return c.exists && c.data()?.uid === uid;
+}
+
+// 교사 승인 요청에 적는 정보
+function teacherInfo(v: any) {
+  const t = (x: unknown, n: number) => String(x ?? '').trim().slice(0, n);
+  return {
+    school: t(v?.school, 40),
+    grade: t(v?.grade, 10),
+    klass: t(v?.klass, 10),
+    students: Math.max(0, Math.min(40, Number(v?.students) || 0)),
+    realName: t(v?.realName, 20),
+  };
 }
 
 // 교사가 로그인하면 부른다: 관리자면 바로 승인, 아니면 승인 요청을 남긴다.
@@ -523,20 +539,39 @@ export const claimTeacher = onCall(async (req) => {
   const u = googleUser(req);
   const tRef = db.doc(`teachers/${u.uid}`);
   const aRef = db.doc('config/admin');
+  const anyApproved = (await db.collection('teachers').where('approved', '==', true).limit(1).get()).size > 0;
   return db.runTransaction(async (tx) => {
     const [t, a] = await Promise.all([tx.get(tRef), tx.get(aRef)]);
-    const listed = !!u.email && adminEmails().includes(u.email);
-    const first = !a.exists && adminEmails().length === 0;
-    const admin = listed || first || (a.exists && a.data()?.uid === u.uid);
-    if (first) tx.set(aRef, { uid: u.uid, email: u.email, at: FieldValue.serverTimestamp() });
-    if (admin) {
-      tx.set(tRef, { approved: true, admin: true, email: u.email, name: u.name, approvedBy: 'admin-self', at: FieldValue.serverTimestamp() }, { merge: true });
-      return { approved: true, admin: true };
+    const approvedNow = t.exists && t.data()?.approved === true;
+    let admin: boolean;
+    if (adminEmails().length) admin = !!u.email && adminEmails().includes(u.email);
+    else if (a.exists) admin = a.data()?.uid === u.uid;
+    else {
+      // 관리자가 아직 없을 때: 이미 승인된 교사이거나, 승인된 교사가 한 명도 없을 때(처음 설치)만 관리자가 된다.
+      // 승인 안 된 새 교사가 먼저 들어와도 관리자가 되지 않게 한다.
+      admin = approvedNow || !anyApproved;
+      if (admin) tx.set(aRef, { uid: u.uid, email: u.email, at: FieldValue.serverTimestamp() });
     }
-    if (t.exists && t.data()?.approved === true) return { approved: true, admin: false };
-    if (!t.exists) tx.set(tRef, { approved: false, email: u.email, name: u.name, requestedAt: FieldValue.serverTimestamp() });
-    return { approved: false, admin: false };
+    if (admin) {
+      tx.set(tRef, { approved: true, admin: true, email: u.email, name: u.name, approvedBy: approvedNow ? t.data()?.approvedBy ?? 'admin-self' : 'admin-self', at: FieldValue.serverTimestamp() }, { merge: true });
+      return { approved: true, admin: true, requested: true };
+    }
+    if (approvedNow) return { approved: true, admin: false, requested: true };
+    if (!t.exists) tx.set(tRef, { approved: false, email: u.email, name: u.name, firstSeenAt: FieldValue.serverTimestamp() });
+    return { approved: false, admin: false, requested: !!t.data()?.requestedAt };
   });
+});
+
+// 새 교사: 학교·학년·반·학생 수를 적어 승인 요청 보내기
+export const requestTeacher = onCall(async (req) => {
+  const u = googleUser(req);
+  const info = teacherInfo(req.data);
+  if (!info.school || !info.grade || !info.students) throw new HttpsError('invalid-argument', '학교 이름, 학년, 학생 수를 적어 주세요.');
+  const tRef = db.doc(`teachers/${u.uid}`);
+  const t = await tRef.get();
+  if (t.exists && t.data()?.approved === true) return { ok: true };
+  await tRef.set({ approved: false, email: u.email, name: u.name, ...info, requestedAt: FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true };
 });
 
 // 관리자: 교사 목록 보기
@@ -547,7 +582,7 @@ export const adminTeachers = onCall(async (req) => {
   const list = qs.docs.map((d) => {
     const x = d.data();
     const ms = (v: any) => (v instanceof Timestamp ? v.toMillis() : null);
-    return { uid: d.id, email: x.email ?? '', name: x.name ?? '', approved: x.approved === true, admin: x.admin === true, requestedAt: ms(x.requestedAt) };
+    return { uid: d.id, email: x.email ?? '', name: x.name ?? '', approved: x.approved === true, admin: x.admin === true, requestedAt: ms(x.requestedAt) ?? ms(x.firstSeenAt), school: x.school ?? '', grade: x.grade ?? '', klass: x.klass ?? '', students: x.students ?? 0, realName: x.realName ?? '', requested: !!x.requestedAt };
   });
   list.sort((a, b) => Number(a.approved) - Number(b.approved) || (b.requestedAt ?? 0) - (a.requestedAt ?? 0));
   return { list };

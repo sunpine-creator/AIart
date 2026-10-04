@@ -20,7 +20,7 @@ export type Res = '360p' | '720p';
 export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded' | 'blocked' | 'rejected';
 export type Fit = 'yes' | 'partial' | 'no';
 // 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
-export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type' };
+export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type'; x?: number; y?: number /* 마우스로 옮긴 위치: 화면 가로·세로 비율(0~1), 글자 덩어리의 가운데 */ };
 export type Builder = { who: string; what: string; where: string; how: string; when?: string; why?: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
 export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle };
 export type Gen = {
@@ -222,9 +222,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           let ok = false;
           const t = await getDoc(doc(db, 'teachers', u.uid)).catch(() => null);
           ok = !!(t?.exists() && t.data()?.approved === true);
-          // 아직 승인 전이면 서버에 알린다(관리자면 바로 승인, 아니면 승인 요청이 남는다)
-          if (!ok && u.providerData.some((p) => p.providerId === 'google.com')) {
-            ok = await api.claimTeacher({}).then((r) => r.approved, () => false);
+          // 로그인할 때마다 서버에 알린다(관리자 확인·승인 상태 확인)
+          if (u.providerData.some((p) => p.providerId === 'google.com')) {
+            ok = await api.claimTeacher({}).then((r) => r.approved, () => ok);
           }
           setRole(ok ? 'teacher' : 'teacher-pending');
         }

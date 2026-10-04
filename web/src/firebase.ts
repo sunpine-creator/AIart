@@ -30,7 +30,7 @@ export type StudentWork = {
   uploads: { id: string; name: string; dur: number; url: string }[];
   ai: { n: number; line: string; img: boolean; url: string | null }[];
 };
-export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null };
+export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null; school: string; grade: string; klass: string; students: number; realName: string; requested: boolean };
 
 const call = <I, O>(name: string) => async (data: I) => (await httpsCallable<I, O>(functions, name)(data)).data;
 export const api = {
@@ -47,7 +47,8 @@ export const api = {
   startUpload: call<{ kind: 'upload' | 'voice'; id: string; contentType: string; size: number; ext: string }, { path: string; sessionUrl: string; url: string }>('startUpload'),
   teacherWorks: call<{ classId: string }, { list: StudentWork[] }>('teacherWorks'),
   renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo'),
-  claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean }>('claimTeacher'),
+  claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),
+  requestTeacher: call<{ school: string; grade: string; klass: string; students: number; realName: string }, { ok: boolean }>('requestTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),
   setTeacherApproval: call<{ uid: string; approved: boolean }, { ok: boolean }>('setTeacherApproval'),
   devApproveTeacher: call<Record<string, never>, { ok: boolean }>('devApproveTeacher'),

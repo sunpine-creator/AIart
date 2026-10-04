@@ -30,6 +30,7 @@ type Block = {
   x: 'center' | number; // center 또는 왼쪽 위치(px)
   y: 'top' | 'mid' | 'bottom' | 'title' | number; // 위치 규칙 또는 위쪽 px
   deco: 'box' | 'bubble' | 'outline' | 'none';
+  at?: { x: number; y: number }; // 마우스로 옮긴 위치(비율). 글자 덩어리의 가운데
 };
 
 function canvas() {
@@ -48,16 +49,21 @@ function draw(ctx: CanvasRenderingContext2D, b: Block) {
   const widths = b.lines.map((l) => ctx.measureText(l).width);
   const tw = Math.max(...widths);
   const th = lineH * b.lines.length + gap * (b.lines.length - 1);
-  const top =
-    typeof b.y === 'number' ? b.y : b.y === 'top' ? 60 : b.y === 'mid' ? (H - th) / 2 : b.y === 'title' ? (H - th) / 2 - 30 : H - th - 70;
-  const left = b.x === 'center' ? (W - tw) / 2 : b.x;
   const pad = b.deco === 'bubble' ? 22 : 18;
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  let top =
+    typeof b.y === 'number' ? b.y : b.y === 'top' ? 60 : b.y === 'mid' ? (H - th) / 2 : b.y === 'title' ? (H - th) / 2 - 30 : H - th - 70;
+  let left = b.x === 'center' ? (W - tw) / 2 : b.x;
+  if (b.at) {
+    left = clamp(b.at.x * W - tw / 2, pad, W - tw - pad);
+    top = clamp(b.at.y * H - th / 2, pad, H - th - pad);
+  }
   if (b.deco === 'box' || b.deco === 'bubble') {
     ctx.fillStyle = b.deco === 'bubble' ? 'rgba(255,255,255,0.95)' : 'rgba(0,0,0,0.6)';
     ctx.fillRect(left - pad, top - pad, tw + pad * 2, th + pad * 2);
   }
   b.lines.forEach((l, i) => {
-    const lx = b.x === 'center' ? (W - widths[i]) / 2 : left;
+    const lx = b.at ? (b.deco === 'bubble' ? left : left + (tw - widths[i]) / 2) : b.x === 'center' ? (W - widths[i]) / 2 : left;
     const ly = top + i * (lineH + gap);
     if (b.deco === 'outline') {
       ctx.lineJoin = 'round';
@@ -88,6 +94,7 @@ function capBlock(text: string, st: CapStyle = {}): Block {
     x: bubble ? 80 : 'center',
     y: st.pos ?? (bubble ? 'top' : 'bottom'),
     deco: bubble ? 'bubble' : st.box === false ? 'outline' : 'box',
+    at: st.x !== undefined && st.y !== undefined ? { x: st.x, y: st.y } : undefined,
   };
 }
 

@@ -79,7 +79,9 @@ function Join() {
     if (s.toast) setBusy(false);
   }, [s.toast]);
   const nm = name.trim();
-  const ok = code.length === 6 && Number(no) >= 1 && Number(no) <= 40 && nm.length >= 1;
+  // 초등 반 코드는 E + 숫자 5자리. 숫자 5자리만 써도 앞에 E 를 붙여 준다
+  const full = /^\d{5}$/.test(code) ? `E${code}` : code;
+  const ok = full.length === 6 && Number(no) >= 1 && Number(no) <= 40 && nm.length >= 1;
   return (
     <div className="join">
       <div className="join-card">
@@ -111,11 +113,12 @@ function Join() {
             e.preventDefault();
             if (!ok) return;
             setBusy(true);
-            d({ t: 'join', code, no: Number(no), name: nm });
+            d({ t: 'join', code: full, no: Number(no), name: nm });
           }}
         >
           <label htmlFor="j-code">반 코드</label>
-          <input id="j-code" className="mono big" value={code} maxLength={6} onChange={(e) => setCode(e.target.value.toUpperCase())} />
+          <input id="j-code" className="mono big" value={code} maxLength={6} placeholder="예: E12345" autoComplete="off" onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
+          <span className="tiny muted">초등은 E 뒤에 숫자 5개예요. 숫자만 써도 돼요.</span>
           <div className="row2">
             <div>
               <label htmlFor="j-no">번호</label>
@@ -1297,7 +1300,12 @@ function S4() {
             </div>
           )}
           {(show.kind === 'scene' || show.kind === 'upload') && show.caption && (
-            <CaptionOverlay key={`${show.key}-${playing ? 'p' : 's'}-${JSON.stringify(show.capStyle ?? {})}`} text={show.caption} st={show.capStyle} />
+            <CaptionOverlay
+              key={`${show.key}-${playing ? 'p' : 's'}-${JSON.stringify(show.capStyle ?? {})}`}
+              text={show.caption}
+              st={show.capStyle}
+              onMove={s.band === 'middle' && !playing ? (x, y) => setItem({ capStyle: { ...(cur.capStyle ?? {}), x, y } }) : undefined}
+            />
           )}
           </div>
           <div className="transport">
@@ -1526,7 +1534,10 @@ function CaptionStyler({ value, onChange }: { value: CapStyle; onChange: (v: Cap
           ))}
         </div>
       </div>
-      {row('위치', [['top', '위'], ['mid', '가운데'], ['bottom', '아래']], v.pos ?? (bubble ? 'top' : 'bottom'), (pos) => set({ pos }))}
+      {row('위치', [['top', '위'], ['mid', '가운데'], ['bottom', '아래']], v.x !== undefined ? ('' as any) : v.pos ?? (bubble ? 'top' : 'bottom'), (pos) => set({ pos, x: undefined, y: undefined }))}
+      <p className="tiny muted">
+        {v.x !== undefined ? '마우스로 옮긴 위치를 쓰고 있어요. 위의 위치 버튼을 누르면 정해진 자리로 돌아가요.' : '미리보기 화면의 자막을 마우스로 끌어서 원하는 곳에 놓을 수도 있어요.'}
+      </p>
       {!bubble && row('배경', [['on', '상자'], ['off', '테두리만']], v.box === false ? 'off' : 'on', (b) => set({ box: b === 'on' }))}
       {row('움직임', [['none', '없음'], ['fade', '서서히'], ['slide', '올라오기'], ['type', '타자 치듯']], v.anim ?? 'none', (anim) => set({ anim }))}
       <p className="tiny muted">글자색과 배경이 비슷하면 잘 안 보여요. 미리보기에서 꼭 확인해요.</p>
@@ -1535,12 +1546,15 @@ function CaptionStyler({ value, onChange }: { value: CapStyle; onChange: (v: Cap
 }
 
 // 미리보기 자막. 저장한 MP4 와 같은 규칙으로 보여 준다.
-function CaptionOverlay({ text, st = {} }: { text: string; st?: CapStyle }) {
+function CaptionOverlay({ text, st = {}, onMove }: { text: string; st?: CapStyle; onMove?: (x: number, y: number) => void }) {
   const bubble = st.kind === 'bubble';
   const anim = st.anim ?? 'none';
   const [shown, setShown] = useState(anim === 'type' ? '' : text);
+  // 끄는 동안의 위치(놓을 때 저장)
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const ref = React.useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
-    if (anim !== 'type') return void setShown(text);
+    if (anim !== 'type' || onMove) return void setShown(text); // 편집 중(끌기 가능)에는 글자를 다 보여 준다
     const chars = [...text];
     const steps = Math.min(chars.length, 14);
     let k = 0;
@@ -1551,12 +1565,44 @@ function CaptionOverlay({ text, st = {} }: { text: string; st?: CapStyle }) {
       if (k >= steps) window.clearInterval(id);
     }, 1600 / Math.max(1, steps));
     return () => window.clearInterval(id);
-  }, [text, anim]);
+  }, [text, anim, !!onMove]);
   const pos = st.pos ?? (bubble ? 'top' : 'bottom');
+  const at = drag ?? (st.x !== undefined && st.y !== undefined ? { x: st.x, y: st.y } : null);
+  const toRel = (e: React.PointerEvent) => {
+    const stage = ref.current?.parentElement?.getBoundingClientRect();
+    if (!stage) return null;
+    const clamp = (v: number) => Math.min(0.95, Math.max(0.05, v));
+    return { x: clamp((e.clientX - stage.left) / stage.width), y: clamp((e.clientY - stage.top) / stage.height) };
+  };
   return (
     <span
-      className={`cap-ov ${bubble ? 'bubble' : st.box === false ? 'outline' : 'boxed'} pos-${pos} anim-${anim}`}
-      style={{ color: st.color ?? (bubble ? '#1E2A44' : '#FFFFFF'), fontSize: `${CAP_SIZE_CQW[st.size ?? 'M']}cqw` }}
+      ref={ref}
+      className={`cap-ov ${bubble ? 'bubble' : st.box === false ? 'outline' : 'boxed'} ${at ? 'free' : `pos-${pos}`} ${onMove ? 'draggable' : ''} ${drag ? '' : `anim-${anim}`}`}
+      style={{
+        color: st.color ?? (bubble ? '#1E2A44' : '#FFFFFF'),
+        fontSize: `${CAP_SIZE_CQW[st.size ?? 'M']}cqw`,
+        ...(at ? { left: `${at.x * 100}%`, top: `${at.y * 100}%` } : {}),
+      }}
+      title={onMove ? '끌어서 위치를 옮겨요' : undefined}
+      onPointerDown={
+        onMove
+          ? (e) => {
+              e.preventDefault();
+              (e.target as HTMLElement).setPointerCapture(e.pointerId);
+              const r = toRel(e);
+              if (r) setDrag(r);
+            }
+          : undefined
+      }
+      onPointerMove={onMove ? (e) => drag && setDrag(toRel(e) ?? drag) : undefined}
+      onPointerUp={
+        onMove
+          ? () => {
+              if (drag) onMove(Math.round(drag.x * 1000) / 1000, Math.round(drag.y * 1000) / 1000);
+              setDrag(null);
+            }
+          : undefined
+      }
     >
       {shown || '\u00a0'}
     </span>
