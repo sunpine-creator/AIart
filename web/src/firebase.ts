@@ -24,6 +24,12 @@ if (import.meta.env.VITE_USE_EMULATORS === '1') {
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
 }
 
+export type StudentWork = {
+  no: number; name: string; topic: string; submitted: boolean;
+  exportUrl: string | null; exportAt: number | null; exportDur: number | null;
+  uploads: { id: string; name: string; dur: number; url: string }[];
+  ai: { n: number; line: string; img: boolean; url: string | null }[];
+};
 export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null };
 
 const call = <I, O>(name: string) => async (data: I) => (await httpsCallable<I, O>(functions, name)(data)).data;
@@ -39,6 +45,7 @@ export const api = {
   resetPin: call<{ classId: string; no: number; name?: string }, { ok: boolean }>('resetPin'),
   draftScenario: call<{ goal: string; role: string; content: string; cond: string; topic?: string }, { blocked: boolean; reason?: string; lines: string[] }>('draftScenario'),
   startUpload: call<{ kind: 'upload' | 'voice'; id: string; contentType: string; size: number; ext: string }, { path: string; sessionUrl: string; url: string }>('startUpload'),
+  teacherWorks: call<{ classId: string }, { list: StudentWork[] }>('teacherWorks'),
   renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo'),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean }>('claimTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),

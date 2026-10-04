@@ -689,3 +689,13 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .video-frame { position: relative; }
 .video-frame video, .video-frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain !important; background: #000; }
 .mode-tabs .pill { min-height: 34px; }
+/* 교사: 학생 작품 */
+.works { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.work-card { display: grid; gap: 10px; align-content: start; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.work-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.work-block { display: grid; gap: 6px; }
+.work-block summary { cursor: pointer; }
+.work-video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
+.work-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.work-thumbs figure { margin: 0; display: grid; gap: 4px; }
+.work-thumbs figcaption { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

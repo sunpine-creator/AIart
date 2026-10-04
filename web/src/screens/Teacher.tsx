@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Log, Stage, useStore } from '../store';
 import { STAGES } from './Student';
-import { TeacherRow, api, auth, errText } from '../firebase';
+import { StudentWork, TeacherRow, api, auth, errText } from '../firebase';
 
 const REJECT_REASONS = ['장면 이야기와 맞지 않아요', '더 구체적으로 써 보세요', '안전하지 않은 표현이 있어요'];
 
@@ -260,9 +260,112 @@ function DeleteClass({ onClose }: { onClose: () => void }) {
   );
 }
 
+// 학생 작품 모아 보기: 완성 영상, 학생이 올린 영상, 장면으로 정한 AI 영상
+function StudentWorks() {
+  const { s, d } = useStore();
+  const [list, setList] = useState<StudentWork[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [only, setOnly] = useState<'all' | 'export' | 'upload'>('all');
+  const load = () => {
+    setBusy(true);
+    api
+      .teacherWorks({ classId: s.classId })
+      .then((r) => setList(r.list), (e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => void load(), [s.classId]);
+  const shown = (list ?? []).filter((w) => (only === 'export' ? !!w.exportUrl : only === 'upload' ? w.uploads.length > 0 : w.exportUrl || w.uploads.length || w.ai.length));
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h3>학생 작품</h3>
+        <div className="actions">
+          <div className="pills">
+            {(
+              [
+                ['all', '전체'],
+                ['export', '완성 영상'],
+                ['upload', '학생이 올린 영상'],
+              ] as const
+            ).map(([k, t]) => (
+              <button key={k} className={`pill ${only === k ? 'on' : ''}`} aria-pressed={only === k} onClick={() => setOnly(k)}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <button className="btn tiny" onClick={load} disabled={busy}>
+            {busy ? '불러오는 중…' : '새로고침'}
+          </button>
+        </div>
+      </div>
+      {!list && <p className="muted">불러오는 중…</p>}
+      {list && shown.length === 0 && <p className="muted">아직 보여 줄 작품이 없어요.</p>}
+      <div className="works">
+        {shown.map((w) => (
+          <article className="work-card" key={w.no}>
+            <header className="work-card-head">
+              <strong>
+                {w.no}번 {w.name || '(미입장)'}
+              </strong>
+              {w.submitted && <span className="chip good">제출함</span>}
+              {w.topic && <span className="tiny muted">「{w.topic}」</span>}
+            </header>
+            {only !== 'upload' && (
+              w.exportUrl ? (
+                <div className="work-block">
+                  <span className="tiny muted">
+                    완성 영상 · {w.exportDur}초{w.exportAt ? ` · ${new Date(w.exportAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}
+                  </span>
+                  <video className="work-video" src={w.exportUrl} controls playsInline preload="metadata" />
+                  <a className="tiny" href={w.exportUrl} target="_blank" rel="noreferrer">
+                    새 창에서 열기 (⋮ 메뉴에서 저장)
+                  </a>
+                </div>
+              ) : (
+                <p className="tiny muted">아직 완성 영상을 저장하지 않았어요.</p>
+              )
+            )}
+            {only !== 'export' && w.uploads.length > 0 && (
+              <div className="work-block">
+                <span className="tiny muted">학생이 올린 영상 {w.uploads.length}개</span>
+                <div className="work-thumbs">
+                  {w.uploads.map((u) => (
+                    <figure key={u.id}>
+                      <video className="work-video sm" src={u.url} controls playsInline preload="metadata" />
+                      <figcaption className="tiny muted">{u.name}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+              </div>
+            )}
+            {only === 'all' && w.ai.length > 0 && (
+              <details className="work-block">
+                <summary className="tiny">AI로 만든 장면 {w.ai.length}개 보기</summary>
+                <div className="work-thumbs">
+                  {w.ai.map((a) =>
+                    a.url ? (
+                      <figure key={a.n}>
+                        {a.img ? <img className="work-video sm" src={a.url} alt="" /> : <video className="work-video sm" src={a.url} controls playsInline preload="none" />}
+                        <figcaption className="tiny muted">
+                          #{a.n} {a.line}
+                        </figcaption>
+                      </figure>
+                    ) : null,
+                  )}
+                </div>
+              </details>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Dashboard() {
   const { s, d } = useStore();
   const [showPins, setShowPins] = useState(false);
+  const [showWorks, setShowWorks] = useState(false);
   const [askDelete, setAskDelete] = useState(false);
   const roster = s.others;
   const me = roster[0] ?? { no: 0, nick: '', stage: 1 as Stage, credits: 0, status: 'idle' as const };
@@ -284,7 +387,10 @@ function Dashboard() {
           <button className="btn" onClick={() => d({ t: 'openClass', classId: '' })}>
             ← 내 반 목록
           </button>
-          <button className="btn" onClick={() => setShowPins(!showPins)}>
+          <button className="btn" onClick={() => (setShowWorks(!showWorks), setShowPins(false))}>
+            {showWorks ? '현황판 보기' : '학생 작품 보기'}
+          </button>
+          <button className="btn" onClick={() => (setShowPins(!showPins), setShowWorks(false))}>
             {showPins ? '현황판 보기' : '학생 명단·입장 안내'}
           </button>
           <button className="btn" onClick={() => setAskDelete(!askDelete)}>
@@ -297,7 +403,7 @@ function Dashboard() {
       </header>
 
       {askDelete && <DeleteClass onClose={() => setAskDelete(false)} />}
-      {showPins ? <PinCards /> : <>
+      {showWorks ? <StudentWorks /> : showPins ? <PinCards /> : <>
       <section className="t-bar">
         <div className="t-block">
           <span className="t-label">열린 단계</span>

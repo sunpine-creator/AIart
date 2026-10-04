@@ -617,3 +617,63 @@ export const startUpload = onCall(async (req) => {
     .createResumableUpload({ origin, metadata: { contentType, metadata: { firebaseStorageDownloadTokens: token, uploadedBy: `${classId}_${no}` } } });
   return { path, sessionUrl, url: mediaUrl(path, token) };
 });
+
+// ───────── 교사: 학생 작품 모아 보기 ─────────
+// 완성 영상, 학생이 올린 영상, 장면으로 정한 AI 영상을 학생별로 모아 바로 재생할 수 있는 주소와 함께 돌려준다.
+async function playableUrl(path?: string | null): Promise<string | null> {
+  if (!path) return null;
+  try {
+    const f = getStorage().bucket().file(path);
+    const [meta] = await f.getMetadata();
+    let token = String((meta.metadata as any)?.firebaseStorageDownloadTokens ?? '').split(',')[0];
+    if (!token) {
+      token = randomUUID();
+      await f.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+    }
+    return mediaUrl(path, token);
+  } catch {
+    return null; // 파일이 없으면 건너뛴다
+  }
+}
+
+export const teacherWorks = onCall({ timeoutSeconds: 120 }, async (req) => {
+  const uid = await requireTeacher(req);
+  const classId = String(req.data?.classId ?? '');
+  await ownedClass(uid, classId);
+  const [studentsSnap, projSnap, genSnap] = await Promise.all([
+    db.collection(`classes/${classId}/students`).get(),
+    db.collection('projects').where('classId', '==', classId).get(),
+    db.collection('generations').where('classId', '==', classId).where('kind', '==', 'final').get(),
+  ]);
+  const names = new Map(studentsSnap.docs.map((d) => [Number(d.data().no), String(d.data().nick || '')]));
+  const finals = genSnap.docs.map((d) => d.data()).filter((g) => g.status === 'succeeded');
+  const list = await Promise.all(
+    projSnap.docs.map(async (d) => {
+      const p = d.data();
+      const no = Number(p.no);
+      const scenes: any[] = p.scenes ?? [];
+      const uploads = await Promise.all(
+        ((p.uploads ?? []) as any[]).map(async (u) => ({ id: u.id, name: String(u.name ?? ''), dur: u.dur ?? 0, url: u.dl || (await playableUrl(u.path)) })),
+      );
+      const ai = await Promise.all(
+        scenes.map(async (sc, i) => {
+          const g = finals.find((x) => x.no === no && x.sceneId === sc.id);
+          return g ? { n: i + 1, line: String(sc.line ?? ''), img: !!g.img, url: g.url || (await playableUrl(g.storagePath)) } : null;
+        }),
+      );
+      return {
+        no,
+        name: names.get(no) ?? '',
+        topic: String(p.topic ?? ''),
+        submitted: !!p.submitted,
+        exportUrl: p.lastExport ? p.lastExport.url || (await playableUrl(p.lastExport.path)) : null,
+        exportAt: p.lastExport?.at ?? null,
+        exportDur: p.lastExport?.dur ?? null,
+        uploads: uploads.filter((u) => u.url),
+        ai: ai.filter(Boolean),
+      };
+    }),
+  );
+  list.sort((a, b) => a.no - b.no);
+  return { list };
+});
