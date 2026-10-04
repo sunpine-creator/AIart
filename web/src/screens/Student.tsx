@@ -394,15 +394,20 @@ function SheetElementary() {
           <span className="tiny muted count mono">{s.topic.length}/40</span>
           <p className="tiny muted">이런 순간을 떠올려 봐요: 아침에 일어날 때, 학교 가는 길, 숙제할 때, 가족과 저녁 먹을 때, 친구와 놀 때</p>
         </div>
+        <p className="tiny muted">육하원칙으로 정리해요. 생각나는 칸만 채워도 다음 단계로 갈 수 있어요.</p>
+        <div className="grid3">
+          <Field id="st-who" label="누가" value={st.who} onChange={set('who')} placeholder="예: 나와 동생" />
+          <Field id="st-when" label="언제" value={st.when ?? ''} onChange={set('when')} placeholder="예: 비 오는 아침" />
+          <Field id="st-where" label="어디서" value={st.where} onChange={set('where')} placeholder="예: 우리 집 거실" />
+          <Field id="st-what" label="무엇을 (어떤 AI와)" value={st.what} onChange={set('what')} placeholder="예: AI 스피커에게 날씨를 물어봤다" />
+          <Field id="st-event" label="어떻게" value={st.event} onChange={set('event')} placeholder="예: 비가 온다고 해서 우산을 챙겼다" />
+          <Field id="st-why" label="왜" value={st.why ?? ''} onChange={set('why')} placeholder="예: 늦잠을 자서 하늘을 못 봤다" />
+        </div>
         <div className="grid5">
-          <Field id="st-who" label="누가" value={st.who} onChange={set('who')} />
-          <Field id="st-where" label="어디서" value={st.where} onChange={set('where')} />
-          <Field id="st-what" label="무엇을(어떤 AI)" value={st.what} onChange={set('what')} />
-          <Field id="st-event" label="어떤 일이" value={st.event} onChange={set('event')} wide />
           <FeelingPicker value={st.feeling} onChange={set('feeling')} />
         </div>
       </section>
-      <p className="tiny muted">활동지에 쓴 “누가”와 “어디서”는 다음 단계에서 새 장면을 만들 때 자동으로 채워져요.</p>
+      <p className="tiny muted">활동지는 다음 단계에서 위쪽에 요약으로 보여요. 장면마다 육하원칙은 내가 다시 생각해서 써요.</p>
       <NextBar to={3} />
     </div>
   );
@@ -439,8 +444,8 @@ function SheetMiddle() {
     if (!lines.length) return d({ t: 'toast', msg: '먼저 최종 시나리오를 써 주세요.' });
     const scenes: Scene[] = lines.map((line, i) => {
       const old = s.scenes[i];
-      const base = old ?? { id: `m${Date.now().toString(36)}${i}`, line: '', builder: { who: s.story.who || '나', what: '', where: '', how: '' }, edits: 0, dur: 3, caption: '', voice: '없음' };
-      return { ...base, line, builder: { ...base.builder, what: line }, part: base.part ?? (i === 0 ? '시작' : i === lines.length - 1 ? '마무리' : '전개') };
+      const base = old ?? { id: `m${Date.now().toString(36)}${i}`, line: '', builder: { who: '', when: '', what: '', where: '', how: '', why: '' }, edits: 0, dur: 3, caption: '', voice: '없음' };
+      return { ...base, line, part: base.part ?? (i === 0 ? '시작' : i === lines.length - 1 ? '마무리' : '전개') };
     });
     d({ t: 'set', patch: { scenes, toast: `시나리오를 장면 ${scenes.length}개로 나눴어요. 아래에서 장면마다 설정해요.` } });
   };
@@ -462,6 +467,21 @@ function SheetMiddle() {
           <Field id="b-aud" label="누구에게 (대상)" value={s.brief.audience} onChange={(v) => d({ t: 'set', patch: { brief: { ...s.brief, audience: v } } })} />
           <Field id="b-pur" label="왜 (목적)" value={s.brief.purpose} onChange={(v) => d({ t: 'set', patch: { brief: { ...s.brief, purpose: v } } })} />
           <Field id="b-msg" label="무엇을 전할까 (핵심 메시지)" value={s.brief.message} onChange={(v) => d({ t: 'set', patch: { brief: { ...s.brief, message: v } } })} />
+        </div>
+        <p className="tiny muted mt">내 경험을 육하원칙으로 정리해요. 생각나는 칸만 채워도 넘어갈 수 있어요.</p>
+        <div className="grid3">
+          {(
+            [
+              ['who', '누가', '예: 나와 외국인 관광객'],
+              ['when', '언제', '예: 토요일 오후'],
+              ['where', '어디서', '예: 동네 버스 정류장'],
+              ['what', '무엇을 (어떤 AI와)', '예: 번역 앱으로 길을 알려 줬다'],
+              ['event', '어떻게', '예: 처음엔 당황했지만 앱 덕분에 대화했다'],
+              ['why', '왜', '예: 관광객이 길을 잃어서'],
+            ] as const
+          ).map(([k, label, ph]) => (
+            <Field key={k} id={`ms-${k}`} label={label} placeholder={ph} value={(s.story as any)[k] ?? ''} onChange={(v) => d({ t: 'set', patch: { story: { ...s.story, [k]: v } } })} />
+          ))}
         </div>
       </section>
 
@@ -530,7 +550,7 @@ function SheetMiddle() {
       <section className="panel">
         <div className="panel-head">
           <h3>③ 장면별 인물·배경·분위기 설정하기</h3>
-          <span className="tiny muted">여기서 정한 것이 3단계 프롬프트에 자동으로 들어가요</span>
+          <span className="tiny muted">3단계에서 이 계획을 보며 육하원칙으로 직접 프롬프트를 써요</span>
         </div>
         <ol className="scene-plan">
           {s.scenes.map((x, i) => (
@@ -548,7 +568,7 @@ function SheetMiddle() {
                 </button>
               </div>
               <label htmlFor={`pl-line-${x.id}`}>장면 내용 (무슨 일이 일어나나요?)</label>
-              <input id={`pl-line-${x.id}`} value={x.line} onChange={(e) => setScene(x.id, { line: e.target.value, builder: { ...x.builder, what: e.target.value } })} />
+              <input id={`pl-line-${x.id}`} value={x.line} onChange={(e) => setScene(x.id, { line: e.target.value })} />
               <div className="grid2">
                 <Field id={`pl-who-${x.id}`} label="인물 (누가, 어떤 모습)" value={x.builder.who} onChange={(v) => d({ t: 'builder', id: x.id, patch: { who: v } })} />
                 <Field id={`pl-where-${x.id}`} label="배경 (어디서, 언제)" value={x.builder.where} onChange={(v) => d({ t: 'builder', id: x.id, patch: { where: v } })} />
@@ -556,7 +576,7 @@ function SheetMiddle() {
               <label>분위기</label>
               <div className="pills">
                 {MOODS.map((m) => (
-                  <button key={m} className={`pill ${x.mood === m ? 'on' : ''}`} aria-pressed={x.mood === m} onClick={() => setScene(x.id, { mood: m, builder: { ...x.builder, how: `${m} 분위기` } })}>
+                  <button key={m} className={`pill ${x.mood === m ? 'on' : ''}`} aria-pressed={x.mood === m} onClick={() => setScene(x.id, { mood: m })}>
                     {m}
                   </button>
                 ))}
@@ -568,7 +588,7 @@ function SheetMiddle() {
               <button
                 className="board-add"
                 onClick={() =>
-                  d({ t: 'set', patch: { scenes: [...s.scenes, { id: `m${Date.now().toString(36)}`, line: '', builder: { who: s.story.who || '나', what: '', where: '', how: '' }, edits: 0, dur: 3, caption: '', voice: '없음' }] } })
+                  d({ t: 'set', patch: { scenes: [...s.scenes, { id: `m${Date.now().toString(36)}`, line: '', builder: { who: '', when: '', what: '', where: '', how: '', why: '' }, edits: 0, dur: 3, caption: '', voice: '없음' }] } })
                 }
               >
                 + 장면 추가
@@ -843,7 +863,7 @@ function S3() {
               className="scene-add"
               onClick={() => {
                 const id = `s${Date.now()}`;
-                d({ t: 'set', patch: { scenes: [...s.scenes, { id, line: '새 장면', builder: { who: s.story.who, what: '', where: s.story.where, how: '' }, edits: 0, dur: 5, caption: '', voice: '없음' }] } });
+                d({ t: 'set', patch: { scenes: [...s.scenes, { id, line: '새 장면', builder: { who: '', when: '', what: '', where: '', how: '', why: '' }, edits: 0, dur: 5, caption: '', voice: '없음' }] } });
                 setSel(id);
               }}
             >
@@ -918,11 +938,14 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
         </div>
       ) : (
         <>
-          <div className="builder">
-            <Field id={`b-who-${scene.id}`} label={mid ? '인물' : '누가'} value={b.who} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { who: v } })} human />
-            <Field id={`b-what-${scene.id}`} label={mid ? '행동' : '무엇을'} value={b.what} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { what: v } })} human />
-            <Field id={`b-where-${scene.id}`} label={mid ? '배경' : '어디서'} value={b.where} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { where: v } })} human />
-            <Field id={`b-how-${scene.id}`} label={mid ? '분위기·연출' : '어떤 모습으로'} value={b.how} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { how: v } })} human />
+          <p className="tiny muted">육하원칙으로 장면을 설명해요. 모든 칸을 채우지 않아도 만들 수 있어요.</p>
+          <div className="builder six">
+            <Field id={`b-who-${scene.id}`} label={mid ? '누가 (인물)' : '누가'} value={b.who} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { who: v } })} human placeholder="예: 나" />
+            <Field id={`b-when-${scene.id}`} label="언제" value={b.when ?? ''} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { when: v } })} human placeholder="예: 비 오는 아침" />
+            <Field id={`b-where-${scene.id}`} label={mid ? '어디서 (배경)' : '어디서'} value={b.where} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { where: v } })} human placeholder="예: 현관" />
+            <Field id={`b-what-${scene.id}`} label={mid ? '무엇을 (행동)' : '무엇을'} value={b.what} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { what: v } })} human placeholder="예: 우산을 챙긴다" />
+            <Field id={`b-how-${scene.id}`} label={mid ? '어떻게 (분위기·연출)' : '어떻게'} value={b.how} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { how: v } })} human placeholder="예: 웃으며 신나는" />
+            <Field id={`b-why-${scene.id}`} label="왜" value={b.why ?? ''} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { why: v } })} human placeholder="예: AI 스피커가 비 소식을 알려 줘서" />
           </div>
           <div className="field human-field">
             <label htmlFor={`b-extra-${scene.id}`}>더 넣고 싶은 내용 (자유롭게)</label>
@@ -1059,7 +1082,7 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
           ) : (
             <>
               <fieldset className="judge" disabled={judged && !isLatestGood}>
-                <legend>내 의도와 맞나요? (꼭 골라야 다음으로 갈 수 있어요)</legend>
+                <legend>내 의도와 맞나요?</legend>
                 <div className="pills">
                   <button
                     type="button"
@@ -1847,11 +1870,11 @@ function ScreenHead({ n, title, lead, human }: { n: number; title: string; lead:
   );
 }
 
-function Field({ id, label, value, onChange, wide, human }: { id: string; label: string; value: string; onChange: (v: string) => void; wide?: boolean; human?: boolean }) {
+function Field({ id, label, value, onChange, wide, human, placeholder }: { id: string; label: string; value: string; onChange: (v: string) => void; wide?: boolean; human?: boolean; placeholder?: string }) {
   return (
     <div className={`field ${wide ? 'wide' : ''} ${human ? 'human-field' : ''}`}>
       <label htmlFor={id}>{label}</label>
-      <input id={id} value={value} onChange={(e) => onChange(e.target.value)} />
+      <input id={id} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }

@@ -46,7 +46,7 @@ export function moderateRules(text: string): RuleVerdict {
   return { pass: true };
 }
 
-export type Builder = { who: string; what: string; where: string; how: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
+export type Builder = { who: string; what: string; where: string; how: string; when?: string; why?: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
 
 function subject(w: string): string {
   const t = w.trim();
@@ -60,8 +60,9 @@ function subject(w: string): string {
 export function buildPromptKo(b: Builder): string {
   // 직접 쓰기: 학생이 쓴 문장을 그대로 쓴다
   if (b.mode === 'free') return String(b.free ?? '').trim().slice(0, 300);
-  return [b.who && subject(b.who), b.where && `${b.where}에서`, b.what, b.how && `${b.how} 모습`, b.extra?.trim()]
-    .filter(Boolean)
-    .join(' ')
-    .slice(0, 300);
+  // 육하원칙: 누가 · 언제 · 어디서 · 무엇을 · 어떻게 · 왜 (빈칸은 건너뛴다)
+  const t = (v?: string) => String(v ?? '').trim();
+  const main = [t(b.who) && subject(t(b.who)), t(b.when), t(b.where) && `${t(b.where)}에서`, t(b.what)].filter(Boolean).join(' ');
+  const more = [t(b.how) && `${t(b.how)} 모습`, t(b.why) && `(왜: ${t(b.why)})`, t(b.extra)].filter(Boolean).join(', ');
+  return [main, more].filter(Boolean).join(', ').slice(0, 300);
 }

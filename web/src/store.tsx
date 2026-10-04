@@ -21,7 +21,7 @@ export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded'
 export type Fit = 'yes' | 'partial' | 'no';
 // 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
 export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type' };
-export type Builder = { who: string; what: string; where: string; how: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
+export type Builder = { who: string; what: string; where: string; how: string; when?: string; why?: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
 export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
@@ -59,7 +59,7 @@ export type State = {
   editNote: string;
   reflect: string;
   topic: string;
-  story: { who: string; where: string; what: string; event: string; feeling: string };
+  story: { who: string; when?: string; where: string; what: string; event: string; why?: string; feeling: string };
   brief: { audience: string; purpose: string; message: string };
   scenario: { builder: { goal: string; role: string; content: string; cond: string }; draft: string[]; marked: number[]; final: string };
   scenes: Scene[];
@@ -93,16 +93,16 @@ export type State = {
 const NICKS = ['파랑고래', '초록거북', '노랑병아리', '빨강여우', '하늘다람쥐', '보라문어', '주황호랑이', '분홍돌고래', '하양토끼', '검정고양이', '민트펭귄', '갈색곰', '은빛늑대', '황금사자', '연두개구리', '남색부엉이', '살구판다', '회색코끼리', '하늘고래', '바다수달'];
 export const nickOf = (no: number) => NICKS[(no * 7) % NICKS.length];
 
-const newScene = (i: number, who = '', where = ''): Scene => ({ id: `s${Date.now().toString(36)}${i}`, line: '', builder: { who, what: '', where, how: '' }, edits: 0, dur: 3, caption: '', voice: '없음' });
+const newScene = (i: number): Scene => ({ id: `s${Date.now().toString(36)}${i}`, line: '', builder: { who: '', when: '', what: '', where: '', how: '', why: '' }, edits: 0, dur: 3, caption: '', voice: '없음' });
 
 function emptyProject(band: Band) {
   return {
     sortCards: {},
     topic: '',
-    story: { who: '나', where: '', what: '', event: '', feeling: '' },
+    story: { who: '', when: '', where: '', what: '', event: '', why: '', feeling: '' },
     brief: { audience: '', purpose: '', message: '' },
     scenario: { builder: { goal: '60초 영상 시나리오', role: '중학생 영상 작가', content: '', cond: '장면 5개 이내, 대사는 짧게' }, draft: [], marked: [], final: '' },
-    scenes: [newScene(0, '나'), newScene(1, '나')],
+    scenes: [newScene(0), newScene(1)],
     intro: { dur: 3, caption: '' },
     outro: { dur: 3, caption: '판단은 내가, 도움은 AI가' },
     bgm: '없음',
