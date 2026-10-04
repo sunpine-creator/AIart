@@ -576,3 +576,26 @@ export const deleteClass = onCall({ timeoutSeconds: 300, memory: '512MiB' }, asy
   logger.info('반 삭제', { classId, by: uid });
   return { ok: true };
 });
+
+// ───────── 학생: 내 영상·녹음 올리기 ─────────
+// 브라우저가 Storage 에 바로 올리지 않고, 서버가 만든 "업로드 전용 주소"로 올린다.
+// (보안 규칙·CORS 설정과 상관없이 동작. 이 주소는 이 파일 한 개에만 쓸 수 있다)
+export const startUpload = onCall(async (req) => {
+  const { classId, no } = requireStudent(req);
+  const kind = String(req.data?.kind ?? '');
+  const id = String(req.data?.id ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 60);
+  const contentType = String(req.data?.contentType ?? '').slice(0, 60);
+  const size = Number(req.data?.size ?? 0);
+  if (!id || !['upload', 'voice'].includes(kind)) throw new HttpsError('invalid-argument', '올릴 파일을 다시 골라 주세요.');
+  if (kind === 'upload' && (!contentType.startsWith('video/') || size > 100 * 1024 * 1024)) throw new HttpsError('invalid-argument', '100MB 이하의 영상 파일만 올릴 수 있어요.');
+  if (kind === 'voice' && (!contentType.startsWith('audio/') || size > 5 * 1024 * 1024)) throw new HttpsError('invalid-argument', '녹음 파일이 너무 커요. 더 짧게 녹음해 주세요.');
+  const ext = String(req.data?.ext ?? '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || (kind === 'voice' ? 'webm' : 'mp4');
+  const path = `classes/${classId}/${no}/${kind === 'upload' ? 'uploads' : 'voices'}/${id}.${ext}`;
+  const token = randomUUID();
+  const origin = String(req.rawRequest?.headers?.origin ?? '') || undefined;
+  const [sessionUrl] = await getStorage()
+    .bucket()
+    .file(path)
+    .createResumableUpload({ origin, metadata: { contentType, metadata: { firebaseStorageDownloadTokens: token, uploadedBy: `${classId}_${no}` } } });
+  return { path, sessionUrl, url: mediaUrl(path, token) };
+});

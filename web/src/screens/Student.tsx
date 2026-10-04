@@ -889,12 +889,53 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
           내 계획: {[scene.part, scene.mood && `${scene.mood} 분위기`].filter(Boolean).join(' · ') || '활동지 ③에서 장면을 설정하면 여기에 보여요'}
         </p>
       )}
-      <div className="builder">
-        <Field id={`b-who-${scene.id}`} label={mid ? '인물' : '누가'} value={b.who} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { who: v } })} human />
-        <Field id={`b-what-${scene.id}`} label={mid ? '행동' : '무엇을'} value={b.what} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { what: v } })} human />
-        <Field id={`b-where-${scene.id}`} label={mid ? '배경' : '어디서'} value={b.where} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { where: v } })} human />
-        <Field id={`b-how-${scene.id}`} label={mid ? '분위기·연출' : '어떤 모습으로'} value={b.how} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { how: v } })} human />
+      <div className="pills mode-tabs" role="group" aria-label="프롬프트 쓰는 방법">
+        <button type="button" className={`pill ${b.mode !== 'free' ? 'on' : ''}`} aria-pressed={b.mode !== 'free'} onClick={() => d({ t: 'builder', id: scene.id, patch: { mode: 'fields' } })}>
+          칸 채우기
+        </button>
+        <button
+          type="button"
+          className={`pill ${b.mode === 'free' ? 'on' : ''}`}
+          aria-pressed={b.mode === 'free'}
+          onClick={() => d({ t: 'builder', id: scene.id, patch: { mode: 'free', free: b.free || buildPromptKo({ ...b, mode: 'fields' }) } })}
+        >
+          직접 쓰기
+        </button>
       </div>
+      {b.mode === 'free' ? (
+        <div className="field human-field">
+          <label htmlFor={`b-free-${scene.id}`}>내가 원하는 장면을 자유롭게 써요</label>
+          <textarea
+            id={`b-free-${scene.id}`}
+            rows={3}
+            maxLength={200}
+            placeholder={mid ? '예: 비 오는 아침, 현관에서 우산을 챙기는 중학생. 창밖으로 빗방울이 보이고, 따뜻한 조명의 차분한 분위기' : '예: 비 오는 아침에 내가 노란 우산을 들고 웃으며 집을 나서는 모습'}
+            value={b.free ?? ''}
+            onChange={(e) => d({ t: 'builder', id: scene.id, patch: { free: e.target.value } })}
+          />
+          <span className="tiny muted count mono">{(b.free ?? '').length}/200</span>
+          <p className="tiny muted">누가, 어디서, 무엇을, 어떤 모습으로가 들어가면 AI가 더 잘 알아들어요.</p>
+        </div>
+      ) : (
+        <>
+          <div className="builder">
+            <Field id={`b-who-${scene.id}`} label={mid ? '인물' : '누가'} value={b.who} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { who: v } })} human />
+            <Field id={`b-what-${scene.id}`} label={mid ? '행동' : '무엇을'} value={b.what} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { what: v } })} human />
+            <Field id={`b-where-${scene.id}`} label={mid ? '배경' : '어디서'} value={b.where} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { where: v } })} human />
+            <Field id={`b-how-${scene.id}`} label={mid ? '분위기·연출' : '어떤 모습으로'} value={b.how} onChange={(v) => d({ t: 'builder', id: scene.id, patch: { how: v } })} human />
+          </div>
+          <div className="field human-field">
+            <label htmlFor={`b-extra-${scene.id}`}>더 넣고 싶은 내용 (자유롭게)</label>
+            <input
+              id={`b-extra-${scene.id}`}
+              maxLength={100}
+              placeholder={mid ? '예: 카메라가 천천히 다가가고, 창밖에 비가 내린다' : '예: 강아지도 옆에서 꼬리를 흔든다'}
+              value={b.extra ?? ''}
+              onChange={(e) => d({ t: 'builder', id: scene.id, patch: { extra: e.target.value } })}
+            />
+          </div>
+        </>
+      )}
       <div className="prompt-pair">
         <div className="pp human">
           <span className="tag human">내가 쓴 말</span>
@@ -1275,7 +1316,7 @@ function S4() {
                   <option key={v}>{v}</option>
                 ))}
               </select>
-              {cur.voice === '내 목소리' && <VoiceRecorder key={cur.key} itemKey={cur.key} maxSec={cur.dur} path={cur.scene?.voicePath ?? cur.upload?.voicePath} />}
+              {cur.voice === '내 목소리' && <VoiceRecorder key={cur.key} itemKey={cur.key} maxSec={cur.dur} path={cur.scene?.voicePath ?? cur.upload?.voicePath} url={cur.scene?.voiceUrl ?? cur.upload?.voiceUrl} />}
               <p className="tiny muted">AI 목소리는 정해진 목소리만 쓸 수 있어요. 내 목소리를 AI로 흉내 내지 않아요.</p>
             </>
           )}
@@ -1500,9 +1541,10 @@ function CaptionOverlay({ text, st = {} }: { text: string; st?: CapStyle }) {
 }
 
 // 내 목소리 녹음. 클립 길이만큼만 녹음되고, 다시 녹음할 수 있다.
-function VoiceRecorder({ itemKey, maxSec, path }: { itemKey: string; maxSec: number; path?: string }) {
+function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec: number; path?: string; url?: string }) {
   const { d } = useStore();
-  const saved = useStorageUrl(path);
+  const fetched = useStorageUrl(url ? undefined : path);
+  const saved = url ?? fetched;
   const [state, setState] = useState<'idle' | 'rec' | 'done'>('idle');
   const [left, setLeft] = useState(maxSec);
   const [local, setLocalUrl] = useState<string | undefined>(undefined);

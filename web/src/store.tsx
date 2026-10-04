@@ -20,8 +20,8 @@ export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded'
 export type Fit = 'yes' | 'partial' | 'no';
 // 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
 export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type' };
-export type Builder = { who: string; what: string; where: string; how: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle };
+export type Builder = { who: string; what: string; where: string; how: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
@@ -29,7 +29,7 @@ export type Gen = {
   storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number;
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
-export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string };
+export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done' };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string };
@@ -164,6 +164,20 @@ function toGen(id: string, x: any): Gen {
     judgement: x.judgement ?? undefined, rejectReason, parentId: x.parentId ?? undefined, at: tsMs(x.createdAt),
     storagePath: x.storagePath ?? undefined, url: x.url ?? undefined, attempt: x.attempt ?? undefined, mimeType: x.mimeType ?? undefined, mock: !!x.mock,
   };
+}
+
+// 파일 올리기: 실제 서버에서는 서버가 만든 업로드 전용 주소로 바로 올린다(보안 규칙 문제를 피함).
+// 연습 모드(에뮬레이터)에서는 예전처럼 Storage SDK 로 올린다.
+async function putFile(kind: 'upload' | 'voice', id: string, file: Blob, ext: string, fallbackPath: string): Promise<{ path: string; url: string }> {
+  const contentType = file.type || (kind === 'voice' ? 'audio/webm' : 'video/mp4');
+  if (import.meta.env.VITE_USE_EMULATORS === '1') {
+    await uploadBytes(sref(storage, fallbackPath), file, { contentType });
+    return { path: fallbackPath, url: await getDownloadURL(sref(storage, fallbackPath)) };
+  }
+  const s = await api.startUpload({ kind, id, contentType, size: file.size, ext });
+  const r = await fetch(s.sessionUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: file });
+  if (!r.ok) throw new Error(`파일을 올리지 못했어요 (${r.status})`);
+  return { path: s.path, url: s.url };
 }
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
@@ -312,7 +326,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // 올린 영상의 주소 찾기
   useEffect(() => {
     for (const u of (project?.uploads ?? []) as Upload[]) {
-      if (u.path && !uploadUrls[u.id]) getDownloadURL(sref(storage, u.path)).then((url) => setUploadUrls((m) => ({ ...m, [u.id]: url })), () => {});
+      if (u.path && !u.dl && !uploadUrls[u.id]) getDownloadURL(sref(storage, u.path)).then((url) => setUploadUrls((m) => ({ ...m, [u.id]: url })), () => {});
     }
   }, [project?.uploads]);
 
@@ -378,7 +392,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       intro: p.intro ?? base.intro,
       outro: p.outro ?? base.outro,
       bgm: p.bgm ?? '없음',
-      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, url: u.url || uploadUrls[u.id] || '' })),
+      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, url: u.url || u.dl || uploadUrls[u.id] || '' })),
       order: p.order ?? [],
       checklist: p.checklist ?? {},
       aiNote: p.aiNote ?? '',
@@ -459,8 +473,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setUploadUrls((m) => ({ ...m, [a.meta.id]: a.meta.url }));
         patchProject({ uploads: [...(projectRef.current?.uploads ?? []), { ...a.meta, path }], order: [...(projectRef.current?.order ?? []), a.meta.id] });
         toast('영상을 올리는 중이에요…');
-        uploadBytes(sref(storage, path), a.file, { contentType: a.file.type })
-          .then(() => toast('영상을 올렸어요.'))
+        putFile('upload', a.meta.id, a.file, ext, path)
+          .then((r) => {
+            patchProject({ uploads: (projectRef.current?.uploads ?? []).map((u: Upload) => (u.id === a.meta.id ? { ...u, path: r.path, dl: r.url } : u)) });
+            toast('영상을 올렸어요.');
+          })
           .catch((e) => {
             toast(`올리지 못했어요: ${errText(e)}`);
             patchProject({ uploads: (projectRef.current?.uploads ?? []).filter((u: Upload) => u.id !== a.meta.id) });
@@ -476,11 +493,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       case 'voice': {
         const path = `classes/${claims.classId}/${claims.no}/voices/${a.key}.webm`;
         toast('녹음을 저장하는 중이에요…');
-        uploadBytes(sref(storage, path), a.blob, { contentType: a.blob.type || 'audio/webm' })
-          .then(() => {
+        putFile('voice', a.key.replace(/[^a-zA-Z0-9_-]/g, ''), a.blob, 'webm', path)
+          .then((r) => {
             const cur = projectRef.current ?? {};
-            if ((cur.scenes ?? []).some((x: Scene) => x.id === a.key)) patchProject({ scenes: cur.scenes.map((x: Scene) => (x.id === a.key ? { ...x, voicePath: path, voice: '내 목소리' } : x)) });
-            else patchProject({ uploads: (cur.uploads ?? []).map((u: Upload) => (u.id === a.key ? { ...u, voicePath: path, voice: '내 목소리' } : u)) });
+            const patch = { voicePath: r.path, voiceUrl: r.url, voice: '내 목소리' };
+            if ((cur.scenes ?? []).some((x: Scene) => x.id === a.key)) patchProject({ scenes: cur.scenes.map((x: Scene) => (x.id === a.key ? { ...x, ...patch } : x)) });
+            else patchProject({ uploads: (cur.uploads ?? []).map((u: Upload) => (u.id === a.key ? { ...u, ...patch } : u)) });
             toast('녹음을 저장했어요.');
           })
           .catch((e) => toast(`녹음을 저장하지 못했어요: ${errText(e)}`));

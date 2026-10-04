@@ -684,3 +684,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .swatches { display: flex; flex-wrap: wrap; gap: 6px; }
 .swatch { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); cursor: pointer; }
 .swatch.on { outline: 2px solid var(--human); outline-offset: 2px; }
+
+/* 올린 영상·AI 영상이 잘리지 않게 화면 안에 맞춰 보여 준다(남는 곳은 검은 여백) */
+.video-frame { position: relative; }
+.video-frame video, .video-frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain !important; background: #000; }
+.mode-tabs .pill { min-height: 34px; }

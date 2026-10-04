@@ -46,7 +46,7 @@ export function moderateRules(text: string): RuleVerdict {
   return { pass: true };
 }
 
-export type Builder = { who: string; what: string; where: string; how: string };
+export type Builder = { who: string; what: string; where: string; how: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
 
 function subject(w: string): string {
   const t = w.trim();
@@ -58,7 +58,9 @@ function subject(w: string): string {
 }
 
 export function buildPromptKo(b: Builder): string {
-  return [b.who && subject(b.who), b.where && `${b.where}에서`, b.what, b.how && `${b.how} 모습`]
+  // 직접 쓰기: 학생이 쓴 문장을 그대로 쓴다
+  if (b.mode === 'free') return String(b.free ?? '').trim().slice(0, 300);
+  return [b.who && subject(b.who), b.where && `${b.where}에서`, b.what, b.how && `${b.how} 모습`, b.extra?.trim()]
     .filter(Boolean)
     .join(' ')
     .slice(0, 300);
