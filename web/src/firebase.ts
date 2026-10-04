@@ -32,7 +32,8 @@ export type StudentWork = {
 };
 export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null; school: string; grade: string; klass: string; students: number; realName: string; requested: boolean };
 
-const call = <I, O>(name: string) => async (data: I) => (await httpsCallable<I, O>(functions, name)(data)).data;
+// 기본 기다림은 70초. 오래 걸리는 기능(반 삭제·영상 합치기·작품 모으기)은 더 오래 기다린다
+const call = <I, O>(name: string, timeout = 70_000) => async (data: I) => (await httpsCallable<I, O>(functions, name, { timeout })(data)).data;
 export const api = {
   createClass: call<{ title: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
   joinClass: call<{ code: string; no: number; name: string }, { token: string }>('joinClass'),
@@ -41,12 +42,12 @@ export const api = {
     { genId: string; blocked: boolean; category?: string; reason?: string; suggestion?: string }
   >('requestGeneration'),
   reviewGeneration: call<{ genId: string; approve: boolean; reason?: string }, { ok: boolean }>('reviewGeneration'),
-  deleteClass: call<{ classId: string }, { ok: boolean }>('deleteClass'),
+  deleteClass: call<{ classId: string }, { ok: boolean }>('deleteClass', 300_000),
   resetPin: call<{ classId: string; no: number; name?: string }, { ok: boolean }>('resetPin'),
   draftScenario: call<{ goal: string; role: string; content: string; cond: string; topic?: string }, { blocked: boolean; reason?: string; lines: string[] }>('draftScenario'),
   startUpload: call<{ kind: 'upload' | 'voice'; id: string; contentType: string; size: number; ext: string }, { path: string; sessionUrl: string; url: string }>('startUpload'),
-  teacherWorks: call<{ classId: string }, { list: StudentWork[] }>('teacherWorks'),
-  renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo'),
+  teacherWorks: call<{ classId: string }, { list: StudentWork[] }>('teacherWorks', 120_000),
+  renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),
   requestTeacher: call<{ school: string; grade: string; klass: string; students: number; realName: string }, { ok: boolean }>('requestTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),

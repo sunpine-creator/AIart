@@ -366,7 +366,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       band,
       joined: role === 'student',
       me: { no: claims.no ?? 0, nick: student?.nick || '' },
-      classId: cls?.id ?? local.classId,
+      // 교사는 지금 고른 반(local.classId)만 본다. 목록으로 돌아가면 빈 값이 된다
+      classId: role === 'teacher' ? local.classId : cls?.id ?? local.classId,
       cls: cls
         ? { title: cls.title, code: cls.code, open: cls.open, paused: cls.paused, approval: cls.approval, videoInMiddle: cls.videoInMiddle, budget: cls.budgetUsd }
         : base.cls,
@@ -546,6 +547,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .catch((e) => toast(errText(e)));
         return;
       case 'openClass':
+        // 다른 반으로 가거나 목록으로 돌아갈 때 이전 반 정보를 비운다
+        setCls(null);
+        setStudents([]);
         setLocal((l) => ({ ...l, classId: a.classId, selectedStudent: 1 }));
         return;
       case 'signOut':

@@ -112,10 +112,13 @@ function ClassList() {
   const [band, setBand] = useState<'elementary' | 'middle'>('elementary');
   const [size, setSize] = useState(30);
   const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
   const create = async () => {
     setBusy(true);
     try {
       const r = await api.createClass({ title, band, size });
+      setTitle('');
+      setAdding(false);
       d({ t: 'openClass', classId: r.classId });
     } catch (e) {
       d({ t: 'toast', msg: errText(e) });
@@ -126,8 +129,15 @@ function ClassList() {
   return (
     <div className="teacher">
       <header className="t-head">
-        <h1 className="t-title">내 반</h1>
-        <span className="muted">{s.teacherEmail} · <button className="link" onClick={() => d({ t: 'signOut' })}>로그아웃</button></span>
+        <div>
+          <h1 className="t-title">내 반 목록</h1>
+          <span className="muted">
+            {s.teacherEmail} · <button className="link" onClick={() => d({ t: 'signOut' })}>로그아웃</button>
+          </span>
+        </div>
+        <button className="btn primary" onClick={() => setAdding(!adding)}>
+          {adding ? '닫기' : '+ 새 반 추가'}
+        </button>
       </header>
       <div className="class-grid">
         {s.classes.map((c) => (
@@ -137,10 +147,14 @@ function ClassList() {
             <span className="mono strong">반 코드 {c.code}</span>
           </button>
         ))}
-        {s.classes.length === 0 && <p className="muted">아직 만든 반이 없어요. 아래에서 첫 반을 만들어 보세요.</p>}
+        {s.classes.length === 0 && !adding && <p className="muted">아직 만든 반이 없어요. 오른쪽 위 “+ 새 반 추가”를 눌러 첫 반을 만들어 보세요.</p>}
+        <button className="class-card add-card" onClick={() => setAdding(true)}>
+          <strong>+ 새 반 추가</strong>
+          <span className="muted">반을 더 만들 수 있어요</span>
+        </button>
       </div>
-      <AdminPanel />
-      <section className="panel">
+      {(adding || s.classes.length === 0) && (
+      <section className="panel" id="new-class">
         <h3>새 반 만들기</h3>
         <div className="grid3">
           <div className="field">
@@ -163,6 +177,8 @@ function ClassList() {
           {busy ? '만드는 중…' : '반 만들고 학생 카드 받기'}
         </button>
       </section>
+      )}
+      <AdminPanel />
     </div>
   );
 }
@@ -293,12 +309,29 @@ function DeleteClass({ onClose }: { onClose: () => void }) {
   const { s, d } = useStore();
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    if (!busy) return;
+    const id = window.setInterval(() => setSec((x) => x + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [busy]);
   const run = () => {
+    const title = s.cls.title;
+    const classId = s.classId;
+    setSec(0);
     setBusy(true);
     api
-      .deleteClass({ classId: s.classId })
-      .then(() => (d({ t: 'toast', msg: `「${s.cls.title}」 반을 삭제했어요.` }), d({ t: 'openClass', classId: '' })))
-      .catch((e) => (d({ t: 'toast', msg: errText(e) }), setBusy(false)));
+      .deleteClass({ classId })
+      .then(() => {
+        setBusy(false);
+        onClose();
+        d({ t: 'openClass', classId: '' });
+        d({ t: 'toast', msg: `「${title}」 반을 삭제했어요.` });
+      })
+      .catch((e) => {
+        setBusy(false);
+        d({ t: 'toast', msg: `삭제하지 못했어요: ${errText(e)}` });
+      });
   };
   return (
     <section className="panel danger-panel" role="alertdialog" aria-label="반 삭제 확인">
@@ -310,7 +343,7 @@ function DeleteClass({ onClose }: { onClose: () => void }) {
       <input id="del-typed" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
       <div className="actions">
         <button className="btn danger" disabled={typed.trim() !== s.cls.title.trim() || busy} onClick={run}>
-          {busy ? '지우는 중…' : '영구 삭제'}
+          {busy ? `지우는 중… ${sec}초 (영상이 많으면 1~2분 걸려요)` : '영구 삭제'}
         </button>
         <button className="btn" onClick={onClose} disabled={busy}>
           취소
