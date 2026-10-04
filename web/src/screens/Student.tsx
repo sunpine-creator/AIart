@@ -822,7 +822,7 @@ function S3() {
       <ScreenHead
         n={3}
         title={`장면마다 AI로 ${word === "영상" ? "영상을" : "이미지를"} 만들어요`}
-        lead={`활동지를 보며 장면을 AI로 만들어 봐요. ${word === '영상' ? '3초짜리 영상' : '이미지'}을 만들어 보고, 마음에 들면 그 결과로 장면을 정해요. 고치고 싶으면 두 번까지 고칠 수 있어요. 이야기로 엮는 건 다음 단계에서 해요.`}
+        lead={`활동지를 보며 장면을 AI로 만들어 봐요. ${word === '영상' ? '3초짜리 영상' : '이미지'}을 만들어 보고, 마음에 들면 그 결과로 장면을 정해요. 고치고 싶으면 한 번 고칠 수 있어요. 이야기로 엮는 건 다음 단계에서 해요.`}
       />
       <SheetSummary />
       <div className="make">
@@ -875,6 +875,9 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const finalCost = 0; // 고른 결과를 그대로 쓰므로 추가 비용 없음
   const lastGood = [...gens].reverse().find((g) => g.status === 'succeeded' && g.kind !== 'final');
   const final = gens.find((g) => g.kind === 'final' && g.status === 'succeeded');
+  // 이미 보낸 초안(승인 대기·대기열·만드는 중·완성)이 있으면 새 초안은 못 만든다. 차단·반려·실패면 다시 할 수 있다.
+  const hasDraft = gens.some((g) => g.kind === 'draft' && ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+  const sending = s.sending.includes(scene.id);
   return (
     <section className="work">
       <div className="work-head">
@@ -908,16 +911,19 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
           <span>{live.reason}</span>
         </div>
       )}
-      {!final && (
+      {!final && !hasDraft && (
         <div className="actions">
           <button
             className="btn primary"
-            disabled={!ko || busy || s.cls.paused}
+            disabled={!ko || busy || sending || s.cls.paused || s.credits < draftCost}
             onClick={() => d({ t: 'request', sceneId: scene.id, kind: 'draft' })}
           >
-            {word} 초안 만들기
+            {sending ? '보내는 중…' : `${word} 초안 만들기`}
           </button>
-          <span className="cost mono">{img ? '이미지 1장' : `${DRAFT.res} · ${DRAFT.sec}초`} · {draftCost}크레딧</span>
+          <span className="cost mono">
+            {img ? '이미지 1장' : `${DRAFT.res} · ${DRAFT.sec}초`} · {draftCost}크레딧{s.cls.approval ? ' (선생님이 승인하면 줄어요)' : ''}
+          </span>
+          <span className="tiny muted">초안은 장면마다 한 번만 만들 수 있어요. 빈칸을 꼼꼼히 채운 뒤 눌러요.</span>
         </div>
       )}
 
@@ -986,7 +992,7 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
           <span className="mono muted">{time}</span>
         </div>
         {g.status === 'awaiting_approval' && <Progress text="선생님이 프롬프트를 확인하고 있어요" />}
-        {g.status === 'queued' && <Progress text="대기열에서 차례를 기다려요 · 반 친구들 작업과 차례로 만들어요" />}
+        {g.status === 'queued' && (g.attempt ? <Progress text={`AI 쪽에 문제가 있어 잠시 뒤 다시 만들어요 (${g.attempt}/3번째 재시도) · 크레딧은 실패하면 돌려받아요`} /> : <Progress text="대기열에서 차례를 기다려요 · 반 친구들 작업과 차례로 만들어요" />)}
         {g.status === 'running' && <Progress text={`AI가 ${word === "영상" ? "영상을" : "이미지를"} 만드는 중이에요 · 1~3분쯤 걸려요`} running />}
       </li>
     );
@@ -1014,38 +1020,42 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
               <fieldset className="judge" disabled={judged && !isLatestGood}>
                 <legend>내 의도와 맞나요? (꼭 골라야 다음으로 갈 수 있어요)</legend>
                 <div className="pills">
-                  {(
-                    [
-                      ['yes', '맞아요'],
-                      ['partial', '조금 맞아요'],
-                      ['no', '아니에요'],
-                    ] as [Fit, string][]
-                  ).map(([v, t]) => (
-                    <button type="button" key={v} className={`pill ${fit === v ? 'on' : ''}`} aria-pressed={fit === v} onClick={() => setFit(v)}>
-                      {t}
-                    </button>
-                  ))}
+                  <button
+                    type="button"
+                    className={`pill ${fit === 'yes' ? 'on' : ''}`}
+                    aria-pressed={fit === 'yes'}
+                    onClick={() => (setFit('yes'), d({ t: 'judge', genId: g.id, judgement: { fit: 'yes', reason: '' } }))}
+                  >
+                    맞아요
+                  </button>
+                  <button type="button" className={`pill ${fit === 'no' || fit === 'partial' ? 'on' : ''}`} aria-pressed={fit === 'no'} onClick={() => setFit('no')}>
+                    아니에요
+                  </button>
                 </div>
-                <input
-                  id={`reason-${g.id}`}
-                  aria-label="그렇게 생각한 이유"
-                  placeholder={s.band === 'middle' ? '내 계획(인물·배경·분위기)과 비교해 무엇이 같고 무엇이 다른지 써요' : '그렇게 생각한 이유를 한 줄로 써요'}
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-                {s.band === 'middle' && <p className="tiny muted">생각해 보기: {THINK_QS[[...g.id].reduce((a, c) => a + c.charCodeAt(0), 0) % THINK_QS.length]}</p>}
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!fit || reason.trim().length < (s.band === 'middle' ? 10 : 2)}
-                  onClick={() => d({ t: 'judge', genId: g.id, judgement: { fit: fit!, reason } })}
-                >
-                  판단 저장
-                </button>
+                {(fit === 'no' || fit === 'partial') && (
+                  <>
+                    <input
+                      id={`reason-${g.id}`}
+                      aria-label="내 의도와 다른 점"
+                      placeholder={s.band === 'middle' ? '내 계획(인물·배경·분위기)과 비교해 무엇이 다른지 써요' : '어떤 점이 내 생각과 달랐는지 한 줄로 써요'}
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                    />
+                    {s.band === 'middle' && <p className="tiny muted">생각해 보기: {THINK_QS[[...g.id].reduce((a, c) => a + c.charCodeAt(0), 0) % THINK_QS.length]}</p>}
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={reason.trim().length < (s.band === 'middle' ? 10 : 2)}
+                      onClick={() => d({ t: 'judge', genId: g.id, judgement: { fit: 'no', reason } })}
+                    >
+                      판단 저장
+                    </button>
+                  </>
+                )}
               </fieldset>
               {isLatestGood && judged && (
                 <div className="next-choice">
-                  {g.judgement!.fit !== 'yes' && (
+                  {g.judgement!.fit !== 'yes' && scene.edits < MAX_EDITS && (
                     <div className="edit-row">
                       <input
                         id={`edit-${g.id}`}
@@ -1053,26 +1063,28 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
                         placeholder="예: 우산 색을 노란색으로 바꿔 줘"
                         value={edit}
                         onChange={(e) => setEdit(e.target.value)}
-                        disabled={scene.edits >= MAX_EDITS}
                       />
                       <button
                         className="btn ai"
-                        disabled={!edit.trim() || scene.edits >= MAX_EDITS || s.cls.paused}
+                        disabled={!edit.trim() || s.cls.paused || s.sending.includes(scene.id)}
                         onClick={() => {
                           d({ t: 'request', sceneId: scene.id, kind: 'edit', editText: edit.trim(), parentId: g.id });
                           setEdit('');
                         }}
                       >
-                        고쳐서 다시 만들기 ({MAX_EDITS - scene.edits}번 남음)
+                        고쳐서 다시 만들기 (한 번만 할 수 있어요)
                       </button>
                     </div>
                   )}
-                  {g.judgement!.fit !== 'no' && (
+                  {g.judgement!.fit !== 'yes' && scene.edits >= MAX_EDITS && (
+                    <p className="tiny muted">고치기 기회를 다 썼어요. 이 결과로 정하고, 편집 단계에서 자막·목소리·내 영상으로 보완해 봐요.</p>
+                  )}
+                  {(g.judgement!.fit !== 'no' || scene.edits >= MAX_EDITS) && (
                     <div className="actions">
-                      <button className="btn primary" disabled={s.cls.paused} onClick={() => d({ t: 'request', sceneId: scene.id, kind: 'final', parentId: g.id })}>
+                      <button className="btn primary" disabled={s.cls.paused || s.sending.includes(scene.id)} onClick={() => d({ t: 'request', sceneId: scene.id, kind: 'final', parentId: g.id })}>
                         이 결과로 장면 정하기
                       </button>
-                      <span className="cost mono">추가 크레딧 없음 · {finalCost === 0 ? '만든 것을 그대로 써요' : ''}</span>
+                      <span className="cost mono">추가 크레딧 없음 · 만든 것을 그대로 써요</span>
                     </div>
                   )}
                 </div>
@@ -1333,7 +1345,7 @@ function S4() {
                 {new Date(s.lastExport.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} · {s.lastExport.dur}초
               </span>
             </div>
-            <StoredVideo path={s.lastExport.path} label="내 완성 영상" />
+            <StoredVideo path={s.lastExport.path} url={s.lastExport.url} label="내 완성 영상" />
             <p className="tiny muted">편집을 바꿨다면 “다시 저장하기”를 눌러야 완성 영상에 반영돼요.</p>
           </div>
         )}
@@ -1499,6 +1511,7 @@ function S5() {
   const allChecked = checks.every(([k]) => s.checklist[k]);
   const peers = s.peers.map((p) => p.no);
   const exportOf = (no: number) => s.peers.find((p) => p.no === no)?.exportPath;
+  const urlOf = (no: number) => s.peers.find((p) => p.no === no)?.exportUrl;
   const nameOf = (no: number) => s.peers.find((p) => p.no === no)?.nick || '';
   return (
     <div className="screen">
@@ -1621,7 +1634,7 @@ function S5() {
           {peers.map((no) => (
             <div className="peer" key={no}>
               {exportOf(no) ? (
-                <StoredVideo path={exportOf(no)!} label={`${no}번 ${nameOf(no)}의 영상`} size="sm" />
+                <StoredVideo path={exportOf(no)!} url={urlOf(no)} label={`${no}번 ${nameOf(no)}의 영상`} size="sm" />
               ) : (
                 <MediaFrame hue={(no * 47) % 360} label={`${no}번 ${nameOf(no)}의 영상`} size="sm" badge="저장한 영상 없음" />
               )}

@@ -10,7 +10,7 @@ export const CREDIT_PER_SEC = { '360p': 1, '720p': 3 } as const;
 // Vertex Omni 미리보기는 720p 만 만든다. 초안을 고르면 그대로 장면으로 확정한다.
 export const DRAFT = { res: '720p' as const, sec: 3 };
 export const FINAL = DRAFT;
-export const MAX_EDITS = 2;
+export const MAX_EDITS = 1;
 export const CLASS_SIZE = 30;
 
 export type Band = 'elementary' | 'middle';
@@ -24,11 +24,11 @@ export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
   judgement?: { fit: Fit; reason: string }; rejectReason?: string; parentId?: string; at: number;
-  storagePath?: string; mimeType?: string; mock?: boolean;
+  storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number;
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
 export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string };
-export type ExportInfo = { path: string; at: number; dur: number; bgmMissing?: boolean };
+export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done' };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string };
 export type ClassInfo = { id: string; title: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
@@ -77,9 +77,10 @@ export type State = {
   approvals: Approval[];
   otherQueue: number;
   selectedStudent: number;
-  peers: { no: number; nick: string; exportPath?: string }[];
+  peers: { no: number; nick: string; exportPath?: string; exportUrl?: string }[];
   lastExport?: ExportInfo;
   rendering: boolean;
+  sending: string[];
   classes: ClassInfo[];
   pins: Record<string, string>;
   teacherEmail: string;
@@ -119,7 +120,7 @@ const base: State = {
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
-  selectedStudent: 1, peers: [], classes: [], pins: {}, teacherEmail: '', rendering: false,
+  selectedStudent: 1, peers: [], classes: [], pins: {}, teacherEmail: '', rendering: false, sending: [],
 };
 
 // ───────────── 액션 (시안과 같은 이름을 유지해 화면 코드를 그대로 쓴다) ─────────────
@@ -159,7 +160,7 @@ function toGen(id: string, x: any): Gen {
     id, sceneId: x.sceneId, kind: x.kind, promptKo: x.promptKo ?? '', promptEn: x.promptEn ?? '', editText: x.editText ?? undefined,
     status: status as GenStatus, queuePos: 0, runLeft: 0, res: x.res, sec: x.sec, hue: x.hue ?? 200, img: !!x.img,
     judgement: x.judgement ?? undefined, rejectReason, parentId: x.parentId ?? undefined, at: tsMs(x.createdAt),
-    storagePath: x.storagePath ?? undefined, mimeType: x.mimeType ?? undefined, mock: !!x.mock,
+    storagePath: x.storagePath ?? undefined, url: x.url ?? undefined, attempt: x.attempt ?? undefined, mimeType: x.mimeType ?? undefined, mock: !!x.mock,
   };
 }
 
@@ -167,7 +168,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<State['role']>('loading');
   const [claims, setClaims] = useState<{ classId?: string; no?: number }>({});
-  const [local, setLocal] = useState({ tab: 1 as Stage, selectedStudent: 1, toast: undefined as string | undefined, classId: '', rendering: false });
+  const [local, setLocal] = useState({ tab: 1 as Stage, selectedStudent: 1, toast: undefined as string | undefined, classId: '', rendering: false, sending: [] as string[] });
   const [cls, setCls] = useState<any>(null);
   const [student, setStudent] = useState<any>(null);
   const [project, setProject] = useState<Record<string, any> | null>(null);
@@ -178,7 +179,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [usage, setUsage] = useState(0);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [pins] = useState<Record<string, string>>({});
-  const [peers, setPeers] = useState<{ no: number; nick: string; exportPath?: string }[]>([]);
+  const [peers, setPeers] = useState<{ no: number; nick: string; exportPath?: string; exportUrl?: string }[]>([]);
   const [uploadUrls, setUploadUrls] = useState<Record<string, string>>({});
   const saveTimer = useRef<number | undefined>(undefined);
   const projectRef = useRef<Record<string, any> | null>(null);
@@ -220,7 +221,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const { classId, no } = claims as { classId: string; no: number };
     const pid = `${classId}_${no}`;
     const unsubs = [
-      onSnapshot(doc(db, 'classes', classId), (d) => setCls({ id: d.id, ...d.data() }), onErr('반 정보')),
+      onSnapshot(doc(db, 'classes', classId), (d) => {
+        // 선생님이 반을 삭제하면 학생을 입장 화면으로 내보낸다
+        if (!d.exists()) {
+          toast('선생님이 이 반을 삭제했어요. 새 반 코드로 다시 들어와 주세요.');
+          signOut(auth);
+          return;
+        }
+        setCls({ id: d.id, ...d.data() });
+      }, () => (toast('반에 들어갈 수 없어요. 다시 들어와 주세요.'), signOut(auth))),
       onSnapshot(doc(db, 'classes', classId, 'students', String(no)), (d) => setStudent(d.data()), onErr('내 정보')),
       onSnapshot(collection(db, 'classes', classId, 'students'), (q) => setStudents(q.docs.map((d) => d.data()).sort((a, b) => a.no - b.no)), () => {}),
       onSnapshot(doc(db, 'projects', pid), (d) => {
@@ -238,7 +247,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setGens(q.docs.map((x) => toGen(x.id, x.data()))),
       onErr('내 생성 기록')),
       onSnapshot(query(collection(db, 'projects'), where('classId', '==', classId), where('submitted', '==', true), limit(30)), (q) =>
-        setPeers(q.docs.map((x) => ({ no: x.data().no, nick: '', exportPath: x.data().lastExport?.path })).filter((p) => p.no !== no)),
+        setPeers(q.docs.map((x) => ({ no: x.data().no, nick: '', exportPath: x.data().lastExport?.path, exportUrl: x.data().lastExport?.url })).filter((p) => p.no !== no)),
       onErr('친구 작품')),
     ];
     return () => unsubs.forEach((u) => u());
@@ -380,6 +389,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       selectedStudent: local.selectedStudent,
       peers: peers.map((p) => ({ ...p, nick: nickByNo(p.no) })),
       lastExport: p.lastExport,
+      sending: local.sending,
       rendering: local.rendering || (!!p.rendering && Date.now() - p.rendering < 10 * 60_000),
       classes,
       pins,
@@ -419,10 +429,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return;
       case 'request': {
         const sc = (projectRef.current?.scenes ?? []).find((x: Scene) => x.id === a.sceneId);
+        // 같은 장면 버튼을 여러 번 눌러도 요청은 한 번만 보낸다
+        if (local.sending.includes(a.sceneId)) return;
+        setLocal((l) => ({ ...l, sending: [...l.sending, a.sceneId] }));
         api
           .requestGeneration({ kind: a.kind, sceneId: a.sceneId, builder: sc?.builder, editText: a.editText, parentId: a.parentId })
           .then((r) => r.blocked && toast('안전 검사에서 멈췄어요. 크레딧은 그대로예요.'))
-          .catch((e) => toast(errText(e)));
+          .catch((e) => toast(errText(e)))
+          .finally(() => setLocal((l) => ({ ...l, sending: l.sending.filter((x) => x !== a.sceneId) })));
         return;
       }
       case 'judge':

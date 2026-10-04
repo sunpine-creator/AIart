@@ -46,7 +46,7 @@ export function GenMedia({
   controls,
   autoPlay,
 }: {
-  g?: { hue: number; img: boolean; storagePath?: string; mimeType?: string };
+  g?: { hue: number; img: boolean; storagePath?: string; url?: string; mimeType?: string; mock?: boolean };
   label: string;
   caption?: string;
   badge?: string;
@@ -55,14 +55,23 @@ export function GenMedia({
   controls?: boolean;
   autoPlay?: boolean;
 }) {
-  const [url, setUrl] = React.useState<string | undefined>(g?.storagePath ? urlCache.get(g.storagePath) : undefined);
+  // 서버가 저장해 둔 주소(g.url)를 먼저 쓰고, 없으면 Storage 에서 주소를 받아 온다
+  const [url, setUrl] = React.useState<string | undefined>(g?.url ?? (g?.storagePath ? urlCache.get(g.storagePath) : undefined));
+  const [err, setErr] = React.useState('');
   React.useEffect(() => {
+    if (g?.url) return void setUrl(g.url);
     const p = g?.storagePath;
     if (!p || urlCache.has(p)) return void (p && setUrl(urlCache.get(p)));
-    getDownloadURL(sref(storage, p)).then((u) => (urlCache.set(p, u), setUrl(u)), () => setUrl(undefined));
-  }, [g?.storagePath]);
+    getDownloadURL(sref(storage, p)).then((u) => (urlCache.set(p, u), setUrl(u)), (e: any) => (setUrl(undefined), setErr(String(e?.code ?? e))));
+  }, [g?.storagePath, g?.url]);
   if (!g) return null;
-  if (!g.storagePath || !url) return <MediaFrame hue={g.hue} label={label} still={still || g.img} badge={badge} caption={caption} size={size} />;
+  if (g.mock || !g.storagePath) return <MediaFrame hue={g.hue} label={label} still={still || g.img} badge={g.mock ? '연습 모드 가짜 결과' : badge} caption={caption} size={size} />;
+  if (!url)
+    return (
+      <div className={`frame frame-${size} video-frame`} role="img" aria-label={label}>
+        <span className="no-preview">{err ? `영상을 불러오지 못했어요 (${err}). 새로고침해 보세요.` : '불러오는 중…'}</span>
+      </div>
+    );
   const isImage = g.img || (g.mimeType ?? '').startsWith('image/');
   return (
     <div className={`frame frame-${size} video-frame`} role="img" aria-label={`AI가 만든 장면: ${label}`}>
@@ -88,8 +97,9 @@ export function useStorageUrl(path?: string) {
   return url;
 }
 
-export function StoredVideo({ path, label, size = 'md' }: { path: string; label: string; size?: 'sm' | 'md' | 'lg' }) {
-  const url = useStorageUrl(path);
+export function StoredVideo({ path, url: direct, label, size = 'md' }: { path: string; url?: string; label: string; size?: 'sm' | 'md' | 'lg' }) {
+  const fetched = useStorageUrl(direct ? undefined : path);
+  const url = direct ?? fetched;
   return (
     <div className={`frame frame-${size} video-frame`} aria-label={label}>
       {url ? <video src={url} controls playsInline preload="metadata" /> : <span className="no-preview">불러오는 중…</span>}

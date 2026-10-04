@@ -48,6 +48,7 @@ service cloud.firestore {
                   || ownsClass(resource.data.classId)
                   || (inClass(resource.data.classId) && resource.data.submitted == true);
       allow create: if isStudent() && projectId == myProjectId()
+                    && exists(/databases/$(db)/documents/classes/$(tok('classId')))
                     && request.resource.data.classId == tok('classId')
                     && request.resource.data.no == tok('no');
       allow update: if isStudent() && projectId == myProjectId()

@@ -7,7 +7,8 @@ export const num = (k: string, d: number) => {
 };
 
 export const CONFIG = {
-  videoProvider: () => env('VIDEO_PROVIDER', 'mock') as 'mock' | 'omni',
+  // 실제 배포에서는 항상 진짜 AI(omni)를 쓴다. 가짜(mock)는 내 컴퓨터 연습 모드(에뮬레이터)에서만.
+  videoProvider: () => (process.env.FUNCTIONS_EMULATOR === 'true' ? (env('VIDEO_PROVIDER', 'mock') as 'mock' | 'omni') : 'omni'),
   genaiLocation: () => env('GENAI_LOCATION', 'global'),
   omniModel: () => env('OMNI_MODEL', 'gemini-omni-flash-preview'),
   textModel: () => env('TEXT_MODEL', 'gemini-2.5-flash'),
@@ -21,7 +22,7 @@ export const CONFIG = {
 export const DRAFT = { res: '720p' as const, sec: 3 };
 export const FINAL = DRAFT;
 export const CREDIT_PER_SEC = { '360p': 1, '720p': 3 } as const;
-export const MAX_EDITS = 2;
+export const MAX_EDITS = 1;
 export const OPEN_STAGE_FOR_AI = 3; // 3단계 AI로 만들기
 
 export type Kind = 'draft' | 'edit' | 'final';

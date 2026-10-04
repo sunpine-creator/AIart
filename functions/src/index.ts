@@ -7,7 +7,7 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 import { CallableRequest, HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
 import { logger } from 'firebase-functions';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, specFor } from './config';
 import { Builder, buildPromptKo, moderateRules } from './moderation';
 import { checkAndTranslate } from './ai/text';
@@ -29,6 +29,13 @@ const nameKey = (v: string) => v.replace(/\s/g, '').toLowerCase();
 const validName = (v: string) => v.length >= 1 && v.length <= 12 && /^[가-힣ㄱ-ㅎa-zA-Z ]+$/.test(v);
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 헷갈리는 0·O·1·I 제외
 const today = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10).replace(/-/g, ''); // 서울 날짜
+// 다운로드 토큰이 붙은 파일 주소. 이 주소는 생성 기록(학생 본인·교사만 읽을 수 있음)에만 저장한다.
+const mediaUrl = (path: string, token: string) => {
+  const bucket = getStorage().bucket().name;
+  return process.env.FUNCTIONS_EMULATOR === 'true'
+    ? `http://${process.env.FIREBASE_STORAGE_EMULATOR_HOST ?? '127.0.0.1:9199'}/v0/b/${bucket}/o/${encodeURIComponent(path)}?alt=media&token=${token}`
+    : `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+};
 const hueOf = (id: string) => [...id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
 
 async function requireTeacher(req: CallableRequest) {
@@ -154,7 +161,8 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     if (!parent.judgement) throw new HttpsError('failed-precondition', '먼저 결과가 의도와 맞는지 판단을 저장해 주세요.');
   }
   if (kind === 'edit') {
-    const edits = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId).where('kind', '==', 'edit').get()).size;
+    // 차단·반려·실패한 수정은 횟수에 넣지 않는다
+    const edits = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId).where('kind', '==', 'edit').get()).docs.filter((d) => !['blocked', 'rejected', 'failed'].includes(d.data().status)).length;
     if (edits >= MAX_EDITS) throw new HttpsError('failed-precondition', `이 장면은 ${MAX_EDITS}번까지만 고칠 수 있어요.`);
   }
 
@@ -178,7 +186,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   if (kind === 'final') {
     await genRef.set({
       ...base, status: 'succeeded', promptEn: parent!.promptEn ?? '', editEn: null, credits: 0, costUsd: 0,
-      storagePath: parent!.storagePath ?? null, mimeType: parent!.mimeType ?? null, interactionId: parent!.interactionId ?? null,
+      storagePath: parent!.storagePath ?? null, url: parent!.url ?? null, mimeType: parent!.mimeType ?? null, interactionId: parent!.interactionId ?? null,
       mock: !!parent!.mock, res: parent!.res, sec: parent!.sec, hue: parent!.hue ?? base.hue, doneAt: FieldValue.serverTimestamp(),
     });
     await log({ classId, no, kind: kindLabel, textKo: promptKo, verdict: 'pass', action: `확정 (판단: ${parent!.judgement?.fit ?? '-'})` });
@@ -204,15 +212,20 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     }
   }
 
+  // 승인 모드: 선생님이 승인할 때 크레딧이 줄어든다(반려하면 줄지 않음). 승인 없이 바로 만들 때는 지금 줄어든다.
   const needApproval = !!cls.approval;
   const status = needApproval ? 'awaiting_approval' : 'queued';
   const studentRef = db.doc(`classes/${classId}/students/${no}`);
+  const sceneGens = db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId);
   await db.runTransaction(async (tx) => {
-    const st = await tx.get(studentRef);
+    const [st, prev] = await Promise.all([tx.get(studentRef), tx.get(sceneGens)]);
+    const live = prev.docs.map((d) => d.data()).filter((x) => ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(x.status));
+    if (live.some((x) => ['awaiting_approval', 'queued', 'running'].includes(x.status))) throw new HttpsError('already-exists', '이 장면은 이미 만드는 중이에요. 결과가 나올 때까지 기다려 주세요.');
+    if (kind === 'draft' && live.some((x) => x.kind === 'draft')) throw new HttpsError('already-exists', '초안은 장면마다 한 번만 만들 수 있어요. 결과를 판단한 뒤 "고쳐서 다시 만들기"를 써 주세요.');
     const credits = st.data()?.credits ?? 0;
     if (credits < spec.credits) throw new HttpsError('resource-exhausted', '크레딧이 부족해요. 선생님께 말씀드려요.');
-    tx.update(studentRef, { credits: credits - spec.credits, status: needApproval ? 'waiting' : 'making' });
-    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, costUsd: spec.costUsd, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null });
+    tx.update(studentRef, { ...(needApproval ? {} : { credits: credits - spec.credits }), status: needApproval ? 'waiting' : 'making' });
+    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null });
   });
   await log({ classId, no, kind: kindLabel, textKo: checkText, textEn: editEn ?? promptEn, verdict: 'pass', action: needApproval ? '승인 대기' : '대기열', layer: useAi ? 'ai' : 'rule' });
   if (!needApproval) await enqueue(genRef.id);
@@ -230,14 +243,22 @@ export const reviewGeneration = onCall(async (req) => {
   if (!g) throw new HttpsError('not-found', '요청을 찾을 수 없어요.');
   await ownedClass(uid, g.classId);
   if (g.status !== 'awaiting_approval') return { ok: true };
+  const studentRef = db.doc(`classes/${g.classId}/students/${g.no}`);
   if (approve) {
-    await ref.update({ status: 'queued', reviewedBy: uid });
-    await db.doc(`classes/${g.classId}/students/${g.no}`).update({ status: 'making' });
+    await db.runTransaction(async (tx) => {
+      const [cur, st] = await Promise.all([tx.get(ref), tx.get(studentRef)]);
+      if (cur.data()?.status !== 'awaiting_approval') throw new HttpsError('failed-precondition', '이미 처리된 요청이에요.');
+      const need = cur.data()?.charged === false ? Number(cur.data()?.credits ?? 0) : 0;
+      const credits = st.data()?.credits ?? 0;
+      if (credits < need) throw new HttpsError('resource-exhausted', `${g.no}번 학생의 크레딧이 부족해요. 크레딧을 늘려 주거나 돌려보내 주세요.`);
+      tx.update(studentRef, { ...(need ? { credits: credits - need } : {}), status: 'making' });
+      tx.update(ref, { status: 'queued', reviewedBy: uid, charged: true });
+    });
     await log({ classId: g.classId, no: g.no, kind: '교사 승인', textKo: g.editText ?? g.promptKo, textEn: g.promptEn, verdict: 'pass', action: '승인' });
     await enqueue(genId);
   } else {
     await ref.update({ status: 'rejected', rejectReason: reason || '선생님이 다시 생각해 보라고 했어요', reviewedBy: uid });
-    await db.doc(`classes/${g.classId}/students/${g.no}`).update({ credits: FieldValue.increment(g.credits ?? 0), status: 'idle' });
+    await studentRef.update({ ...(g.charged === false ? {} : { credits: FieldValue.increment(g.credits ?? 0) }), status: 'idle' });
     await log({ classId: g.classId, no: g.no, kind: '교사 반려', textKo: g.editText ?? g.promptKo, verdict: 'pass', action: `반려: ${reason}` });
   }
   return { ok: true };
@@ -284,7 +305,7 @@ export const runGeneration = onTaskDispatched(
 
     const fail = async (status: 'failed' | 'blocked', message: string) => {
       await ref.update({ status, error: message, rejectReason: status === 'blocked' ? `AI가 만들 수 없는 장면이었어요.|다른 말로 바꿔 다시 해 보세요.` : null });
-      await studentRef.update({ credits: FieldValue.increment(g.credits ?? 0), status: 'idle' });
+      await studentRef.update({ ...(g.charged === false ? {} : { credits: FieldValue.increment(g.credits ?? 0) }), status: 'idle' });
       await log({ classId: g.classId, no: g.no, kind: '생성 실패', textKo: g.editText ?? g.promptKo, verdict: status === 'blocked' ? 'blocked' : 'pass', category: status === 'blocked' ? '모델 안전 차단' : undefined, action: `${message.slice(0, 60)} · 크레딧 환불` });
     };
 
@@ -294,15 +315,19 @@ export const runGeneration = onTaskDispatched(
         res: g.res, sec: g.sec, img: g.img,
       });
       let storagePath: string | null = null;
+      let url: string | null = null;
       if (result.bytes) {
+        const token = randomUUID();
         const ext = result.mimeType.includes('png') ? 'png' : result.mimeType.includes('jpeg') ? 'jpg' : 'mp4';
         storagePath = `classes/${g.classId}/${g.no}/gens/${genId}.${ext}`;
         await getStorage().bucket().file(storagePath).save(result.bytes, {
           contentType: result.mimeType,
-          metadata: { metadata: { aiGenerated: 'true', model: CONFIG.videoProvider() === 'omni' ? (g.img ? CONFIG.imageModel() : CONFIG.omniModel()) : 'mock' } },
+          metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', model: CONFIG.videoProvider() === 'omni' ? (g.img ? CONFIG.imageModel() : CONFIG.omniModel()) : 'mock' } },
         });
+        url = mediaUrl(storagePath, token);
       }
-      await ref.update({ status: 'succeeded', storagePath, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
+      if (!result.mock && !url) throw new Error('AI가 영상 파일을 돌려주지 않았어요');
+      await ref.update({ status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
       await studentRef.update({ status: 'idle' });
       const cost = result.mock ? 0 : g.costUsd ?? 0;
       await db.doc(`usage/${g.classId}_${today()}`).set(
@@ -314,7 +339,7 @@ export const runGeneration = onTaskDispatched(
       if (e instanceof SafetyBlockedError) return fail('blocked', '모델 안전 정책에 걸림');
       const last = (req.retryCount ?? 0) >= 2;
       if (last) return fail('failed', String(e?.message ?? '알 수 없는 오류'));
-      await ref.update({ status: 'queued' });
+      await ref.update({ status: 'queued', attempt: (req.retryCount ?? 0) + 1, lastError: String(e?.message ?? e).slice(0, 300) });
       throw e; // 대기열이 잠시 뒤 다시 시도한다
     }
   },
@@ -425,8 +450,9 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     const out = await renderAll(clips, dir);
     const exportId = `${Date.now()}`;
     const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
-    await bucket.upload(out, { destination: path, contentType: 'video/mp4', metadata: { metadata: { aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
-    await projRef.update({ lastExport: { path, at: Date.now(), dur: total }, rendering: FieldValue.delete() });
+    const token = randomUUID();
+    await bucket.upload(out, { destination: path, contentType: 'video/mp4', metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
+    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: total }, rendering: FieldValue.delete() });
     await log({ classId, no, kind: '완성 영상', textKo: `${total}초 · 클립 ${clips.length}개`, verdict: 'pass', action: '영상 저장' });
     return { path };
   } catch (e: any) {
@@ -532,6 +558,9 @@ export const deleteClass = onCall({ timeoutSeconds: 300, memory: '512MiB' }, asy
   await dropQuery(db.collection('promptLogs').where('classId', '==', classId));
   await dropQuery(db.collection('usage').where(FieldPath.documentId(), '>=', `${classId}_`).where(FieldPath.documentId(), '<', `${classId}_~`));
   if (code) await db.doc(`codes/${code}`).delete().catch(() => {});
+  // 학생 로그인 계정도 지운다(다른 기기에 남은 로그인도 더 이상 쓸 수 없게)
+  const size = Number(c.data()?.size ?? 40);
+  await getAuth().deleteUsers(Array.from({ length: Math.max(1, Math.min(40, size)) }, (_, i) => `s_${classId}_${i + 1}`)).catch((e) => logger.warn('학생 계정 삭제 실패', e));
   await db.recursiveDelete(db.doc(`classes/${classId}`));
   await getStorage().bucket().deleteFiles({ prefix: `classes/${classId}/` }).catch((e) => logger.warn('반 파일 삭제 실패', e));
   logger.info('반 삭제', { classId, by: uid });

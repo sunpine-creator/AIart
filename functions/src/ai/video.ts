@@ -1,3 +1,4 @@
+import { logger } from 'firebase-functions';
 import { genai } from './client';
 import { CONFIG, Res } from '../config';
 
@@ -64,38 +65,45 @@ async function download(uri: string): Promise<Buffer> {
   return Buffer.from(await r.arrayBuffer());
 }
 
+// 한 번 만들기: 요청 → 끝날 때까지 기다리기 → 영상 꺼내기
+async function runOmni(req: Record<string, any>, sec: number, res: string) {
+  const ai: any = genai();
+  const created = await ai.interactions.create({
+    model: CONFIG.omniModel(),
+    background: true,
+    response_format: { type: 'video', delivery: 'inline', aspect_ratio: '16:9', duration: `${sec}s`, resolution: res },
+    ...req,
+  });
+  const it = created.status === 'completed' ? created : await waitDone(created.id);
+  if (it.status !== 'completed') {
+    const reason = JSON.stringify(it.error ?? it.status);
+    if (/safety|blocked|policy/i.test(reason)) throw new SafetyBlockedError(reason);
+    throw new Error(`Omni 생성 실패: ${reason}`);
+  }
+  const m = pickMedia(it);
+  const bytes = m.data ? Buffer.from(m.data, 'base64') : await download(m.uri!);
+  return { bytes, mimeType: m.mimeType, interactionId: created.id as string };
+}
+
 export const omniProvider: VideoProvider = {
   async generate(job) {
     if (job.img) return imageProvider.generate(job);
-    const ai: any = genai();
-    let input: any = job.promptEn;
-    let task = 'text_to_video';
-    if (job.editEn && job.previousInteractionId) {
-      // 대화형 수정: 이전 상호작용의 단계에 새 지시를 덧붙인다
+    const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
+    if (!job.editEn) return runOmni(t2v, job.sec, job.res);
+    // 수정: ① 이전 결과를 이어서 고치기(previous_interaction_id) → 안 되면 ② 원래 프롬프트에 수정 지시를 합쳐 새로 만들기
+    if (job.previousInteractionId) {
       try {
-        const prev = await ai.interactions.get(job.previousInteractionId);
-        input = [...(prev.steps ?? []), { type: 'user_input', content: [{ type: 'text', text: job.editEn }] }];
-        task = 'edit';
-      } catch {
-        input = `${job.promptEn}`; // 이전 기록을 못 읽으면 합친 프롬프트로 새로 만든다
+        return await runOmni(
+          { input: job.editEn, previous_interaction_id: job.previousInteractionId, generation_config: { video_config: { task: 'edit' } } },
+          job.sec,
+          job.res,
+        );
+      } catch (e) {
+        if (e instanceof SafetyBlockedError) throw e;
+        logger.warn('Omni 이어서 고치기 실패, 합친 프롬프트로 새로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    const created = await ai.interactions.create({
-      model: CONFIG.omniModel(),
-      input,
-      background: true,
-      generation_config: { video_config: { task } },
-      response_format: { type: 'video', delivery: 'inline', aspect_ratio: '16:9', duration: `${job.sec}s`, resolution: job.res },
-    });
-    const it = created.status === 'completed' ? created : await waitDone(created.id);
-    if (it.status !== 'completed') {
-      const reason = JSON.stringify(it.error ?? it.status);
-      if (/safety|blocked|policy/i.test(reason)) throw new SafetyBlockedError(reason);
-      throw new Error(`Omni 생성 실패: ${reason}`);
-    }
-    const m = pickMedia(it);
-    const bytes = m.data ? Buffer.from(m.data, 'base64') : await download(m.uri!);
-    return { bytes, mimeType: m.mimeType, interactionId: created.id };
+    return runOmni({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res);
   },
 };
 
