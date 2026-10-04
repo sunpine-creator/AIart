@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, PromptPart, Scene, Stage, State, Upload, maxSec, mediaWord, useStore } from '../store';
+import { CapStyle, CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, PromptPart, Scene, Stage, State, Upload, maxSec, mediaWord, useStore } from '../store';
 import { buildPromptKo, moderate } from '../moderation';
 import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
 import { api, errText } from '../firebase';
@@ -1121,6 +1121,7 @@ type Item = {
   hue: number;
   gen?: Gen;
   still?: boolean;
+  capStyle?: CapStyle;
 };
 
 function S4() {
@@ -1144,10 +1145,10 @@ function S4() {
       const sc = s.scenes.find((x) => x.id === k);
       if (sc) {
         const gen = s.gens.find((g) => g.id === sc.selectedGenId) ?? [...s.gens].reverse().find((g) => g.sceneId === sc.id && g.status === 'succeeded');
-        return { key: sc.id, kind: 'scene', scene: sc, dur: sc.dur, caption: sc.caption, voice: sc.voice, hue: gen?.hue ?? 0, gen, still: gen?.img };
+        return { key: sc.id, kind: 'scene', scene: sc, dur: sc.dur, caption: sc.caption, voice: sc.voice, hue: gen?.hue ?? 0, gen, still: gen?.img, capStyle: sc.capStyle };
       }
       const u = s.uploads.find((x) => x.id === k)!;
-      return { key: u.id, kind: 'upload', upload: u, dur: u.dur, caption: u.caption, voice: u.voice, hue: 0 };
+      return { key: u.id, kind: 'upload', upload: u, dur: u.dur, caption: u.caption, voice: u.voice, hue: 0, capStyle: u.capStyle };
     });
     return [
       { key: 'intro', kind: 'intro', dur: s.intro.dur, caption: s.intro.caption, hue: 210, still: true },
@@ -1176,7 +1177,7 @@ function S4() {
     }) ?? items[0];
   const show = playing ? atItem : cur;
 
-  const setItem = (patch: { dur?: number; caption?: string; voice?: string; start?: number }) => {
+  const setItem = (patch: { dur?: number; caption?: string; voice?: string; start?: number; capStyle?: CapStyle }) => {
     if (cur.kind === 'intro') d({ t: 'set', patch: { intro: { ...s.intro, ...patch } } });
     else if (cur.kind === 'outro') d({ t: 'set', patch: { outro: { ...s.outro, ...patch } } });
     else if (cur.kind === 'upload') d({ t: 'set', patch: { uploads: s.uploads.map((u) => (u.id === cur.key ? { ...u, ...patch } : u)) } });
@@ -1209,6 +1210,7 @@ function S4() {
       <ScreenHead n={5} title="장면을 이어 붙여 영상으로 만들어요" lead="화려한 효과보다 이야기 순서와 내용이 잘 전해지는지가 중요해요. 내가 찍은 영상도 넣을 수 있어요." />
       <div className="editor">
         <div className="viewer">
+          <div className="stage">
           {show.kind === 'upload' ? (
             <div className="frame frame-lg video-frame">
               {show.upload!.playable ? (
@@ -1217,14 +1219,12 @@ function S4() {
                 <span className="no-preview">이 브라우저에서는 미리 볼 수 없는 형식이에요. 저장할 때 자동으로 바꿔서 넣어요.</span>
               )}
               <span className="frame-badge human-badge">내가 올린 영상</span>
-              {show.caption && <span className="frame-caption">{show.caption}</span>}
             </div>
           ) : show.kind === 'scene' && show.gen ? (
-            <GenMedia g={show.gen} label={show.scene!.line} caption={show.caption} badge="AI 생성" size="lg" autoPlay={playing} controls={!playing} start={show.scene!.start} />
+            <GenMedia g={show.gen} label={show.scene!.line} badge="AI 생성" size="lg" autoPlay={playing} controls={!playing} start={show.scene!.start} />
           ) : show.kind === 'scene' ? (
             <div className="frame frame-lg empty-frame">
               <span>아직 만든 장면이 없어요</span>
-              {show.caption && <span className="frame-caption">{show.caption}</span>}
             </div>
           ) : (
             <div className={`frame frame-lg title-card ${show.kind}`}>
@@ -1232,6 +1232,10 @@ function S4() {
               {show.kind === 'outro' && <span className="title-card-sub">이 영상에는 AI 생성 콘텐츠가 포함되어 있어요</span>}
             </div>
           )}
+          {(show.kind === 'scene' || show.kind === 'upload') && show.caption && (
+            <CaptionOverlay key={`${show.key}-${playing ? 'p' : 's'}-${JSON.stringify(show.capStyle ?? {})}`} text={show.caption} st={show.capStyle} />
+          )}
+          </div>
           <div className="transport">
             <button className="btn" onClick={() => (setPlaying(!playing), playing ? null : setT(0))}>
               {playing ? '멈추기' : '처음부터 재생'}
@@ -1262,6 +1266,7 @@ function S4() {
           <input id="ins-dur" type="range" min={1} max={maxDur} step={1} value={Math.min(cur.dur, maxDur)} onChange={(e) => setItem({ dur: Number(e.target.value) })} />
           <label htmlFor="ins-cap">{cur.kind === 'intro' || cur.kind === 'outro' ? '화면 글자' : '자막·말풍선'}</label>
           <input id="ins-cap" value={cur.caption} onChange={(e) => setItem({ caption: e.target.value })} />
+          {s.band === 'middle' && (cur.kind === 'scene' || cur.kind === 'upload') && <CaptionStyler value={cur.capStyle ?? {}} onChange={(capStyle) => setItem({ capStyle })} />}
           {(cur.kind === 'scene' || cur.kind === 'upload') && (
             <>
               <label htmlFor="ins-voice">목소리</label>
@@ -1406,6 +1411,91 @@ function S4() {
       )}
       <NextBar to={6} />
     </div>
+  );
+}
+
+// ───── 자막 꾸미기 (중등) ─────
+const CAP_COLORS: [string, string][] = [
+  ['#FFFFFF', '흰색'],
+  ['#FFE066', '노랑'],
+  ['#8FD3FF', '하늘'],
+  ['#FFB3C7', '분홍'],
+  ['#B8F28F', '연두'],
+  ['#1E2A44', '남색'],
+];
+const CAP_SIZE_CQW = { S: 2.66, M: 3.6, L: 4.85 } as const; // 1280px 화면 기준 34·46·62px
+
+function CaptionStyler({ value, onChange }: { value: CapStyle; onChange: (v: CapStyle) => void }) {
+  const v = value;
+  const set = (patch: CapStyle) => onChange({ ...v, ...patch });
+  const bubble = v.kind === 'bubble';
+  const row = <T extends string>(label: string, opts: [T, string][], cur: T, on: (x: T) => void) => (
+    <div className="cs-row">
+      <span className="cs-label">{label}</span>
+      <div className="pills">
+        {opts.map(([k, t]) => (
+          <button key={k} type="button" className={`pill ${cur === k ? 'on' : ''}`} aria-pressed={cur === k} onClick={() => on(k)}>
+            {t}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+  return (
+    <div className="cap-styler">
+      <span className="tiny strong">자막 꾸미기</span>
+      {row('종류', [['sub', '자막'], ['bubble', '말풍선']], v.kind ?? 'sub', (k) => set(k === 'bubble' ? { kind: k, color: '#1E2A44', pos: 'top' } : { kind: k, color: '#FFFFFF', pos: 'bottom' }))}
+      {row('크기', [['S', '작게'], ['M', '보통'], ['L', '크게']], v.size ?? 'M', (size) => set({ size }))}
+      <div className="cs-row">
+        <span className="cs-label">글자색</span>
+        <div className="swatches">
+          {CAP_COLORS.map(([c, t]) => (
+            <button
+              key={c}
+              type="button"
+              className={`swatch ${(v.color ?? (bubble ? '#1E2A44' : '#FFFFFF')).toUpperCase() === c ? 'on' : ''}`}
+              style={{ background: c }}
+              aria-label={t}
+              title={t}
+              onClick={() => set({ color: c })}
+            />
+          ))}
+        </div>
+      </div>
+      {row('위치', [['top', '위'], ['mid', '가운데'], ['bottom', '아래']], v.pos ?? (bubble ? 'top' : 'bottom'), (pos) => set({ pos }))}
+      {!bubble && row('배경', [['on', '상자'], ['off', '테두리만']], v.box === false ? 'off' : 'on', (b) => set({ box: b === 'on' }))}
+      {row('움직임', [['none', '없음'], ['fade', '서서히'], ['slide', '올라오기'], ['type', '타자 치듯']], v.anim ?? 'none', (anim) => set({ anim }))}
+      <p className="tiny muted">글자색과 배경이 비슷하면 잘 안 보여요. 미리보기에서 꼭 확인해요.</p>
+    </div>
+  );
+}
+
+// 미리보기 자막. 저장한 MP4 와 같은 규칙으로 보여 준다.
+function CaptionOverlay({ text, st = {} }: { text: string; st?: CapStyle }) {
+  const bubble = st.kind === 'bubble';
+  const anim = st.anim ?? 'none';
+  const [shown, setShown] = useState(anim === 'type' ? '' : text);
+  useEffect(() => {
+    if (anim !== 'type') return void setShown(text);
+    const chars = [...text];
+    const steps = Math.min(chars.length, 14);
+    let k = 0;
+    setShown('');
+    const id = window.setInterval(() => {
+      k++;
+      setShown(chars.slice(0, Math.ceil((chars.length * k) / steps)).join(''));
+      if (k >= steps) window.clearInterval(id);
+    }, 1600 / Math.max(1, steps));
+    return () => window.clearInterval(id);
+  }, [text, anim]);
+  const pos = st.pos ?? (bubble ? 'top' : 'bottom');
+  return (
+    <span
+      className={`cap-ov ${bubble ? 'bubble' : st.box === false ? 'outline' : 'boxed'} pos-${pos} anim-${anim}`}
+      style={{ color: st.color ?? (bubble ? '#1E2A44' : '#FFFFFF'), fontSize: `${CAP_SIZE_CQW[st.size ?? 'M']}cqw` }}
+    >
+      {shown || '\u00a0'}
+    </span>
   );
 }
 

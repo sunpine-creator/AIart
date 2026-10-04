@@ -407,10 +407,18 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   await projRef.update({ rendering: Date.now() });
   const dir = mkdtempSync(pjoin(tmpdir(), 'render-'));
   const bucket = getStorage().bucket();
-  const fetchFile = async (path: string, name: string) => {
+  const missingFiles: string[] = [];
+  // 파일이 없거나 못 받으면 전체를 멈추지 않고 그 조각만 건너뛴다
+  const fetchFile = async (path: string, name: string): Promise<string | undefined> => {
     const local = pjoin(dir, name);
-    await bucket.file(path).download({ destination: local });
-    return local;
+    try {
+      await bucket.file(path).download({ destination: local });
+      return local;
+    } catch (e: any) {
+      logger.warn('render: 파일을 받지 못함', { path, err: String(e?.message ?? e) });
+      missingFiles.push(path);
+      return undefined;
+    }
   };
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
   const gens = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
@@ -429,21 +437,22 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       if (sc) {
         const g = gens.find((x) => x.id === sc.selectedGenId) ?? gens.filter((x) => x.sceneId === sc.id && x.status === 'succeeded').pop();
         const voice = await voiceFor(sc, i);
-        if (g?.storagePath) {
-          const src = await fetchFile(g.storagePath, `gen_${i}`);
+        const src = g?.storagePath ? await fetchFile(g.storagePath, `gen_${i}`) : undefined;
+        if (g && src) {
           const start = g.img ? 0 : Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1));
           const dur = g.img ? sc.dur : Math.min(sc.dur, (g.sec ?? sc.dur) - start);
-          clips.push({ kind: g.img ? 'image' : 'video', dur, start, src, caption: sc.caption, voice, aiBadge: true });
+          clips.push({ kind: g.img ? 'image' : 'video', dur, start, src, caption: sc.caption, capStyle: sc.capStyle, voice, aiBadge: true });
         } else {
-          clips.push({ kind: 'placeholder', dur: sc.dur, text: sc.line || `장면 ${i}`, caption: sc.caption, voice });
+          clips.push({ kind: 'placeholder', dur: sc.dur, text: sc.line || `장면 ${i}`, caption: sc.caption, capStyle: sc.capStyle, voice });
         }
         continue;
       }
       const u = uploads.find((x) => x.id === k);
-      if (u?.path) {
-        const src = await fetchFile(u.path, `up_${i}`);
+      const usrc = u?.path ? await fetchFile(u.path, `up_${i}`) : undefined;
+      if (u && usrc) {
+        const src = usrc;
         const voice = await voiceFor(u, i);
-        clips.push({ kind: 'video', dur: u.dur, start: Math.max(0, Number(u.start) || 0), src, caption: u.caption, keepAudio: u.voice === '원래 소리', voice });
+        clips.push({ kind: 'video', dur: u.dur, start: Math.max(0, Number(u.start) || 0), src, caption: u.caption, capStyle: u.capStyle, keepAudio: u.voice === '원래 소리', voice });
       }
     }
     clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, text: p.outro?.caption || '' });
@@ -455,12 +464,12 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     await bucket.upload(out, { destination: path, contentType: 'video/mp4', metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
     await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: total }, rendering: FieldValue.delete() });
     await log({ classId, no, kind: '완성 영상', textKo: `${total}초 · 클립 ${clips.length}개`, verdict: 'pass', action: '영상 저장' });
-    return { path };
+    return { path, missing: missingFiles.length };
   } catch (e: any) {
     logger.error('render failed', { pid, err: String(e?.message ?? e) });
     await projRef.update({ rendering: FieldValue.delete() });
     if (e instanceof HttpsError) throw e;
-    throw new HttpsError('internal', '영상을 합치지 못했어요. 잠시 뒤 다시 해 보세요.');
+    throw new HttpsError('unavailable', `영상을 합치지 못했어요. 잠시 뒤 다시 해 보세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 80)})`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

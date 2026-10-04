@@ -18,8 +18,10 @@ export type Stage = 1 | 2 | 3 | 4 | 5 | 6;
 export type Res = '360p' | '720p';
 export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded' | 'blocked' | 'rejected';
 export type Fit = 'yes' | 'partial' | 'no';
+// 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
+export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type' };
 export type Builder = { who: string; what: string; where: string; how: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
@@ -27,7 +29,7 @@ export type Gen = {
   storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number;
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
-export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string };
+export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done' };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string };
@@ -490,7 +492,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         window.setTimeout(() => {
           api
             .renderVideo({})
-            .then(() => toast('영상을 저장했어요!'))
+            .then((r) => toast(r.missing ? `영상을 저장했어요. 불러오지 못한 조각 ${r.missing}개는 빼고 만들었어요.` : '영상을 저장했어요!'))
             .catch((e) => toast(errText(e)))
             .finally(() => setLocal((l) => ({ ...l, rendering: false })));
         }, 900);

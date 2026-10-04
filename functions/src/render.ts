@@ -4,12 +4,23 @@ import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+// 자막 꾸미기 (중등 편집 기능). 값이 없으면 기본 자막(아래, 보통 크기, 흰 글자, 검은 상자).
+export type CapStyle = {
+  kind?: 'sub' | 'bubble'; // 자막 / 말풍선
+  size?: 'S' | 'M' | 'L';
+  color?: string; // #RRGGBB
+  pos?: 'top' | 'mid' | 'bottom';
+  box?: boolean; // 자막 뒤 어두운 상자
+  anim?: 'none' | 'fade' | 'slide' | 'type';
+};
+
 export type Clip = {
   kind: 'title' | 'outro' | 'video' | 'image' | 'placeholder';
   dur: number; // 초
   start?: number; // 영상 앞부분을 자를 길이(초)
   text?: string; // 제목 화면·자리표시 화면의 글자
   caption?: string; // 자막·말풍선
+  capStyle?: CapStyle;
   src?: string; // 영상·이미지 파일 경로
   keepAudio?: boolean; // 올린 영상의 원래 소리 쓰기
   voice?: string; // 녹음·AI 목소리 파일 경로
@@ -68,6 +79,47 @@ function textFilter(dir: string, name: string, text: string, opts: { size: numbe
   return `drawtext=fontfile='${font}':textfile='${tf}':expansion=none:fontsize=${opts.size}:fontcolor=${opts.color ?? 'white'}:line_spacing=10:x=(w-text_w)/2:y=${opts.y}${box}`;
 }
 
+const SIZE_PX = { S: 34, M: 46, L: 62 } as const;
+const hex = (c: string | undefined, d: string) => (c && /^#[0-9a-fA-F]{6}$/.test(c) ? `0x${c.slice(1)}` : d);
+
+// 자막 한 개를 drawtext 필터들로 만든다. 각 조각 영상의 시간 t 는 0초부터 시작한다.
+export function captionFilters(dir: string, i: number, text: string, st: CapStyle = {}, dur: number): string[] {
+  const font = fontPath();
+  if (!font || !text.trim()) return [];
+  const bubble = st.kind === 'bubble';
+  const size = SIZE_PX[st.size ?? 'M'] ?? 46;
+  const color = hex(st.color, bubble ? '0x1E2A44' : 'white');
+  const pos = st.pos ?? (bubble ? 'top' : 'bottom');
+  const baseY = pos === 'top' ? '60' : pos === 'mid' ? '(h-text_h)/2' : 'h-text_h-70';
+  const x = bubble ? '80' : `'(w-text_w)/2'`;
+  const anim = st.anim ?? 'none';
+  const y = anim === 'slide' ? `'${baseY}+max(0,0.6-t)*160'` : `'${baseY}'`;
+  const alpha = anim === 'fade' || anim === 'slide' ? `:alpha='min(1,t/0.6)'` : '';
+  const deco = bubble
+    ? ':box=1:boxcolor=white@0.95:boxborderw=22'
+    : st.box === false
+      ? ':borderw=3:bordercolor=black@0.85'
+      : ':box=1:boxcolor=black@0.6:boxborderw=18';
+  const wrapped = wrap(text, size >= 62 ? 16 : size <= 34 ? 28 : 22);
+  const one = (name: string, t: string, enable = '') => {
+    const tf = join(dir, `${name}.txt`);
+    writeFileSync(tf, t.replace(/\r/g, ''));
+    return `drawtext=fontfile='${font}':textfile='${tf}':expansion=none:fontsize=${size}:fontcolor=${color}:line_spacing=10:x=${x}:y=${y}${deco}${alpha}${enable}`;
+  };
+  if (anim !== 'type') return [one(`c${i}`, wrapped)];
+  // 타자 치듯: 글자를 조금씩 늘려 가며 보여 준다
+  const chars = [...wrapped];
+  const steps = Math.min(chars.length, 14);
+  const step = Math.min(1.6, dur * 0.6) / steps;
+  const out: string[] = [];
+  for (let k = 1; k <= steps; k++) {
+    const part = chars.slice(0, Math.ceil((chars.length * k) / steps)).join('');
+    const en = k < steps ? `:enable='between(t,${((k - 1) * step).toFixed(2)},${(k * step).toFixed(2)})'` : `:enable='gte(t,${((k - 1) * step).toFixed(2)})'`;
+    out.push(one(`c${i}_${k}`, part, en));
+  }
+  return out;
+}
+
 // 긴 자막은 한 줄 22자 안팎으로 나눈다
 export function wrap(text: string, max = 22): string {
   const words = text.split(/\s+/);
@@ -118,8 +170,7 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
     }
   }
   if (c.caption?.trim() && c.kind !== 'title' && c.kind !== 'outro') {
-    const cap = textFilter(dir, `c${i}`, wrap(c.caption), { size: 44, y: 'h-text_h-70', box: true });
-    if (cap) parts.push(cap);
+    parts.push(...captionFilters(dir, i, c.caption, c.capStyle, c.dur));
   }
   if (c.aiBadge) {
     const b = textFilter(dir, `b${i}`, 'AI 생성', { size: 24, y: '24', box: true });
