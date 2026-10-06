@@ -40,17 +40,17 @@ function TeacherSignIn() {
 function TeacherPending() {
   const { s, d } = useStore();
   const [requested, setRequested] = useState<boolean | null>(null);
-  const [f, setF] = useState({ realName: '', school: '', grade: '', klass: '', students: '' });
+  const [f, setF] = useState({ realName: '', org: '' });
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     api.claimTeacher({}).then((r) => (r.approved ? location.reload() : setRequested(r.requested)), () => setRequested(false));
   }, []);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
-  const ok = f.school.trim() && f.grade && Number(f.students) > 0;
+  const ok = f.realName.trim() && f.org.trim();
   const send = () => {
     setBusy(true);
     api
-      .requestTeacher({ ...f, students: Number(f.students) })
+      .requestTeacher({ realName: f.realName.trim(), org: f.org.trim() })
       .then(() => (setRequested(true), d({ t: 'toast', msg: '승인 요청을 보냈어요.' })), (e) => d({ t: 'toast', msg: errText(e) }))
       .finally(() => setBusy(false));
   };
@@ -62,29 +62,11 @@ function TeacherPending() {
         <p className="mono tiny">{s.teacherEmail}</p>
         {requested === false && (
           <div className="join-form">
-            <label htmlFor="tr-name">선생님 이름</label>
+            <label htmlFor="tr-name">이름</label>
             <input id="tr-name" value={f.realName} onChange={set('realName')} placeholder="예: 김하늘" maxLength={20} />
-            <label htmlFor="tr-school">학교 이름</label>
-            <input id="tr-school" value={f.school} onChange={set('school')} placeholder="예: 제주초등학교" maxLength={40} />
-            <div className="row3">
-              <div>
-                <label htmlFor="tr-grade">학년</label>
-                <select id="tr-grade" value={f.grade} onChange={set('grade')}>
-                  <option value="">고르기</option>
-                  {['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3'].map((g) => (
-                    <option key={g}>{g}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="tr-klass">반</label>
-                <input id="tr-klass" value={f.klass} onChange={set('klass')} placeholder="예: 2반" maxLength={10} />
-              </div>
-              <div>
-                <label htmlFor="tr-n">학생 수</label>
-                <input id="tr-n" type="number" min={1} max={40} value={f.students} onChange={set('students')} placeholder="예: 25" />
-              </div>
-            </div>
+            <label htmlFor="tr-org">소속</label>
+            <input id="tr-org" value={f.org} onChange={set('org')} placeholder="예: 제주초등학교 / OO교육청 AI 강사" maxLength={60} />
+            <p className="tiny muted">학교 이름, 학년, 반, 학생 수는 승인된 뒤 반을 만들 때 적어요.</p>
             <button className="btn primary wide" disabled={!ok || busy} onClick={send}>
               {busy ? '보내는 중…' : '승인 요청 보내기'}
             </button>
@@ -109,6 +91,8 @@ function TeacherPending() {
 function ClassList() {
   const { s, d } = useStore();
   const [title, setTitle] = useState('');
+  const [grade, setGrade] = useState('');
+  const [klass, setKlass] = useState('');
   const [school, setSchool] = useState('');
   const [schoolFilter, setSchoolFilter] = useState('');
   const [band, setBand] = useState<'elementary' | 'middle'>('elementary');
@@ -118,8 +102,9 @@ function ClassList() {
   const create = async () => {
     setBusy(true);
     try {
-      const r = await api.createClass({ title, school: school.trim(), band, size });
+      const r = await api.createClass({ title: title.trim(), grade, klass: klass.trim(), school: school.trim(), band, size });
       setTitle('');
+      setKlass('');
       setAdding(false);
       d({ t: 'openClass', classId: r.classId });
     } catch (e) {
@@ -165,7 +150,7 @@ function ClassList() {
             {list.map((c) => (
               <button key={c.id} className="class-card" onClick={() => d({ t: 'openClass', classId: c.id })}>
                 <strong>{c.title}</strong>
-                <span className="muted">{c.band === 'elementary' ? '초등' : '중등'} · {c.size}명 · 열린 단계 {c.open}</span>
+                <span className="muted">{c.band === 'elementary' ? '초등 버전' : '중·고등 버전'} · {c.size}명 · 열린 단계 {c.open}</span>
                 <span className="mono strong">반 코드 {c.code}</span>
               </button>
             ))}
@@ -193,22 +178,48 @@ function ClassList() {
             </datalist>
           </div>
           <div className="field">
-            <label htmlFor="c-title">반 이름</label>
-            <input id="c-title" placeholder="예: 6학년 2반" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <label htmlFor="c-grade">학년</label>
+            <select
+              id="c-grade"
+              value={grade}
+              onChange={(e) => {
+                setGrade(e.target.value);
+                if (e.target.value) setBand(e.target.value.startsWith('초') ? 'elementary' : 'middle');
+              }}
+            >
+              <option value="">고르기</option>
+              <optgroup label="초등학교">
+                {['초1', '초2', '초3', '초4', '초5', '초6'].map((g) => <option key={g}>{g}</option>)}
+              </optgroup>
+              <optgroup label="중학교">
+                {['중1', '중2', '중3'].map((g) => <option key={g}>{g}</option>)}
+              </optgroup>
+              <optgroup label="고등학교">
+                {['고1', '고2', '고3'].map((g) => <option key={g}>{g}</option>)}
+              </optgroup>
+            </select>
           </div>
           <div className="field">
-            <label htmlFor="c-band">학교급</label>
+            <label htmlFor="c-klass">반</label>
+            <input id="c-klass" placeholder="예: 2반" maxLength={10} value={klass} onChange={(e) => setKlass(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="c-band">수업 버전</label>
             <select id="c-band" value={band} onChange={(e) => setBand(e.target.value as any)}>
-              <option value="elementary">초등 (30초 영상)</option>
-              <option value="middle">중등 (60초 영상)</option>
+              <option value="elementary">초등 버전 (30초 영상)</option>
+              <option value="middle">중·고등 버전 (60초 영상, 심화 활동)</option>
             </select>
+          </div>
+          <div className="field">
+            <label htmlFor="c-title">반 이름 (비워 두면 “{[grade, klass.trim()].filter(Boolean).join(' ') || '학년 반'}”)</label>
+            <input id="c-title" placeholder="예: 방과후 AI 영상반" maxLength={40} value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="c-size">학생 수</label>
             <input id="c-size" type="number" min={1} max={40} value={size} onChange={(e) => setSize(Number(e.target.value))} />
           </div>
         </div>
-        <button className="btn primary" disabled={!title.trim() || busy} onClick={create}>
+        <button className="btn primary" disabled={!(title.trim() || grade) || busy} onClick={create}>
           {busy ? '만드는 중…' : '반 만들고 학생 카드 받기'}
         </button>
       </section>
@@ -254,16 +265,7 @@ function AdminPanel() {
                 <div className="tiny muted mono">{t.email}</div>
               </td>
               <td>
-                {t.school ? (
-                  <>
-                    {t.school}
-                    <div className="tiny muted">
-                      {t.grade} {t.klass} · 학생 {t.students}명
-                    </div>
-                  </>
-                ) : (
-                  <span className="tiny muted">{t.approved ? '' : '아직 요청서를 안 보냈어요'}</span>
-                )}
+                {t.org ? t.org : <span className="tiny muted">{t.approved ? '' : '아직 요청서를 안 보냈어요'}</span>}
               </td>
               <td>{t.admin ? '관리자' : t.approved ? '승인됨' : <strong>대기 중</strong>}</td>
               <td>
@@ -530,7 +532,7 @@ function Dashboard() {
     <div className="teacher">
       <header className="t-head">
         <div>
-          <h1 className="t-title">{s.cls.title} · {s.band === 'elementary' ? '초등' : '중등'}</h1>
+          <h1 className="t-title">{s.cls.title} · {s.band === 'elementary' ? '초등 버전' : '중·고등 버전'}</h1>
           <div className="muted">
             반 코드 <span className="mono strong">{s.cls.code}</span> · 학생 {roster.length}명 · 프로젝트 「AI로 달라진 나의 일상」 ·{' '}
             <SchoolEdit />

@@ -66,7 +66,9 @@ async function enqueue(genId: string) {
 // ───────── 교사: 반 만들기 ─────────
 export const createClass = onCall(async (req) => {
   const uid = await requireTeacher(req);
-  const { title, band, size = 30, budgetUsd, creditsPerStudent, school } = req.data ?? {};
+  const { band, size = 30, budgetUsd, creditsPerStudent, school, grade, klass } = req.data ?? {};
+  // 반 이름이 없으면 학년·반으로 만든다 (예: 중2 3반)
+  const title = String(req.data?.title ?? '').trim() || [grade, klass].map((x) => String(x ?? '').trim()).filter(Boolean).join(' ');
   if (!title || !['elementary', 'middle'].includes(band)) throw new HttpsError('invalid-argument', '반 이름과 학교급을 정해 주세요.');
   const n = Math.max(1, Math.min(40, Number(size)));
   let code = '';
@@ -82,7 +84,7 @@ export const createClass = onCall(async (req) => {
   const credits = Number(creditsPerStudent) || (band === 'elementary' ? 72 : 30);
   const batch = db.batch();
   batch.set(classRef, {
-    teacherUid: uid, title: String(title).slice(0, 40), school: String(school ?? '').trim().slice(0, 40), band, code, size: n,
+    teacherUid: uid, title: String(title).slice(0, 40), school: String(school ?? '').trim().slice(0, 40), grade: String(grade ?? '').slice(0, 10), klass: String(klass ?? '').slice(0, 10), band, code, size: n,
     open: 1, paused: false, approval: true, videoInMiddle: false,
     budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 71 : 29),
     createdAt: FieldValue.serverTimestamp(),
@@ -526,10 +528,7 @@ async function isAdmin(uid: string, email: string) {
 function teacherInfo(v: any) {
   const t = (x: unknown, n: number) => String(x ?? '').trim().slice(0, n);
   return {
-    school: t(v?.school, 40),
-    grade: t(v?.grade, 10),
-    klass: t(v?.klass, 10),
-    students: Math.max(0, Math.min(40, Number(v?.students) || 0)),
+    org: t(v?.org, 60), // 소속 (학교·기관 이름 등)
     realName: t(v?.realName, 20),
   };
 }
@@ -566,7 +565,7 @@ export const claimTeacher = onCall(async (req) => {
 export const requestTeacher = onCall(async (req) => {
   const u = googleUser(req);
   const info = teacherInfo(req.data);
-  if (!info.school || !info.grade || !info.students) throw new HttpsError('invalid-argument', '학교 이름, 학년, 학생 수를 적어 주세요.');
+  if (!info.org || !info.realName) throw new HttpsError('invalid-argument', '소속과 이름을 적어 주세요.');
   const tRef = db.doc(`teachers/${u.uid}`);
   const t = await tRef.get();
   if (t.exists && t.data()?.approved === true) return { ok: true };
@@ -582,7 +581,7 @@ export const adminTeachers = onCall(async (req) => {
   const list = qs.docs.map((d) => {
     const x = d.data();
     const ms = (v: any) => (v instanceof Timestamp ? v.toMillis() : null);
-    return { uid: d.id, email: x.email ?? '', name: x.name ?? '', approved: x.approved === true, admin: x.admin === true, requestedAt: ms(x.requestedAt) ?? ms(x.firstSeenAt), school: x.school ?? '', grade: x.grade ?? '', klass: x.klass ?? '', students: x.students ?? 0, realName: x.realName ?? '', requested: !!x.requestedAt };
+    return { uid: d.id, email: x.email ?? '', name: x.name ?? '', approved: x.approved === true, admin: x.admin === true, requestedAt: ms(x.requestedAt) ?? ms(x.firstSeenAt), org: x.org ?? x.school ?? '', realName: x.realName ?? '', requested: !!x.requestedAt };
   });
   list.sort((a, b) => Number(a.approved) - Number(b.approved) || (b.requestedAt ?? 0) - (a.requestedAt ?? 0));
   return { list };

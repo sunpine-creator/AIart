@@ -30,12 +30,12 @@ export type StudentWork = {
   uploads: { id: string; name: string; dur: number; url: string }[];
   ai: { n: number; line: string; img: boolean; url: string | null }[];
 };
-export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null; school: string; grade: string; klass: string; students: number; realName: string; requested: boolean };
+export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null; org: string; realName: string; requested: boolean };
 
 // 기본 기다림은 70초. 오래 걸리는 기능(반 삭제·영상 합치기·작품 모으기)은 더 오래 기다린다
 const call = <I, O>(name: string, timeout = 70_000) => async (data: I) => (await httpsCallable<I, O>(functions, name, { timeout })(data)).data;
 export const api = {
-  createClass: call<{ title: string; school?: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
+  createClass: call<{ title?: string; grade?: string; klass?: string; school?: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
   joinClass: call<{ code: string; no: number; name: string }, { token: string }>('joinClass'),
   requestGeneration: call<
     { kind: 'draft' | 'edit' | 'final'; sceneId: string; builder?: { who: string; what: string; where: string; how: string }; editText?: string; parentId?: string },
@@ -49,7 +49,7 @@ export const api = {
   teacherWorks: call<{ classId: string }, { list: StudentWork[] }>('teacherWorks', 120_000),
   renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),
-  requestTeacher: call<{ school: string; grade: string; klass: string; students: number; realName: string }, { ok: boolean }>('requestTeacher'),
+  requestTeacher: call<{ org: string; realName: string }, { ok: boolean }>('requestTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),
   setTeacherApproval: call<{ uid: string; approved: boolean }, { ok: boolean }>('setTeacherApproval'),
   devApproveTeacher: call<Record<string, never>, { ok: boolean }>('devApproveTeacher'),
