@@ -713,3 +713,28 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .school-name { font-size: 1rem; color: var(--muted); }
 .school-edit { display: inline-flex; gap: 6px; align-items: center; }
 .school-edit input { width: 180px; min-height: 32px; padding: 4px 8px; }
+/* 교사: 학생 화면 보기 */
+.mirror-wrap { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 14px; align-items: start; }
+.mirror-roster { display: grid; gap: 4px; max-height: 75vh; overflow-y: auto; position: sticky; top: 70px; }
+.mirror-seat { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 6px; align-items: center; text-align: left; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+.mirror-seat.on { border-color: var(--human); background: var(--human-tint); }
+.mirror-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mirror .seg { flex-wrap: wrap; }
+.mirror-body { display: grid; gap: 10px; }
+.kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-weight: 600; color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv dd.pre { white-space: pre-wrap; }
+.mirror-scenes, .mirror-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.mirror-scene { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.mirror-gens { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.mirror-gens figure { margin: 0; display: grid; gap: 4px; }
+.mirror-edit { display: grid; gap: 10px; }
+.laptop { background: #000; border-radius: 12px; min-height: 120px; display: grid; place-items: center; padding: 8px; }
+.laptop video { width: 100%; max-height: 70vh; object-fit: contain; }
+.laptop video.hidden { display: none; }
+.laptop .muted { color: #cbd5e1; text-align: center; padding: 16px; }
+/* 학생: 화면 공유 요청 */
+.share-bar { position: sticky; top: 60px; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 10px; border-radius: 12px; background: var(--warn-tint); border: 1px solid var(--warn); }
+.share-bar.live { background: var(--critical-tint); border-color: var(--critical); }
+@media (max-width: 760px) { .mirror-wrap { grid-template-columns: minmax(0, 1fr); } .mirror-roster { position: static; grid-auto-flow: column; overflow-x: auto; max-height: none; } }

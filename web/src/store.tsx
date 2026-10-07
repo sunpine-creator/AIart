@@ -152,7 +152,7 @@ const Ctx = createContext<{ s: State; d: (a: Action) => void } | null>(null);
 
 const tsMs = (v: any) => (v?.toMillis ? v.toMillis() : typeof v === 'number' ? v : Date.now());
 
-function toGen(id: string, x: any): Gen {
+export function toGen(id: string, x: any): Gen {
   let status = x.status as string;
   let rejectReason = x.rejectReason ?? undefined;
   if (status === 'failed') {

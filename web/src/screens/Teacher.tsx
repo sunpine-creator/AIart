@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Log, Stage, useStore } from '../store';
 import { STAGES } from './Student';
+import { StudentScreens } from './Mirror';
 import { StudentWork, TeacherRow, api, auth, errText } from '../firebase';
 
 const REJECT_REASONS = ['장면 이야기와 맞지 않아요', '더 구체적으로 써 보세요', '안전하지 않은 표현이 있어요'];
@@ -520,6 +521,7 @@ function Dashboard() {
   const { s, d } = useStore();
   const [showPins, setShowPins] = useState(false);
   const [showWorks, setShowWorks] = useState(false);
+  const [showScreens, setShowScreens] = useState(false);
   const [askDelete, setAskDelete] = useState(false);
   const roster = s.others;
   const me = roster[0] ?? { no: 0, nick: '', stage: 1 as Stage, credits: 0, status: 'idle' as const };
@@ -542,10 +544,13 @@ function Dashboard() {
           <button className="btn" onClick={() => d({ t: 'openClass', classId: '' })}>
             ← 내 반 목록
           </button>
-          <button className="btn" onClick={() => (setShowWorks(!showWorks), setShowPins(false))}>
+          <button className="btn" onClick={() => (setShowScreens(!showScreens), setShowWorks(false), setShowPins(false))}>
+            {showScreens ? '현황판 보기' : '학생 화면 보기'}
+          </button>
+          <button className="btn" onClick={() => (setShowWorks(!showWorks), setShowPins(false), setShowScreens(false))}>
             {showWorks ? '현황판 보기' : '학생 작품 보기'}
           </button>
-          <button className="btn" onClick={() => (setShowPins(!showPins), setShowWorks(false))}>
+          <button className="btn" onClick={() => (setShowPins(!showPins), setShowWorks(false), setShowScreens(false))}>
             {showPins ? '현황판 보기' : '학생 명단·입장 안내'}
           </button>
           <button className="btn" onClick={() => setAskDelete(!askDelete)}>
@@ -558,7 +563,7 @@ function Dashboard() {
       </header>
 
       {askDelete && <DeleteClass onClose={() => setAskDelete(false)} />}
-      {showWorks ? <StudentWorks /> : showPins ? <PinCards /> : <>
+      {showScreens ? <StudentScreens /> : showWorks ? <StudentWorks /> : showPins ? <PinCards /> : <>
       <section className="t-bar">
         <div className="t-block">
           <span className="t-label">열린 단계</span>

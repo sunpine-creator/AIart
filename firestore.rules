@@ -36,6 +36,13 @@ service cloud.firestore {
                       || (ownsClass(classId) && onlyChanges(['credits']));
         allow create, delete: if false;
       }
+      // 노트북 화면 공유 신호(교사 요청·학생 허락). 해당 학생과 반 담당 교사만
+      match /screens/{no} {
+        allow read, write: if isStudentNo(classId, no) || ownsClass(classId);
+        match /cands/{c} {
+          allow read, write: if isStudentNo(classId, no) || ownsClass(classId);
+        }
+      }
       match /private/{doc} {
         allow read: if ownsClass(classId); // PIN 목록은 교사만
         allow write: if false;

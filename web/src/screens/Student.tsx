@@ -3,6 +3,7 @@ import { CapStyle, CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen
 import { buildPromptKo, moderate } from '../moderation';
 import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
 import { api, errText } from '../firebase';
+import { ShareState, studentDecline, studentListen, studentShare } from '../screenshare';
 
 export const STAGES: { n: Stage; name: string; el: number; mid: number }[] = [
   { n: 1, name: '시작하기', el: 20, mid: 20 },
@@ -57,6 +58,7 @@ export function StudentApp() {
       <main className="st-main">
         <Screen />
       </main>
+      <ScreenShareBanner />
       {s.cls.paused && (
         <div className="pause" role="alertdialog" aria-label="잠시 멈춤">
           <div className="pause-card">
@@ -137,6 +139,50 @@ function Join() {
           선생님이신가요? <a href="/teacher">교사 화면으로 가기</a>
         </p>
       </div>
+    </div>
+  );
+}
+
+// 선생님이 노트북 화면 공유를 요청하면 허락을 묻는다. 허락해야만 공유된다.
+function ScreenShareBanner() {
+  const { s, d } = useStore();
+  const [req, setReq] = useState<{ state: ShareState; sid: string } | null>(null);
+  const [live, setLive] = useState(false);
+  const stopRef = React.useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!s.classId || !s.me.no) return;
+    return studentListen(s.classId, s.me.no, setReq);
+  }, [s.classId, s.me.no]);
+  useEffect(() => () => stopRef.current?.(), []);
+  const start = async () => {
+    if (!req) return;
+    try {
+      stopRef.current = await studentShare(s.classId, s.me.no, req.sid, () => (setLive(false), (stopRef.current = null)));
+      setLive(true);
+    } catch {
+      d({ t: 'toast', msg: '화면 공유를 시작하지 못했어요. 다시 해 보거나 선생님께 말씀드려요.' });
+      studentDecline(s.classId, s.me.no);
+    }
+  };
+  if (live)
+    return (
+      <div className="share-bar live" role="status">
+        <span className="dot critical" /> 선생님이 내 화면을 보고 있어요
+        <button className="btn tiny" onClick={() => stopRef.current?.()}>
+          그만 보여 주기
+        </button>
+      </div>
+    );
+  if (req?.state !== 'requested') return null;
+  return (
+    <div className="share-bar" role="alertdialog" aria-label="화면 공유 요청">
+      <span>선생님이 내 노트북 화면을 보고 싶어 해요. 허락하면 공유할 화면을 고를 수 있어요.</span>
+      <button className="btn tiny primary" onClick={start}>
+        화면 공유 시작
+      </button>
+      <button className="btn tiny" onClick={() => studentDecline(s.classId, s.me.no)}>
+        거절
+      </button>
     </div>
   );
 }
