@@ -1,5 +1,12 @@
 import { initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import {
+  browserLocalPersistence,
+  browserPopupRedirectResolver,
+  browserSessionPersistence,
+  connectAuthEmulator,
+  indexedDBLocalPersistence,
+  initializeAuth,
+} from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
@@ -12,7 +19,15 @@ const app = initializeApp({
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 });
 
-export const auth = getAuth(app);
+// 교사 화면(/teacher)과 학생 화면의 로그인을 따로 보관한다.
+// - 교사: 브라우저에 오래 남는 저장소(다른 탭과 공유)
+// - 학생: 이 탭에만 남는 저장소(탭을 닫으면 로그아웃, 새로고침은 유지)
+// 그래서 한 브라우저에서 교사 탭과 학생 탭을 함께 열어도 서로 로그인을 덮어쓰지 않는다.
+const isTeacherPage = location.pathname.startsWith('/teacher');
+export const auth = initializeAuth(app, {
+  persistence: isTeacherPage ? [indexedDBLocalPersistence, browserLocalPersistence] : [browserSessionPersistence],
+  popupRedirectResolver: browserPopupRedirectResolver,
+});
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app, 'asia-northeast3');
