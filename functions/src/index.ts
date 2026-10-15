@@ -400,6 +400,74 @@ export const draftScenario = onCall({ timeoutSeconds: 60 }, async (req) => {
   return { blocked: false, lines };
 });
 
+// ───────── 초등: 활동지로 장면 초안 만들기 ─────────
+// 학생이 쓴 활동지(육하원칙·기분)를 바탕으로 장면 3~5개의 초안(장면 설명 + 육하원칙)을 만든다. 학생이 고쳐서 쓴다.
+export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const f = req.data ?? {};
+  const t = (k: string) => String(f[k] ?? '').trim().slice(0, 120);
+  const sheet = { topic: t('topic'), who: t('who'), when: t('when'), where: t('where'), what: t('what'), how: t('event'), why: t('why'), feeling: t('feeling') };
+  const joined = Object.values(sheet).filter(Boolean).join(' / ');
+  if (!joined) throw new HttpsError('invalid-argument', '활동지를 먼저 써 주세요.');
+  const r = moderateRules(joined);
+  if (!r.pass) {
+    await log({ classId, no, kind: '장면 초안', textKo: joined, verdict: 'blocked', category: r.category, action: '차단', layer: 'rule' });
+    return { blocked: true, reason: r.reason, scenes: [] };
+  }
+  type S = { line: string; who: string; when: string; where: string; what: string; how: string; why: string };
+  let scenes: S[];
+  const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
+  if (!useAi) {
+    scenes = [
+      { line: '(연습 모드) 하루가 시작돼요', who: sheet.who, when: sheet.when, where: sheet.where, what: '하루를 시작한다', how: '', why: '' },
+      { line: '(연습 모드) AI를 써요', who: sheet.who, when: sheet.when, where: sheet.where, what: sheet.what, how: sheet.how, why: sheet.why },
+      { line: '(연습 모드) 기분을 표현해요', who: sheet.who, when: '', where: sheet.where, what: `${sheet.feeling || '기분'}을 느낀다`, how: '', why: '' },
+    ];
+  } else {
+    const { genai } = await import('./ai/client');
+    const res: any = await genai().models.generateContent({
+      model: CONFIG.textModel(),
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: `주제: ${sheet.topic}\n누가: ${sheet.who}\n언제: ${sheet.when}\n어디서: ${sheet.where}\n무엇을(어떤 AI와): ${sheet.what}\n어떻게: ${sheet.how}\n왜: ${sheet.why}\n기분: ${sheet.feeling}`,
+            },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction:
+          '초등학생이 쓴 활동지로 30초 영상의 장면 초안을 만든다. 장면은 3~5개, 시간 순서대로. 장면마다 line(초등학생이 읽기 쉬운 한 문장 장면 설명)과 육하원칙(who 누가, when 언제, where 어디서, what 무엇을, how 어떻게·어떤 모습으로, why 왜)을 짧은 한국어로 쓴다. 학생이 쓴 내용을 최대한 그대로 살리고, 없는 내용을 지나치게 지어내지 않는다. 마지막 장면에는 학생의 기분이 드러나게 한다. 폭력·혐오·개인정보·실존 인물·실제 상표 이름은 쓰지 않는다. 비어 있는 칸은 빈 문자열로 둔다.',
+        temperature: 0.6,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: { line: { type: 'STRING' }, who: { type: 'STRING' }, when: { type: 'STRING' }, where: { type: 'STRING' }, what: { type: 'STRING' }, how: { type: 'STRING' }, why: { type: 'STRING' } },
+            required: ['line', 'who', 'when', 'where', 'what', 'how', 'why'],
+          },
+        },
+      } as any,
+    });
+    try {
+      const cut = (v: unknown, n: number) => String(v ?? '').slice(0, n);
+      scenes = (JSON.parse(res.text ?? '[]') as any[]).slice(0, 5).map((x) => ({
+        line: cut(x.line, 80), who: cut(x.who, 30), when: cut(x.when, 30), where: cut(x.where, 30), what: cut(x.what, 60), how: cut(x.how, 40), why: cut(x.why, 40),
+      }));
+    } catch {
+      throw new HttpsError('internal', '초안을 만들지 못했어요. 다시 해 보세요.');
+    }
+    // 만든 초안도 한 번 더 규칙 검사
+    const bad = scenes.find((x) => !moderateRules(Object.values(x).join(' ')).pass);
+    if (bad) scenes = scenes.filter((x) => x !== bad);
+  }
+  await log({ classId, no, kind: '장면 초안', textKo: joined, textEn: scenes.map((x) => x.line).join(' | '), verdict: 'pass', action: `AI 장면 초안 ${scenes.length}개`, layer: useAi ? 'ai' : 'rule' });
+  return { blocked: false, scenes };
+});
+
 // ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
 
 export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 15 }, async (req) => {

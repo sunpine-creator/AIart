@@ -996,6 +996,59 @@ function FlowCheck() {
   );
 }
 
+// ───────────── 초등: 활동지로 장면 초안 만들기 ─────────────
+// 활동지에 쓴 육하원칙·기분으로 장면 3~5개와 장면별 육하원칙 초안을 받는다. 학생이 고쳐서 쓴다.
+function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
+  const { s, d } = useStore();
+  const [busy, setBusy] = useState(false);
+  const st = s.story;
+  const filled = [s.topic, st.who, st.when, st.where, st.what, st.event, st.why].filter((x) => String(x ?? '').trim()).length;
+  const used = s.gens.some((g) => ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+  const run = () => {
+    setBusy(true);
+    api
+      .draftScenes({ topic: s.topic, who: st.who, when: st.when ?? '', where: st.where, what: st.what, event: st.event, why: st.why ?? '', feeling: st.feeling })
+      .then((r) => {
+        if (r.blocked) return d({ t: 'toast', msg: `활동지에 고쳐야 할 표현이 있어요: ${r.reason}` });
+        if (!r.scenes.length) return d({ t: 'toast', msg: '초안을 만들지 못했어요. 활동지를 조금 더 써 보세요.' });
+        // 이미 AI 영상을 만든 장면은 그대로 두고, 나머지 자리에 초안을 넣는다
+        const hasGen = (id: string) => s.gens.some((g) => g.sceneId === id && ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+        const kept = s.scenes.filter((x) => hasGen(x.id));
+        const free = s.scenes.filter((x) => !hasGen(x.id));
+        const drafted: Scene[] = r.scenes.slice(0, Math.max(0, 5 - kept.length)).map((x, i) => {
+          const base = free[i] ?? { id: `s${Date.now().toString(36)}${i}`, edits: 0, dur: 3, caption: '', voice: '없음', builder: { who: '', what: '', where: '', how: '' } };
+          return { ...base, line: x.line, builder: { ...base.builder, mode: 'fields', who: x.who, when: x.when, where: x.where, what: x.what, how: x.how, why: x.why } };
+        });
+        const next = [...kept, ...drafted];
+        d({ t: 'set', patch: { scenes: next, toast: `장면 초안 ${drafted.length}개를 만들었어요. 내 생각과 다른 곳은 고쳐 써요.` } });
+        if (drafted[0]) onPick(drafted[0].id);
+      })
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <section className="panel draft-box">
+      <div>
+        <strong>활동지로 장면 초안 만들기</strong>
+        <p className="tiny muted">
+          2단계 활동지(누가·언제·어디서·어떤 AI와·어떻게·왜·기분)를 AI가 읽고 장면 3~5개와 장면마다 육하원칙을 채워 줘요. 초안일 뿐이니 내 생각과 다르면 고쳐 써요.
+          {used && ' 이미 영상을 만든 장면은 그대로 두고 나머지만 바꿔요.'}
+        </p>
+      </div>
+      <div className="actions">
+        <button className="btn ai" disabled={busy || filled < 2 || s.cls.paused} onClick={run}>
+          {busy ? 'AI가 초안을 만드는 중…' : '장면 초안 만들기'}
+        </button>
+        {filled < 2 && (
+          <button className="link" onClick={() => d({ t: 'set', patch: { tab: 2 } })}>
+            먼저 활동지를 써요
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ───────────── 3단계 AI로 만들기 (함수 이름 S3) ─────────────
 function S3() {
   const { s, d } = useStore();
@@ -1013,6 +1066,7 @@ function S3() {
         lead={`활동지를 보며 장면을 AI로 만들어 봐요. ${word === '영상' ? '3초짜리 영상' : '이미지'}을 만들어 보고, 마음에 들면 그 결과로 장면을 정해요. 고치고 싶으면 한 번 고칠 수 있어요. 이야기로 엮는 건 다음 단계에서 해요.`}
       />
       <SheetSummary />
+      {s.band === 'elementary' && <SceneDraftBox onPick={setSel} />}
       <div className="make">
         <aside className="scene-list" aria-label="장면 목록">
           {s.scenes.map((sc, i) => {

@@ -96,6 +96,10 @@ export const api = {
   startUpload: call<{ kind: 'upload' | 'voice'; id: string; contentType: string; size: number; ext: string }, { path: string; sessionUrl: string; url: string }>('startUpload'),
   teacherWorks: call<{ classId: string }, { list: StudentWork[] }>('teacherWorks', 120_000),
   previewVoice: call<{ voice: string; text?: string }, { url: string }>('previewVoice', 60_000),
+  draftScenes: call<
+    Record<string, string>,
+    { blocked: boolean; reason?: string; scenes: { line: string; who: string; when: string; where: string; what: string; how: string; why: string }[] }
+  >('draftScenes', 60_000),
   renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),
   requestTeacher: call<{ org: string; realName: string }, { ok: boolean }>('requestTeacher'),

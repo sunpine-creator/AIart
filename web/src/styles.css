@@ -756,3 +756,5 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .quiz-bars { display: grid; gap: 4px; }
 .quiz-bar { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; }
 .quiz-fill { height: 10px; border-radius: 999px; background: var(--human-soft); min-width: 2px; }
+.draft-box { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; background: var(--ai-tint); }
+.draft-box > div:first-child { flex: 1 1 320px; }
