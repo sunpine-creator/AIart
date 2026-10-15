@@ -29,7 +29,6 @@ export function StudentApp() {
           <span className="avatar" aria-hidden="true">{s.me.no}</span>
           <div>
             <div className="st-nick">{s.me.no}번 {s.me.nick}</div>
-            <div className="st-class">{s.cls.title} · 반 코드 <span className="mono">{s.cls.code}</span> · {s.band === 'elementary' ? '30초 영상' : '60초 영상'}</div>
           </div>
         </div>
         <div className="st-tools">
