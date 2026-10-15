@@ -18,11 +18,15 @@ export type Clip = {
   start?: number; // 영상 앞부분을 자를 길이(초)
   srcLen?: number; // 원본 영상 길이(초). 장면 길이가 더 길면 fill 로 채운다
   fill?: 'freeze' | 'slow' | 'loop';
+  grade?: boolean; // AI 장면: 모든 장면에 같은 색 보정을 입혀 분위기를 맞춘다
   src?: string; // 영상·이미지 파일 경로
   keepAudio?: boolean; // 올린 영상의 원래 소리 쓰기
   voice?: string; // 녹음·AI 목소리 파일 경로
   layers?: Layers;
 };
+
+// 모든 AI 장면에 똑같이 입히는 색 보정(살짝 부드럽고 따뜻하게). 장면마다 다른 색감 차이를 줄인다
+const GRADE = 'eq=contrast=1.04:saturation=0.92:gamma=1.02,colorbalance=rm=0.02:bm=-0.02';
 
 export const W = 1280;
 export const H = 720;
@@ -91,10 +95,10 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
     if (c.start && c.start > 0) args.push('-ss', String(c.start));
     args.push('-i', c.src);
     const slow = longer && c.fill === 'slow' ? `setpts=${(c.dur / avail).toFixed(3)}*PTS,` : '';
-    filters.push(`[0:v]${slow}${fit},tpad=stop_mode=clone:stop_duration=${c.dur}[b0]`);
+    filters.push(`[0:v]${slow}${fit}${c.grade ? `,${GRADE}` : ''},tpad=stop_mode=clone:stop_duration=${c.dur}[b0]`);
   } else if (c.kind === 'image' && c.src) {
     args.push('-loop', '1', '-t', d, '-i', c.src);
-    filters.push(`[0:v]${fit}[b0]`);
+    filters.push(`[0:v]${fit}${c.grade ? `,${GRADE}` : ''}[b0]`);
   } else {
     const bg = c.kind === 'outro' ? '0x7FA6F0' : c.kind === 'title' ? '0x26324F' : '0x2B3550';
     args.push('-f', 'lavfi', '-t', d, '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}`);

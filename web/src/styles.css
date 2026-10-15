@@ -759,3 +759,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .draft-box { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; background: var(--ai-tint); }
 .draft-box > div:first-child { flex: 1 1 320px; }
 .cast-panel { border: 1px solid var(--human-soft); }
+.cast-body { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 14px; align-items: start; }
+.cast-form { display: grid; gap: 10px; }
+.cast-card { aspect-ratio: 1; border-radius: 14px; border: 1px dashed var(--line); background: var(--sunk); display: grid; place-items: center; overflow: hidden; text-align: center; padding: 8px; }
+.cast-card img { width: 100%; height: 100%; object-fit: contain; }
+@media (max-width: 640px) { .cast-body { grid-template-columns: minmax(0, 1fr); } .cast-card { max-width: 220px; } }

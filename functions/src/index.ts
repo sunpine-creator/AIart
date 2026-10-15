@@ -11,7 +11,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, pickSec, specFor } from './config';
 import { Builder, buildPromptKo, moderateRules } from './moderation';
 import { checkAndTranslate } from './ai/text';
-import { SafetyBlockedError, provider } from './ai/video';
+import { SafetyBlockedError, drawImage, provider } from './ai/video';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
@@ -219,6 +219,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   let promptEn = parent?.promptEn ?? '';
   let editEn: string | undefined;
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
+  let refPath: string | null = null; // 주인공 카드: 장면 첫 그림을 이 카드에 맞춰 그린다
   {
     if (useAi) {
       const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
@@ -228,6 +229,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
         const cast = await castPrefix(classId, no);
         if (cast.blocked) return block(cast.blocked.category, cast.blocked.reason, cast.blocked.suggestion, 'ai');
         promptEn = `${cast.text}Scene: ${c.english} ${cast.style}`;
+        refPath = cast.cardPath ?? null;
       }
     } else {
       if (kind === 'edit') { editEn = `(mock) ${editText}`; promptEn = `${parent!.promptEn} Change: ${editEn}`; } else promptEn = `(mock translation) ${promptKo}`;
@@ -247,41 +249,90 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     const credits = st.data()?.credits ?? 0;
     if (credits < spec.credits) throw new HttpsError('resource-exhausted', '크레딧이 부족해요. 선생님께 말씀드려요.');
     tx.update(studentRef, { ...(needApproval ? {} : { credits: credits - spec.credits }), status: needApproval ? 'waiting' : 'making' });
-    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null });
+    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null, refPath });
   });
   await log({ classId, no, kind: kindLabel, textKo: checkText, textEn: editEn ?? promptEn, verdict: 'pass', action: needApproval ? '승인 대기' : '대기열', layer: useAi ? 'ai' : 'rule' });
   if (!needApproval) await enqueue(genRef.id);
   return { genId: genRef.id, blocked: false };
 });
 
-// ───────── 장면끼리 이어지게: 주인공·배경·그림 스타일 ─────────
-const STYLE_EN: Record<string, string> = {
-  그림책: 'Bright, gentle picture-book animation style',
-  만화: 'Colorful 2D cartoon animation style',
-  '3D 애니메이션': 'Soft, friendly 3D animated film style',
-  클레이: 'Claymation stop-motion style',
-  수채화: 'Soft watercolor illustration animation style',
+// ───────── 장면끼리 이어지게: 주인공 카드 + 고정 그림체 ─────────
+// 그림체는 한 단어가 아니라 선·색·빛·질감까지 정한 긴 문장으로 모든 장면에 똑같이 붙인다.
+export const STYLE_EN: Record<string, string> = {
+  그림책: 'Art style (identical in every scene): warm children\'s picture-book illustration, soft rounded shapes, clean thin outlines, flat pastel colors with gentle gradients, soft warm daylight, light paper texture, no photorealism.',
+  만화: 'Art style (identical in every scene): bright 2D cartoon animation, bold clean outlines, flat saturated colors, simple cel shading, expressive faces, no photorealism.',
+  '3D 애니메이션': 'Art style (identical in every scene): soft friendly 3D animated film look, rounded stylized characters, smooth matte materials, soft global illumination, warm color palette, no photorealism.',
+  클레이: 'Art style (identical in every scene): handmade claymation stop-motion, plasticine textures with fingerprints, miniature set, soft studio lighting, warm colors.',
+  수채화: 'Art style (identical in every scene): soft watercolor illustration, visible paper grain, gentle color bleeding, light pencil outlines, airy pastel palette, no photorealism.',
 };
-// 학생 프로젝트의 cast(주인공 모습·주요 배경·그림 스타일)를 영어로 바꿔 모든 장면 프롬프트 앞에 붙인다.
-// 번역 결과는 서버만 쓰는 castCache 에 저장해 같은 설정이면 다시 번역하지 않는다.
-async function castPrefix(classId: string, no: number): Promise<{ text: string; style: string; blocked?: { category: string; reason: string; suggestion: string } }> {
-  const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
-  const cast = p.cast ?? {};
-  const look = String(cast.look ?? '').trim().slice(0, 120);
-  const style = `${STYLE_EN[String(cast.style ?? '')] ?? STYLE_EN['그림책']}, the same look in every scene. Safe for children, fictional people only.`;
-  if (!look) return { text: '', style };
-  const key = `look:${look}`;
+const styleOf = (v: unknown) => (String(v ?? '') in STYLE_EN ? String(v) : '그림책');
+const SAFE_TAIL = 'Safe for children, fictional people only.';
+
+// 주인공 설명을 검사·번역한다(같은 설명이면 저장해 둔 번역을 다시 쓴다)
+async function lookEnOf(classId: string, no: number, look: string): Promise<{ en?: string; blocked?: { category: string; reason: string; suggestion: string } }> {
   const cacheRef = db.doc(`castCache/${classId}_${no}`);
   const cached = (await cacheRef.get()).data();
-  if (cached?.key === key) return { text: cached.text, style };
+  if (cached?.look === look && cached?.lookEn) return { en: cached.lookEn };
   const r = moderateRules(look);
-  if (!r.pass) return { text: '', style, blocked: { category: r.category!, reason: `주인공 설정: ${r.reason}`, suggestion: r.suggestion! } };
+  if (!r.pass) return { blocked: { category: r.category!, reason: `주인공 설정: ${r.reason}`, suggestion: r.suggestion! } };
+  const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
+  if (!useAi) return { en: `(mock) ${look}` };
   const c = await checkAndTranslate(`주인공 모습: ${look}`, 'prompt');
-  if (!c.safe) return { text: '', style, blocked: { category: c.category ?? '기타', reason: `주인공 설정: ${c.reasonKo ?? ''}`, suggestion: c.suggestionKo ?? '' } };
-  const text = `Keep the SAME main character (same face, hair and clothes) in every scene of this story. Main character: ${c.english} "I", "me" or "나" in the scene means this main character. The background follows each scene. `;
-  await cacheRef.set({ key, text, at: FieldValue.serverTimestamp() });
-  return { text, style };
+  if (!c.safe) return { blocked: { category: c.category ?? '기타', reason: `주인공 설정: ${c.reasonKo ?? ''}`, suggestion: c.suggestionKo ?? '' } };
+  await cacheRef.set({ look, lookEn: c.english, at: FieldValue.serverTimestamp() }, { merge: true });
+  return { en: c.english };
 }
+
+// 모든 장면 프롬프트에 붙일 주인공·그림체 문장과, 주인공 카드(기준 그림) 위치
+async function castPrefix(classId: string, no: number): Promise<{ text: string; style: string; cardPath?: string; blocked?: { category: string; reason: string; suggestion: string } }> {
+  const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
+  const card = (await db.doc(`castCache/${classId}_${no}`).get()).data() ?? {};
+  // 주인공 카드를 만들었으면 그 카드의 그림체로 고정한다
+  const styleKey = card.cardPath ? styleOf(card.cardStyle) : styleOf(p.cast?.style);
+  const style = `${STYLE_EN[styleKey]} ${SAFE_TAIL}`;
+  const look = String(card.cardPath ? card.cardLook ?? '' : p.cast?.look ?? '').trim().slice(0, 120);
+  if (!look) return { text: '', style };
+  const l = await lookEnOf(classId, no, look);
+  if (l.blocked) return { text: '', style, blocked: l.blocked };
+  const text = `Keep the SAME main character (same face, hair, body and clothes) in every scene of this story. Main character: ${l.en} "I", "me" or "나" in the scene means this main character. The background follows each scene. `;
+  return { text, style, cardPath: card.cardPath ?? undefined };
+}
+
+// 학생: 주인공 카드 만들기 (주인공 기준 그림 1장, 3번까지)
+export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const look = String(req.data?.look ?? '').trim().slice(0, 120);
+  const style = styleOf(req.data?.style);
+  if (!look) throw new HttpsError('invalid-argument', '주인공 모습을 먼저 써 주세요.');
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (cls?.paused) throw new HttpsError('failed-precondition', '선생님이 화면을 잠시 멈췄어요.');
+  const ref = db.doc(`castCache/${classId}_${no}`);
+  const cur = (await ref.get()).data() ?? {};
+  if ((cur.cardTries ?? 0) >= 3) throw new HttpsError('resource-exhausted', '주인공 카드는 3번까지 만들 수 있어요. 지금 카드로 장면을 만들어 봐요.');
+  const l = await lookEnOf(classId, no, look);
+  if (l.blocked) {
+    await log({ classId, no, kind: '주인공 카드', textKo: look, verdict: 'blocked', category: l.blocked.category, action: '차단', layer: 'ai' });
+    return { blocked: true, reason: l.blocked.reason, suggestion: l.blocked.suggestion };
+  }
+  let url = '';
+  let path: string | null = null;
+  if (CONFIG.videoProvider() === 'omni') {
+    const img = await drawImage(
+      [{ text: `Character reference sheet of ONE fictional main character: ${l.en} Full body, front view, friendly neutral pose, centered, plain light background, no text, no other people. ${STYLE_EN[style]} ${SAFE_TAIL}` }],
+      '1:1',
+    ).catch((e) => {
+      logger.error('주인공 카드 실패', { err: String(e?.message ?? e) });
+      throw new HttpsError('unavailable', e instanceof SafetyBlockedError ? 'AI가 이 주인공은 그릴 수 없대요. 설명을 바꿔 보세요.' : '주인공 카드를 만들지 못했어요. 잠시 뒤 다시 해 보세요.');
+    });
+    const token = randomUUID();
+    path = `classes/${classId}/${no}/cast/${Date.now()}.png`;
+    await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
+    url = mediaUrl(path, token);
+  }
+  await ref.set({ cardPath: path, cardUrl: url, cardLook: look, cardStyle: style, cardTries: (cur.cardTries ?? 0) + 1, cardAt: FieldValue.serverTimestamp() }, { merge: true });
+  await log({ classId, no, kind: '주인공 카드', textKo: `${look} (${style})`, textEn: l.en, verdict: 'pass', action: `카드 만들기 ${(cur.cardTries ?? 0) + 1}/3` });
+  return { blocked: false, url, tries: (cur.cardTries ?? 0) + 1 };
+});
 
 // ───────── 교사: 승인 / 돌려보내기 ─────────
 export const reviewGeneration = onCall(async (req) => {
@@ -361,10 +412,17 @@ export const runGeneration = onTaskDispatched(
     };
 
     try {
+      // 주인공 카드가 있으면 내려받아 함께 보낸다
+      let refImage: Buffer | undefined;
+      if (g.refPath && !g.editEn) refImage = await getStorage().bucket().file(g.refPath).download().then(([b]) => b).catch(() => undefined);
       const result = await provider().generate({
         promptEn: g.promptEn, editEn: g.editEn ?? undefined, previousInteractionId: g.previousInteractionId ?? undefined,
-        res: g.res, sec: g.sec, img: g.img,
+        res: g.res, sec: g.sec, img: g.img, refImage,
       });
+      if (result.keyframe) {
+        const kp = `classes/${g.classId}/${g.no}/gens/${genId}_key.png`;
+        await getStorage().bucket().file(kp).save(result.keyframe, { contentType: 'image/png' }).catch(() => {});
+      }
       let storagePath: string | null = null;
       let url: string | null = null;
       if (result.bytes) {
@@ -604,7 +662,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
         const src = g?.storagePath ? await fetchFile(g.storagePath, `gen_${i}`) : undefined;
         if (g && src) {
           const start = g.img ? 0 : Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1));
-          clips.push({ kind: g.img ? 'image' : 'video', dur: sceneDur(sc), start, srcLen: g.sec ?? 3, src, voice, layers: layersOf(sc.id) });
+          clips.push({ kind: g.img ? 'image' : 'video', dur: sceneDur(sc), start, srcLen: g.sec ?? 3, src, voice, layers: layersOf(sc.id), grade: true });
         } else {
           clips.push({ kind: 'placeholder', dur: sc.dur, voice, layers: layersOf(sc.id) });
         }

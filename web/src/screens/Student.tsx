@@ -1002,32 +1002,61 @@ const STYLES = ['그림책', '만화', '3D 애니메이션', '클레이', '수�
 function CastPanel() {
   const { s, d } = useStore();
   const c = s.cast;
+  const [busy, setBusy] = useState(false);
   const set = (patch: Partial<typeof c>) => d({ t: 'set', patch: { cast: { ...c, ...patch } } });
-  const made = s.gens.some((g) => g.status === 'succeeded' && g.kind === 'draft');
+  const hasCard = !!c.cardUrl;
+  const tries = c.tries ?? 0;
+  const changed = hasCard && c.cardLook !== c.look;
+  const make = () => {
+    setBusy(true);
+    api
+      .makeCharacter({ look: c.look.trim(), style: c.style })
+      .then((r) => {
+        if (r.blocked) return d({ t: 'toast', msg: `${r.reason ?? '이 설명은 쓸 수 없어요.'} ${r.suggestion ?? ''}` });
+        set({ cardUrl: r.url || undefined, cardLook: c.look.trim(), tries: r.tries ?? tries + 1 });
+        d({ t: 'toast', msg: '주인공 카드를 만들었어요. 모든 장면이 이 주인공과 그림체로 만들어져요.' });
+      })
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(false));
+  };
   return (
     <section className="panel cast-panel">
       <div className="panel-head">
-        <h3>모든 장면에 똑같이 나올 주인공</h3>
-        <span className="tiny muted">장면을 만들기 전에 먼저 정해요</span>
+        <h3>① 주인공 카드 만들기</h3>
+        <span className="tiny muted">장면을 만들기 전에 먼저 해요 · {tries}/3번 사용</span>
       </div>
-      <div className="field human-field">
-        <label htmlFor="cast-look">주인공 모습</label>
-        <input id="cast-look" maxLength={80} placeholder="예: 단발머리 10살 여자아이, 노란 우비와 빨간 장화" value={c.look} onChange={(e) => set({ look: e.target.value })} />
-        <span className="tiny muted">나이, 머리 모양, 옷 색깔처럼 눈에 보이는 모습을 구체적으로 쓸수록 장면마다 같은 주인공이 나와요.</span>
-      </div>
-      <div className="cs-row">
-        <span className="cs-label">그림 스타일</span>
-        <div className="pills">
-          {STYLES.map((st) => (
-            <button key={st} type="button" className={`pill ${c.style === st ? 'on' : ''}`} aria-pressed={c.style === st} onClick={() => set({ style: st })}>
-              {st}
+      <div className="cast-body">
+        <div className="cast-form">
+          <div className="field human-field">
+            <label htmlFor="cast-look">주인공 모습</label>
+            <input id="cast-look" maxLength={80} placeholder="예: 단발머리 10살 여자아이, 노란 우비와 빨간 장화" value={c.look} onChange={(e) => set({ look: e.target.value })} />
+            <span className="tiny muted">나이, 머리 모양, 옷 색깔처럼 눈에 보이는 모습을 구체적으로 써요. 실제 사람(친구·연예인)은 쓰지 않아요.</span>
+          </div>
+          <div className="cs-row">
+            <span className="cs-label">그림체</span>
+            <div className="pills">
+              {STYLES.map((st) => (
+                <button key={st} type="button" disabled={hasCard} className={`pill ${c.style === st ? 'on' : ''}`} aria-pressed={c.style === st} onClick={() => set({ style: st })}>
+                  {st}
+                </button>
+              ))}
+            </div>
+          </div>
+          {hasCard && <p className="tiny muted">그림체는 주인공 카드를 만들 때 정해져서, 모든 장면이 같은 그림체로 만들어져요.</p>}
+          <div className="actions">
+            <button className="btn ai" disabled={busy || !c.look.trim() || tries >= 3 || s.cls.paused} onClick={make}>
+              {busy ? 'AI가 주인공을 그리는 중…' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
             </button>
-          ))}
+            {changed && <span className="tiny hint">주인공 설명을 바꿨어요. 카드를 다시 만들어야 장면에 반영돼요.</span>}
+            {tries >= 3 && <span className="tiny muted">카드는 3번까지 만들 수 있어요.</span>}
+          </div>
+        </div>
+        <div className="cast-card">
+          {hasCard ? <img src={c.cardUrl} alt="내 주인공 카드" /> : <span className="tiny muted">주인공 카드가 여기에 나와요</span>}
         </div>
       </div>
       <p className="tiny muted">
-        여기 쓴 주인공과 그림 스타일이 모든 장면에 함께 들어가요. 배경은 장면마다 “어디서” 칸에 쓴 대로 바뀌어요. 실제 사람(친구·연예인)의 이름이나 얼굴 특징은 쓰지 않아요.
-        {made && ' 이미 만든 장면이 있으니, 바꾸면 그 장면과는 달라질 수 있어요.'}
+        모든 장면은 이 카드를 보고 <strong>같은 주인공, 같은 그림체</strong>로 첫 화면을 그린 뒤 영상으로 만들어요. 그래서 장면을 이어 붙여도 자연스러워요. 배경은 장면마다 “어디서”에 쓴 대로 바뀌어요.
       </p>
     </section>
   );
@@ -1263,6 +1292,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
             {img ? '이미지 1장' : `${DRAFT.res} · ${genSec}초`} · {draftCost}크레딧{s.cls.approval ? ' (선생님이 승인하면 줄어요)' : ''}
           </span>
           <span className="tiny muted">초안은 장면마다 한 번만 만들 수 있어요. 빈칸을 꼼꼼히 채운 뒤 눌러요.</span>
+          {!s.cast.cardUrl && <span className="tiny hint">주인공 카드를 먼저 만들면 장면끼리 같은 주인공·그림체로 이어져요.</span>}
         </div>
       )}
 

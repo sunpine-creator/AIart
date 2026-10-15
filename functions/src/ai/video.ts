@@ -9,8 +9,9 @@ export type VideoJob = {
   res: Res;
   sec: number;
   img: boolean; // 중등 이미지 모드
+  refImage?: Buffer; // 주인공 카드(기준 그림)
 };
-export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number };
+export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number; keyframe?: Buffer; usedRef?: boolean };
 
 export interface VideoProvider {
   generate(job: VideoJob): Promise<VideoResult>;
@@ -48,7 +49,8 @@ function pickMedia(it: any): { data?: string; uri?: string; mimeType: string } {
   const contents: any[] = [];
   for (const step of it.steps ?? []) if (step.type === 'model_output') contents.push(...(step.content ?? []));
   for (const o of it.outputs ?? []) contents.push(o);
-  const m = contents.find((c) => c?.type === 'video' || c?.type === 'image' || c?.data || c?.uri);
+  // 영상이 있으면 영상을 먼저 고른다
+  const m = contents.find((c) => c?.type === 'video' || String(c?.mime_type ?? '').startsWith('video')) ?? contents.find((c) => c?.type === 'image' || c?.data || c?.uri);
   if (!m) throw new Error('Omni 응답에 영상이 없어요');
   return { data: m.data, uri: m.uri, mimeType: m.mime_type ?? m.mimeType ?? 'video/mp4' };
 }
@@ -107,6 +109,36 @@ export const omniProvider: VideoProvider = {
   async generate(job) {
     if (job.img) return imageProvider.generate(job);
     const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
+    if (!job.editEn && job.refImage) {
+      // ① 주인공 카드를 보고 이 장면의 첫 그림(같은 주인공·같은 그림체)을 그린다
+      // ② 그 그림을 첫 장면으로 영상을 만든다. 어느 단계든 안 되면 글만으로 만든다.
+      try {
+        const key = await drawImage(
+          [
+            { inlineData: { mimeType: 'image/png', data: job.refImage.toString('base64') } },
+            { text: `The attached image is the main character reference. Draw ONE 16:9 frame of the scene below with exactly this character (same face, hair, body, clothes and colors) and exactly the same art style. No text.\n${job.promptEn}` },
+          ],
+          '16:9',
+        );
+        try {
+          const r = await runOmniSec(
+            {
+              input: [{ type: 'user_input', content: [{ type: 'image', data: key.bytes.toString('base64'), mime_type: key.mimeType }, { type: 'text', text: job.promptEn }] }],
+              generation_config: { video_config: { task: 'image_to_video' } },
+            },
+            job.sec,
+            job.res,
+          );
+          return { ...r, keyframe: key.bytes, usedRef: true };
+        } catch (e) {
+          if (e instanceof SafetyBlockedError) throw e;
+          logger.warn('Omni: 그림으로 시작하는 영상 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
+        }
+      } catch (e) {
+        if (e instanceof SafetyBlockedError) throw e;
+        logger.warn('장면 첫 그림 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
+      }
+    }
     if (!job.editEn) return runOmniSec(t2v, job.sec, job.res);
     // 수정: ① 이전 결과를 이어서 고치기(previous_interaction_id) → 안 되면 ② 원래 프롬프트에 수정 지시를 합쳐 새로 만들기
     if (job.previousInteractionId) {
@@ -124,6 +156,22 @@ export const omniProvider: VideoProvider = {
     return runOmniSec({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res);
   },
 };
+
+// ───────── 그림 한 장 그리기 (주인공 카드, 장면 첫 그림) ─────────
+export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9'): Promise<{ bytes: Buffer; mimeType: string }> {
+  const res: any = await genai().models.generateContent({
+    model: CONFIG.imageModel(),
+    contents: [{ role: 'user', parts }],
+    config: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio } } as any,
+  });
+  const part = res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+  if (!part) {
+    const why = res.promptFeedback?.blockReason ?? res.candidates?.[0]?.finishReason ?? 'no image';
+    if (/SAFETY|BLOCK|PROHIBITED/i.test(String(why))) throw new SafetyBlockedError(String(why));
+    throw new Error(`그림 생성 실패: ${why}`);
+  }
+  return { bytes: Buffer.from(part.inlineData.data, 'base64'), mimeType: part.inlineData.mimeType ?? 'image/png' };
+}
 
 // ───────── 중등 이미지 모드 ─────────
 export const imageProvider: VideoProvider = {

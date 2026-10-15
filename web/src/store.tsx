@@ -59,7 +59,7 @@ export type State = {
   prmSort: Record<string, PromptPart | undefined>;
   prmThink: string;
   prmSortDone: boolean;
-  cast: { look: string; place: string; style: string };
+  cast: { look: string; place: string; style: string; cardUrl?: string; cardLook?: string; tries?: number };
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
@@ -385,7 +385,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       prmSort: p.prmSort ?? {},
       prmThink: p.prmThink ?? '',
       prmSortDone: !!p.prmSortDone,
-      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책' },
+      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책', cardUrl: p.cast?.cardUrl, cardLook: p.cast?.cardLook, tries: p.cast?.tries ?? 0 },
       flow: p.flow ?? {},
       editNote: p.editNote ?? '',
       reflect: p.reflect ?? '',
