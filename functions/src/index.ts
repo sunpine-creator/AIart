@@ -81,12 +81,13 @@ export const createClass = onCall(async (req) => {
   }
   if (!code) throw new HttpsError('resource-exhausted', '반 코드를 만들지 못했어요. 다시 해 보세요.');
   const classRef = db.collection('classes').doc();
-  const credits = Number(creditsPerStudent) || (band === 'elementary' ? 72 : 30);
+  // 3초 영상 1개 = 9크레딧. 초등은 장면 5개 안팎(8번), 중·고등은 장면 8개 안팎(10번) 만들 수 있게
+  const credits = Number(creditsPerStudent) || (band === 'elementary' ? 72 : 90);
   const batch = db.batch();
   batch.set(classRef, {
     teacherUid: uid, title: String(title).slice(0, 40), school: String(school ?? '').trim().slice(0, 40), grade: String(grade ?? '').slice(0, 10), klass: String(klass ?? '').slice(0, 10), band, code, size: n,
-    open: 1, paused: false, approval: true, videoInMiddle: false,
-    budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 71 : 29),
+    open: 1, paused: false, approval: true, videoInMiddle: true,
+    budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 71 : 90),
     createdAt: FieldValue.serverTimestamp(),
   });
   batch.set(db.doc(`codes/${code}`), { classId: classRef.id });
@@ -154,7 +155,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   const usage = (await db.doc(`usage/${classId}_${today()}`).get()).data();
   if ((usage?.costUsd ?? 0) >= cls.budgetUsd) throw new HttpsError('resource-exhausted', '오늘 우리 반 예산을 다 썼어요. 선생님께 말씀드려요.');
 
-  const img = cls.band === 'middle' && !cls.videoInMiddle;
+  const img = false; // 초등·중고등 모두 영상으로 만든다 (예전 '이미지만' 설정은 쓰지 않음)
   const spec = specFor(kind, img);
 
   // 부모(수정·완성본의 원본) 확인

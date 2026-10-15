@@ -581,12 +581,6 @@ function Dashboard() {
             <input type="checkbox" id="t-approval" checked={s.cls.approval} onChange={(e) => d({ t: 'cls', patch: { approval: e.target.checked } })} />
             <span>{s.cls.approval ? '교사 승인 후 생성' : '자동 생성(검사만)'}</span>
           </label>
-          {s.band === 'middle' && (
-            <label className="switch">
-              <input type="checkbox" id="t-video" checked={s.cls.videoInMiddle} onChange={(e) => d({ t: 'cls', patch: { videoInMiddle: e.target.checked } })} />
-              <span>영상 생성 {s.cls.videoInMiddle ? '켜짐' : '꺼짐(이미지만)'}</span>
-            </label>
-          )}
         </div>
         <div className="t-block budget">
           <span className="t-label">오늘 비용</span>
@@ -597,6 +591,9 @@ function Dashboard() {
             </span>
           </div>
           <span className="tiny muted">80%가 되면 알림, 100%면 새 생성이 멈춰요</span>
+          <button className="btn tiny" onClick={() => d({ t: 'addCredits', amount: 9 })}>
+            학생 모두 +9크레딧 (영상 1개)
+          </button>
         </div>
       </section>
 

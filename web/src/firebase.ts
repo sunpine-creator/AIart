@@ -8,7 +8,7 @@ import {
   initializeAuth,
 } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
-import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
 
 const app = initializeApp({
@@ -48,7 +48,40 @@ export type StudentWork = {
 export type TeacherRow = { uid: string; email: string; name: string; approved: boolean; admin: boolean; requestedAt: number | null; org: string; realName: string; requested: boolean };
 
 // 기본 기다림은 70초. 오래 걸리는 기능(반 삭제·영상 합치기·작품 모으기)은 더 오래 기다린다
-const call = <I, O>(name: string, timeout = 70_000) => async (data: I) => (await httpsCallable<I, O>(functions, name, { timeout })(data)).data;
+// 서버 기능 부르기. 로그인 토큰을 직접 붙여 보낸다(로그인 저장 방식을 바꿔도 토큰이 빠지지 않게).
+const FN_BASE =
+  import.meta.env.VITE_USE_EMULATORS === '1'
+    ? `http://127.0.0.1:5001/${import.meta.env.VITE_FIREBASE_PROJECT_ID}/asia-northeast3`
+    : `https://asia-northeast3-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
+const call =
+  <I, O>(name: string, timeout = 70_000) =>
+  async (data: I): Promise<O> => {
+    await auth.authStateReady();
+    const token = await auth.currentUser?.getIdToken().catch(() => undefined);
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const r = await fetch(`${FN_BASE}/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ data: data ?? {} }),
+        signal: ctrl.signal,
+      });
+      const j: any = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) {
+        const err: any = new Error(j.error?.message || `서버에 연결하지 못했어요 (${r.status})`);
+        err.code = String(j.error?.status ?? r.status).toLowerCase();
+        throw err;
+      }
+      return (j.result ?? j.data) as O;
+    } catch (e: any) {
+      if (e?.name === 'AbortError') throw new Error('시간이 너무 오래 걸려요. 잠시 뒤 다시 해 보세요.');
+      if (e instanceof TypeError) throw new Error('인터넷 연결을 확인하고 다시 해 보세요.');
+      throw e;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
 export const api = {
   createClass: call<{ title?: string; grade?: string; klass?: string; school?: string; band: 'elementary' | 'middle'; size: number; budgetUsd?: number }, { classId: string; code: string }>('createClass'),
   joinClass: call<{ code: string; no: number; name: string }, { token: string }>('joinClass'),

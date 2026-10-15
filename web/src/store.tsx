@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithCustomToken, signOut, User } from 'firebase/auth';
-import { collection, doc, getDoc, limit, onSnapshot, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, increment, limit, onSnapshot, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref as sref, uploadBytes } from 'firebase/storage';
 import { api, auth, db, errText, storage } from './firebase';
 import { OverlayItem, buildOverlays } from './overlays';
@@ -146,7 +146,8 @@ export type Action =
   | { t: 'openClass'; classId: string }
   | { t: 'signOut' }
   | { t: 'tick' }
-  | { t: 'toast'; msg?: string };
+  | { t: 'toast'; msg?: string }
+  | { t: 'addCredits'; amount: number };
 
 const Ctx = createContext<{ s: State; d: (a: Action) => void } | null>(null);
 
@@ -557,6 +558,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         signOut(auth);
         setLocal((l) => ({ ...l, classId: '' }));
         return;
+      case 'addCredits': {
+        // 반 학생 모두에게 크레딧을 더 준다
+        if (!s.classId) return;
+        Promise.all(s.others.map((r) => updateDoc(doc(db, 'classes', s.classId, 'students', String(r.no)), { credits: increment(a.amount) })))
+          .then(() => toast(`학생 모두에게 ${a.amount}크레딧을 더 줬어요.`))
+          .catch((e) => toast(errText(e)));
+        return;
+      }
       case 'toast':
         toast(a.msg);
         return;
@@ -582,4 +591,4 @@ export function useStore() {
 }
 
 export const maxSec = (b: Band) => (b === 'elementary' ? 30 : 60);
-export const mediaWord = (s: State) => (s.band === 'middle' && !s.cls.videoInMiddle ? '이미지' : '영상');
+export const mediaWord = (_s: State) => '영상'; // 초등·중고등 모두 영상

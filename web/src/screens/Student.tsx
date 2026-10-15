@@ -938,7 +938,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const lastSent = [...gens].reverse().find((g) => g.promptEn && g.status !== 'blocked');
   const en = lastSent?.promptEn || '보내면 안전 검사를 거쳐 영어로 바뀌어요. 바뀐 문장이 여기에 보여요.';
   const live = moderate(ko);
-  const img = s.band === 'middle' && !s.cls.videoInMiddle;
+  const img = false; // 초등·중고등 모두 영상
   const mid = s.band === 'middle';
   const draftCost = img ? 1 : CREDIT_PER_SEC[DRAFT.res] * DRAFT.sec;
   const finalCost = 0; // 고른 결과를 그대로 쓰므로 추가 비용 없음
