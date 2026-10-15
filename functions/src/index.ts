@@ -464,8 +464,10 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
         const src = g?.storagePath ? await fetchFile(g.storagePath, `gen_${i}`) : undefined;
         if (g && src) {
           const start = g.img ? 0 : Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1));
-          const dur = g.img ? sc.dur : Math.min(sc.dur, (g.sec ?? sc.dur) - start);
-          clips.push({ kind: g.img ? 'image' : 'video', dur, start, src, voice, layers: layersOf(sc.id) });
+          // 장면은 최대 10초. AI 영상보다 길면 멈춤·느리게·반복 중 학생이 고른 방법으로 채운다
+          const dur = Math.max(1, Math.min(Number(sc.dur) || 3, 10));
+          const fill = (['freeze', 'slow', 'loop'].includes(sc.fill) ? sc.fill : 'freeze') as Clip['fill'];
+          clips.push({ kind: g.img ? 'image' : 'video', dur, start, srcLen: g.sec ?? 3, fill, src, voice, layers: layersOf(sc.id) });
         } else {
           clips.push({ kind: 'placeholder', dur: sc.dur, voice, layers: layersOf(sc.id) });
         }

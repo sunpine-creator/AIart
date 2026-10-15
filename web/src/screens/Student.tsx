@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CapStyle, CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, PromptPart, Scene, Stage, State, Upload, maxSec, mediaWord, useStore } from '../store';
+import { CapStyle, SCENE_MAX_SEC, CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, PromptPart, Scene, Stage, State, Upload, maxSec, mediaWord, useStore } from '../store';
 import { buildPromptKo, moderate } from '../moderation';
 import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
 import { api, errText } from '../firebase';
@@ -1424,8 +1424,10 @@ function S4() {
   // 자를 수 있는 원본 길이(영상만). 앞부분을 자르면 쓸 수 있는 길이가 그만큼 줄어든다
   const srcLen = cur.kind === 'scene' && cur.gen && !cur.gen.img ? cur.gen.sec : cur.kind === 'upload' ? Math.max(1, Math.floor(cur.upload!.srcDur) || 1) : 0;
   const start = cur.kind === 'scene' ? cur.scene!.start ?? 0 : cur.kind === 'upload' ? cur.upload!.start ?? 0 : 0;
-  const maxDur =
-    srcLen > 0 ? Math.max(1, Math.min(Math.floor(srcLen - start), limit)) : cur.kind === 'scene' ? (s.band === 'elementary' ? 5 : 10) : 5;
+  // 장면은 최대 10초까지 늘릴 수 있다(AI 영상보다 길면 채우는 방법을 고른다). 올린 영상은 원본 길이까지
+  const avail = Math.max(1, Math.floor((srcLen - start) * 10) / 10);
+  const maxDur = cur.kind === 'scene' ? SCENE_MAX_SEC : srcLen > 0 ? Math.max(1, Math.min(Math.floor(srcLen - start), limit)) : 5;
+  const stretched = cur.kind === 'scene' && !!cur.gen && !cur.gen.img && cur.dur > avail;
   const skipped = s.scenes.filter((x) => x.skip);
 
   const moveTo = (key: string, target: number) => {
@@ -1507,6 +1509,25 @@ function S4() {
             길이 <span className="mono">{cur.dur}초</span>
           </label>
           <input id="ins-dur" type="range" min={1} max={maxDur} step={1} value={Math.min(cur.dur, maxDur)} onChange={(e) => setItem({ dur: Number(e.target.value) })} />
+          {cur.kind === 'scene' && <span className="tiny muted">장면마다 {SCENE_MAX_SEC}초까지 늘릴 수 있어요. AI 영상은 {avail}초예요.</span>}
+          {stretched && (
+            <div className="cs-row">
+              <span className="cs-label">늘린 부분</span>
+              <div className="pills">
+                {(
+                  [
+                    ['freeze', '마지막 장면 멈춤'],
+                    ['slow', '느리게 재생'],
+                    ['loop', '반복 재생'],
+                  ] as const
+                ).map(([k, t]) => (
+                  <button key={k} type="button" className={`pill ${(cur.scene!.fill ?? 'freeze') === k ? 'on' : ''}`} aria-pressed={(cur.scene!.fill ?? 'freeze') === k} onClick={() => d({ t: 'scene', id: cur.key, patch: { fill: k } })}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <label htmlFor="ins-cap">{cur.kind === 'intro' || cur.kind === 'outro' ? '화면 글자' : '자막·말풍선'}</label>
           <input id="ins-cap" value={cur.caption} onChange={(e) => setItem({ caption: e.target.value })} />
           {s.band === 'middle' && (cur.kind === 'scene' || cur.kind === 'upload') && <CaptionStyler value={cur.capStyle ?? {}} onChange={(capStyle) => setItem({ capStyle })} />}

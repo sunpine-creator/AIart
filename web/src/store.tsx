@@ -12,6 +12,8 @@ export const CREDIT_PER_SEC = { '360p': 1, '720p': 3 } as const;
 export const DRAFT = { res: '720p' as const, sec: 3 };
 export const FINAL = DRAFT;
 export const MAX_EDITS = 1;
+// 편집에서 장면 하나를 늘릴 수 있는 최대 길이(초). AI 영상(3초)보다 길면 멈춤·느리게·반복으로 채운다
+export const SCENE_MAX_SEC = 10;
 export const CLASS_SIZE = 30;
 
 export type Band = 'elementary' | 'middle';
@@ -22,7 +24,7 @@ export type Fit = 'yes' | 'partial' | 'no';
 // 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
 export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type'; x?: number; y?: number /* 마우스로 옮긴 위치: 화면 가로·세로 비율(0~1), 글자 덩어리의 가운데 */ };
 export type Builder = { who: string; what: string; where: string; how: string; when?: string; why?: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle; fill?: 'freeze' | 'slow' | 'loop' };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
@@ -388,7 +390,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 영상 장면은 만든 영상 길이(3초)보다 길게 쓸 수 없다
       scenes: ((p.scenes ?? []) as Scene[]).map((sc) => {
         const g = gens.find((x) => x.id === sc.selectedGenId);
-        return { ...sc, edits: editsOf(sc.id), dur: g && !g.img ? Math.max(1, Math.min(sc.dur, g.sec - (sc.start ?? 0))) : sc.dur };
+        return { ...sc, edits: editsOf(sc.id), dur: Math.max(1, Math.min(sc.dur, SCENE_MAX_SEC)) };
       }),
       gens,
       logs,

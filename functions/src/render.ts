@@ -16,6 +16,8 @@ export type Clip = {
   kind: 'title' | 'outro' | 'video' | 'image' | 'placeholder';
   dur: number; // 초
   start?: number; // 영상 앞부분을 자를 길이(초)
+  srcLen?: number; // 원본 영상 길이(초). 장면 길이가 더 길면 fill 로 채운다
+  fill?: 'freeze' | 'slow' | 'loop';
   src?: string; // 영상·이미지 파일 경로
   keepAudio?: boolean; // 올린 영상의 원래 소리 쓰기
   voice?: string; // 녹음·AI 목소리 파일 경로
@@ -83,9 +85,13 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
 
   // 0번 입력: 바탕(영상·이미지·색)
   if (c.kind === 'video' && c.src) {
+    const avail = c.srcLen ? Math.max(0.5, c.srcLen - (c.start ?? 0)) : 0;
+    const longer = !!avail && c.dur > avail + 0.05;
+    if (longer && c.fill === 'loop') args.push('-stream_loop', '-1');
     if (c.start && c.start > 0) args.push('-ss', String(c.start));
     args.push('-i', c.src);
-    filters.push(`[0:v]${fit},tpad=stop_mode=clone:stop_duration=${c.dur}[b0]`);
+    const slow = longer && c.fill === 'slow' ? `setpts=${(c.dur / avail).toFixed(3)}*PTS,` : '';
+    filters.push(`[0:v]${slow}${fit},tpad=stop_mode=clone:stop_duration=${c.dur}[b0]`);
   } else if (c.kind === 'image' && c.src) {
     args.push('-loop', '1', '-t', d, '-i', c.src);
     filters.push(`[0:v]${fit}[b0]`);
