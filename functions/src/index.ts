@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
 import { Clip, Layers, renderAll } from './render';
-import { isAiVoice, speak } from './ai/tts';
+import { isAiVoice, speak, voiceId } from './ai/tts';
 
 initializeApp();
 setGlobalOptions({ region: REGION, maxInstances: 20 });
@@ -711,4 +711,35 @@ export const teacherWorks = onCall({ timeoutSeconds: 120 }, async (req) => {
   );
   list.sort((a, b) => a.no - b.no);
   return { list };
+});
+
+// ───────── AI 목소리 미리 듣기 ─────────
+// text 가 없으면 목소리마다 정해진 예시 문장(한 번 만들어 저장해 두고 다시 씀), 있으면 학생 자막을 읽어 준다.
+const VOICE_SAMPLE = '안녕하세요! 오늘은 AI 덕분에 달라진 나의 하루를 소개할게요.';
+export const previewVoice = onCall({ timeoutSeconds: 60 }, async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', '다시 로그인해 주세요.');
+  const voice = String(req.data?.voice ?? '');
+  if (!isAiVoice(voice)) throw new HttpsError('invalid-argument', 'AI 목소리를 골라 주세요.');
+  const text = String(req.data?.text ?? '').trim().slice(0, 60);
+  const dir = mkdtempSync(pjoin(tmpdir(), 'voice-'));
+  try {
+    if (!text) {
+      const path = `voice-samples/${voiceId(voice)}.wav`;
+      const cached = await playableUrl(path);
+      if (cached) return { url: cached };
+      const out = await speak(VOICE_SAMPLE, voice, pjoin(dir, 's.wav'));
+      if (!out) throw new HttpsError('unavailable', '목소리를 만들지 못했어요. 잠시 뒤 다시 해 보세요.');
+      const token = randomUUID();
+      await getStorage().bucket().upload(out, { destination: path, contentType: 'audio/wav', metadata: { metadata: { firebaseStorageDownloadTokens: token } } });
+      return { url: mediaUrl(path, token) };
+    }
+    const r = moderateRules(text);
+    if (!r.pass) throw new HttpsError('invalid-argument', `이 자막은 읽어 줄 수 없어요: ${r.reason}`);
+    const out = await speak(text, voice, pjoin(dir, 't.wav'));
+    if (!out) throw new HttpsError('unavailable', '목소리를 만들지 못했어요. 잠시 뒤 다시 해 보세요.');
+    const { readFileSync } = await import('node:fs');
+    return { url: `data:audio/wav;base64,${readFileSync(out).toString('base64')}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

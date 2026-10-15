@@ -9,6 +9,7 @@ const VOICES: Record<string, string> = {
   'AI 목소리 · 씩씩한': 'Puck',
 };
 export const isAiVoice = (v?: string) => !!v && v in VOICES;
+export const voiceId = (v: string) => VOICES[v];
 
 // Gemini TTS 는 24kHz 16비트 모노 PCM 을 돌려준다. WAV 머리말을 붙여 파일로 저장한다.
 export async function speak(text: string, voice: string, outPath: string): Promise<string | undefined> {

@@ -1221,6 +1221,46 @@ function Progress({ text, running }: { text: string; running?: boolean }) {
 
 // ───────────── 5단계 영상 편집 (함수 이름 S4) ─────────────
 const VOICES = ['없음', '내 목소리', 'AI 목소리 · 맑은', 'AI 목소리 · 차분한', 'AI 목소리 · 씩씩한'];
+// 목소리마다 어떤 느낌인지
+const VOICE_TONE: Record<string, string> = {
+  '원래 소리': '내가 올린 영상에 들어 있던 소리를 그대로 써요.',
+  없음: '목소리 없이 자막만 보여요.',
+  '내 목소리': '내가 직접 녹음해요. 장면 길이만큼 녹음할 수 있어요.',
+  'AI 목소리 · 맑은': '밝고 또랑또랑한 목소리예요. 즐겁고 신나는 장면에 어울려요.',
+  'AI 목소리 · 차분한': '낮고 안정적인 목소리예요. 설명하거나 생각을 말하는 장면에 어울려요.',
+  'AI 목소리 · 씩씩한': '힘차고 활기찬 목소리예요. 시작이나 마무리 장면에 어울려요.',
+};
+
+// AI 목소리 미리 듣기: 예시 문장 또는 내가 쓴 자막으로 들어 본다
+function VoicePreview({ voice, caption }: { voice: string; caption: string }) {
+  const { d } = useStore();
+  const [busy, setBusy] = useState<'' | 'sample' | 'mine'>('');
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  const play = (kind: 'sample' | 'mine') => {
+    setBusy(kind);
+    api
+      .previewVoice({ voice, text: kind === 'mine' ? caption : '' })
+      .then((r) => {
+        audioRef.current?.pause();
+        const a = new Audio(r.url);
+        audioRef.current = a;
+        return a.play();
+      })
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(''));
+  };
+  useEffect(() => () => audioRef.current?.pause(), []);
+  return (
+    <div className="voice-preview">
+      <button className="btn tiny" disabled={!!busy} onClick={() => play('sample')}>
+        {busy === 'sample' ? '불러오는 중…' : '▶ 목소리 들어 보기'}
+      </button>
+      <button className="btn tiny" disabled={!!busy || !caption.trim()} onClick={() => play('mine')} title={caption.trim() ? '' : '자막을 먼저 써요'}>
+        {busy === 'mine' ? '만드는 중…' : '▶ 내 자막으로 들어 보기'}
+      </button>
+    </div>
+  );
+}
 const MAX_UPLOAD_MB = 100;
 
 type Item = {
@@ -1393,6 +1433,8 @@ function S4() {
                   <option key={v}>{v}</option>
                 ))}
               </select>
+              {cur.voice && VOICE_TONE[cur.voice] && <p className="tiny voice-tone">{VOICE_TONE[cur.voice]}</p>}
+              {cur.voice?.startsWith('AI 목소리') && <VoicePreview key={cur.voice} voice={cur.voice} caption={cur.caption} />}
               {cur.voice === '내 목소리' && <VoiceRecorder key={cur.key} itemKey={cur.key} maxSec={cur.dur} path={cur.scene?.voicePath ?? cur.upload?.voicePath} url={cur.scene?.voiceUrl ?? cur.upload?.voiceUrl} />}
               <p className="tiny muted">AI 목소리는 정해진 목소리만 쓸 수 있어요. 내 목소리를 AI로 흉내 내지 않아요.</p>
             </>
