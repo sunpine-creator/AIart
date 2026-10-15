@@ -758,3 +758,4 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .quiz-fill { height: 10px; border-radius: 999px; background: var(--human-soft); min-width: 2px; }
 .draft-box { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; background: var(--ai-tint); }
 .draft-box > div:first-child { flex: 1 1 320px; }
+.cast-panel { border: 1px solid var(--human-soft); }

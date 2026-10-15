@@ -996,6 +996,48 @@ function FlowCheck() {
   );
 }
 
+// ───────────── 모든 장면에 똑같이: 주인공·배경·그림 스타일 ─────────────
+// 장면마다 따로 만들면 주인공과 배경이 바뀌기 쉬워서, 여기 쓴 설정을 모든 장면 프롬프트에 함께 보낸다.
+const STYLES = ['그림책', '만화', '3D 애니메이션', '클레이', '수채화'];
+function CastPanel() {
+  const { s, d } = useStore();
+  const c = s.cast;
+  const set = (patch: Partial<typeof c>) => d({ t: 'set', patch: { cast: { ...c, ...patch } } });
+  const made = s.gens.some((g) => g.status === 'succeeded' && g.kind === 'draft');
+  return (
+    <section className="panel cast-panel">
+      <div className="panel-head">
+        <h3>모든 장면에 똑같이 나올 주인공과 배경</h3>
+        <span className="tiny muted">장면을 만들기 전에 먼저 정해요</span>
+      </div>
+      <div className="grid2">
+        <div className="field human-field">
+          <label htmlFor="cast-look">주인공 모습</label>
+          <input id="cast-look" maxLength={80} placeholder="예: 단발머리 10살 여자아이, 노란 우비와 빨간 장화" value={c.look} onChange={(e) => set({ look: e.target.value })} />
+        </div>
+        <div className="field human-field">
+          <label htmlFor="cast-place">주요 배경</label>
+          <input id="cast-place" maxLength={80} placeholder="예: 햇살이 드는 아파트 거실과 집 앞 골목" value={c.place} onChange={(e) => set({ place: e.target.value })} />
+        </div>
+      </div>
+      <div className="cs-row">
+        <span className="cs-label">그림 스타일</span>
+        <div className="pills">
+          {STYLES.map((st) => (
+            <button key={st} type="button" className={`pill ${c.style === st ? 'on' : ''}`} aria-pressed={c.style === st} onClick={() => set({ style: st })}>
+              {st}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="tiny muted">
+        여기 쓴 주인공·배경·스타일이 모든 장면에 함께 들어가서 장면끼리 자연스럽게 이어져요. 실제 사람(친구·연예인)의 이름이나 얼굴 특징은 쓰지 않아요.
+        {made && ' 이미 만든 장면이 있으니, 바꾸면 그 장면과는 달라질 수 있어요.'}
+      </p>
+    </section>
+  );
+}
+
 // ───────────── 초등: 활동지로 장면 초안 만들기 ─────────────
 // 활동지에 쓴 육하원칙·기분으로 장면 3~5개와 장면별 육하원칙 초안을 받는다. 학생이 고쳐서 쓴다.
 function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
@@ -1020,7 +1062,8 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
           return { ...base, line: x.line, builder: { ...base.builder, mode: 'fields', who: x.who, when: x.when, where: x.where, what: x.what, how: x.how, why: x.why } };
         });
         const next = [...kept, ...drafted];
-        d({ t: 'set', patch: { scenes: next, toast: `장면 초안 ${drafted.length}개를 만들었어요. 내 생각과 다른 곳은 고쳐 써요.` } });
+        const cast = !s.cast.look && !s.cast.place && r.cast ? { ...s.cast, look: r.cast.look, place: r.cast.place } : s.cast;
+        d({ t: 'set', patch: { scenes: next, cast, toast: `장면 초안 ${drafted.length}개를 만들었어요. 내 생각과 다른 곳은 고쳐 써요.` } });
         if (drafted[0]) onPick(drafted[0].id);
       })
       .catch((e) => d({ t: 'toast', msg: errText(e) }))
@@ -1067,6 +1110,7 @@ function S3() {
       />
       <SheetSummary />
       {s.band === 'elementary' && <SceneDraftBox onPick={setSel} />}
+      <CastPanel />
       <div className="make">
         <aside className="scene-list" aria-label="장면 목록">
           {s.scenes.map((sc, i) => {

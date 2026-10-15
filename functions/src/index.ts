@@ -223,7 +223,12 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     if (useAi) {
       const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
       if (!c.safe) return block(c.category ?? '기타', c.reasonKo ?? '안전하지 않은 표현이 있어요.', c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', 'ai');
-      if (kind === 'edit') { editEn = c.english; promptEn = `${parent!.promptEn} Change: ${c.english}`; } else promptEn = c.english;
+      if (kind === 'edit') { editEn = c.english; promptEn = `${parent!.promptEn} Change: ${c.english}`; } else {
+        // 모든 장면에 같은 주인공·배경·그림 스타일을 붙여 장면끼리 이어지게 한다
+        const cast = await castPrefix(classId, no);
+        if (cast.blocked) return block(cast.blocked.category, cast.blocked.reason, cast.blocked.suggestion, 'ai');
+        promptEn = `${cast.text}Scene: ${c.english} ${cast.style}`;
+      }
     } else {
       if (kind === 'edit') { editEn = `(mock) ${editText}`; promptEn = `${parent!.promptEn} Change: ${editEn}`; } else promptEn = `(mock translation) ${promptKo}`;
     }
@@ -248,6 +253,36 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   if (!needApproval) await enqueue(genRef.id);
   return { genId: genRef.id, blocked: false };
 });
+
+// ───────── 장면끼리 이어지게: 주인공·배경·그림 스타일 ─────────
+const STYLE_EN: Record<string, string> = {
+  그림책: 'Bright, gentle picture-book animation style',
+  만화: 'Colorful 2D cartoon animation style',
+  '3D 애니메이션': 'Soft, friendly 3D animated film style',
+  클레이: 'Claymation stop-motion style',
+  수채화: 'Soft watercolor illustration animation style',
+};
+// 학생 프로젝트의 cast(주인공 모습·주요 배경·그림 스타일)를 영어로 바꿔 모든 장면 프롬프트 앞에 붙인다.
+// 번역 결과는 서버만 쓰는 castCache 에 저장해 같은 설정이면 다시 번역하지 않는다.
+async function castPrefix(classId: string, no: number): Promise<{ text: string; style: string; blocked?: { category: string; reason: string; suggestion: string } }> {
+  const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
+  const cast = p.cast ?? {};
+  const look = String(cast.look ?? '').trim().slice(0, 120);
+  const place = String(cast.place ?? '').trim().slice(0, 120);
+  const style = `${STYLE_EN[String(cast.style ?? '')] ?? STYLE_EN['그림책']}, the same look in every scene. Safe for children, fictional people only.`;
+  if (!look && !place) return { text: '', style };
+  const key = `${look}|${place}`;
+  const cacheRef = db.doc(`castCache/${classId}_${no}`);
+  const cached = (await cacheRef.get()).data();
+  if (cached?.key === key) return { text: cached.text, style };
+  const r = moderateRules(`${look} ${place}`);
+  if (!r.pass) return { text: '', style, blocked: { category: r.category!, reason: `주인공·배경 설정: ${r.reason}`, suggestion: r.suggestion! } };
+  const c = await checkAndTranslate(`주인공 모습: ${look || '-'} / 주요 배경: ${place || '-'}`, 'prompt');
+  if (!c.safe) return { text: '', style, blocked: { category: c.category ?? '기타', reason: `주인공·배경 설정: ${c.reasonKo ?? ''}`, suggestion: c.suggestionKo ?? '' } };
+  const text = `Keep the SAME main character and setting in every scene of this story. ${c.english} "I", "me" or "나" in the scene means this main character. `;
+  await cacheRef.set({ key, text, at: FieldValue.serverTimestamp() });
+  return { text, style };
+}
 
 // ───────── 교사: 승인 / 돌려보내기 ─────────
 export const reviewGeneration = onCall(async (req) => {
@@ -416,6 +451,8 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
   }
   type S = { line: string; who: string; when: string; where: string; what: string; how: string; why: string };
   let scenes: S[];
+  let cast = { look: '', place: '' };
+  const cut = (v: unknown, n: number) => String(v ?? '').slice(0, n);
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
   if (!useAi) {
     scenes = [
@@ -439,22 +476,31 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
       ],
       config: {
         systemInstruction:
-          '초등학생이 쓴 활동지로 30초 영상의 장면 초안을 만든다. 장면은 3~5개, 시간 순서대로. 장면마다 line(초등학생이 읽기 쉬운 한 문장 장면 설명)과 육하원칙(who 누가, when 언제, where 어디서, what 무엇을, how 어떻게·어떤 모습으로, why 왜)을 짧은 한국어로 쓴다. 학생이 쓴 내용을 최대한 그대로 살리고, 없는 내용을 지나치게 지어내지 않는다. 마지막 장면에는 학생의 기분이 드러나게 한다. 폭력·혐오·개인정보·실존 인물·실제 상표 이름은 쓰지 않는다. 비어 있는 칸은 빈 문자열로 둔다.',
+          '초등학생이 쓴 활동지로 30초 영상의 장면 초안을 만든다. look 에는 모든 장면에 똑같이 나올 주인공의 모습(나이·머리·옷차림을 짧게, 실존 인물·실명 금지), place 에는 이야기의 주요 배경을 짧게 쓴다. 장면은 3~5개, 시간 순서대로. 장면마다 line(초등학생이 읽기 쉬운 한 문장 장면 설명)과 육하원칙(who 누가, when 언제, where 어디서, what 무엇을, how 어떻게·어떤 모습으로, why 왜)을 짧은 한국어로 쓴다. 학생이 쓴 내용을 최대한 그대로 살리고, 없는 내용을 지나치게 지어내지 않는다. 마지막 장면에는 학생의 기분이 드러나게 한다. 폭력·혐오·개인정보·실존 인물·실제 상표 이름은 쓰지 않는다. 비어 있는 칸은 빈 문자열로 둔다.',
         temperature: 0.6,
         responseMimeType: 'application/json',
         responseSchema: {
-          type: 'ARRAY',
-          items: {
-            type: 'OBJECT',
-            properties: { line: { type: 'STRING' }, who: { type: 'STRING' }, when: { type: 'STRING' }, where: { type: 'STRING' }, what: { type: 'STRING' }, how: { type: 'STRING' }, why: { type: 'STRING' } },
-            required: ['line', 'who', 'when', 'where', 'what', 'how', 'why'],
+          type: 'OBJECT',
+          properties: {
+            look: { type: 'STRING' },
+            place: { type: 'STRING' },
+            scenes: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: { line: { type: 'STRING' }, who: { type: 'STRING' }, when: { type: 'STRING' }, where: { type: 'STRING' }, what: { type: 'STRING' }, how: { type: 'STRING' }, why: { type: 'STRING' } },
+                required: ['line', 'who', 'when', 'where', 'what', 'how', 'why'],
+              },
+            },
           },
+          required: ['look', 'place', 'scenes'],
         },
       } as any,
     });
     try {
-      const cut = (v: unknown, n: number) => String(v ?? '').slice(0, n);
-      scenes = (JSON.parse(res.text ?? '[]') as any[]).slice(0, 5).map((x) => ({
+      const parsed = JSON.parse(res.text ?? '{}');
+      cast = { look: cut(parsed.look, 80), place: cut(parsed.place, 80) };
+      scenes = ((parsed.scenes ?? []) as any[]).slice(0, 5).map((x) => ({
         line: cut(x.line, 80), who: cut(x.who, 30), when: cut(x.when, 30), where: cut(x.where, 30), what: cut(x.what, 60), how: cut(x.how, 40), why: cut(x.why, 40),
       }));
     } catch {
@@ -465,7 +511,8 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
     if (bad) scenes = scenes.filter((x) => x !== bad);
   }
   await log({ classId, no, kind: '장면 초안', textKo: joined, textEn: scenes.map((x) => x.line).join(' | '), verdict: 'pass', action: `AI 장면 초안 ${scenes.length}개`, layer: useAi ? 'ai' : 'rule' });
-  return { blocked: false, scenes };
+  if (!moderateRules(`${cast.look} ${cast.place}`).pass) cast = { look: '', place: '' };
+  return { blocked: false, scenes, cast };
 });
 
 // ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
