@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CapStyle, SCENE_MAX_SEC, CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, PromptPart, Scene, Stage, State, Upload, maxSec, mediaWord, useStore } from '../store';
+import { CapStyle, SEC_CHOICES, CLASS_SIZE, CREDIT_PER_SEC, DRAFT, FINAL, MAX_EDITS, Fit, Gen, PromptPart, Scene, Stage, State, Upload, maxSec, mediaWord, useStore } from '../store';
 import { buildPromptKo, moderate } from '../moderation';
 import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
 import { api, errText } from '../firebase';
@@ -1025,7 +1025,8 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const live = moderate(ko);
   const img = false; // 초등·중고등 모두 영상
   const mid = s.band === 'middle';
-  const draftCost = img ? 1 : CREDIT_PER_SEC[DRAFT.res] * DRAFT.sec;
+  const genSec = scene.genSec ?? DRAFT.sec;
+  const draftCost = img ? 1 : CREDIT_PER_SEC[DRAFT.res] * genSec;
   const finalCost = 0; // 고른 결과를 그대로 쓰므로 추가 비용 없음
   const lastGood = [...gens].reverse().find((g) => g.status === 'succeeded' && g.kind !== 'final');
   const final = gens.find((g) => g.kind === 'final' && g.status === 'succeeded');
@@ -1110,6 +1111,19 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
         </div>
       )}
       {!final && !hasDraft && (
+        <div className="cs-row sec-row">
+          <span className="cs-label">영상 길이</span>
+          <div className="pills">
+            {SEC_CHOICES.map((n) => (
+              <button key={n} type="button" className={`pill ${genSec === n ? 'on' : ''}`} aria-pressed={genSec === n} onClick={() => d({ t: 'scene', id: scene.id, patch: { genSec: n } })}>
+                {n}초
+              </button>
+            ))}
+          </div>
+          <span className="tiny muted">이 장면에 필요한 길이를 골라요. 길수록 크레딧이 많이 들어요(1초 = 1크레딧). 고친 영상도 같은 길이로 만들어요.</span>
+        </div>
+      )}
+      {!final && !hasDraft && (
         <div className="actions">
           <button
             className="btn primary"
@@ -1119,7 +1133,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
             {sending ? '보내는 중…' : `${word} 초안 만들기`}
           </button>
           <span className="cost mono">
-            {img ? '이미지 1장' : `${DRAFT.res} · ${DRAFT.sec}초`} · {draftCost}크레딧{s.cls.approval ? ' (선생님이 승인하면 줄어요)' : ''}
+            {img ? '이미지 1장' : `${DRAFT.res} · ${genSec}초`} · {draftCost}크레딧{s.cls.approval ? ' (선생님이 승인하면 줄어요)' : ''}
           </span>
           <span className="tiny muted">초안은 장면마다 한 번만 만들 수 있어요. 빈칸을 꼼꼼히 채운 뒤 눌러요.</span>
         </div>
@@ -1424,10 +1438,8 @@ function S4() {
   // 자를 수 있는 원본 길이(영상만). 앞부분을 자르면 쓸 수 있는 길이가 그만큼 줄어든다
   const srcLen = cur.kind === 'scene' && cur.gen && !cur.gen.img ? cur.gen.sec : cur.kind === 'upload' ? Math.max(1, Math.floor(cur.upload!.srcDur) || 1) : 0;
   const start = cur.kind === 'scene' ? cur.scene!.start ?? 0 : cur.kind === 'upload' ? cur.upload!.start ?? 0 : 0;
-  // 장면은 최대 10초까지 늘릴 수 있다(AI 영상보다 길면 채우는 방법을 고른다). 올린 영상은 원본 길이까지
-  const avail = Math.max(1, Math.floor((srcLen - start) * 10) / 10);
-  const maxDur = cur.kind === 'scene' ? SCENE_MAX_SEC : srcLen > 0 ? Math.max(1, Math.min(Math.floor(srcLen - start), limit)) : 5;
-  const stretched = cur.kind === 'scene' && !!cur.gen && !cur.gen.img && cur.dur > avail;
+  // 길이는 만든 영상(또는 올린 영상)에서 앞부분을 뺀 만큼까지만. 더 긴 장면은 3단계에서 길게 만든다
+  const maxDur = srcLen > 0 ? Math.max(1, Math.min(Math.floor(srcLen - start), limit)) : cur.kind === 'scene' ? (s.band === 'elementary' ? 5 : 10) : 5;
   const skipped = s.scenes.filter((x) => x.skip);
 
   const moveTo = (key: string, target: number) => {
@@ -1509,25 +1521,7 @@ function S4() {
             길이 <span className="mono">{cur.dur}초</span>
           </label>
           <input id="ins-dur" type="range" min={1} max={maxDur} step={1} value={Math.min(cur.dur, maxDur)} onChange={(e) => setItem({ dur: Number(e.target.value) })} />
-          {cur.kind === 'scene' && <span className="tiny muted">장면마다 {SCENE_MAX_SEC}초까지 늘릴 수 있어요. AI 영상은 {avail}초예요.</span>}
-          {stretched && (
-            <div className="cs-row">
-              <span className="cs-label">늘린 부분</span>
-              <div className="pills">
-                {(
-                  [
-                    ['freeze', '마지막 장면 멈춤'],
-                    ['slow', '느리게 재생'],
-                    ['loop', '반복 재생'],
-                  ] as const
-                ).map(([k, t]) => (
-                  <button key={k} type="button" className={`pill ${(cur.scene!.fill ?? 'freeze') === k ? 'on' : ''}`} aria-pressed={(cur.scene!.fill ?? 'freeze') === k} onClick={() => d({ t: 'scene', id: cur.key, patch: { fill: k } })}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {cur.kind === 'scene' && cur.gen && <span className="tiny muted">이 장면의 AI 영상은 {cur.gen.sec}초예요. 더 길게 하려면 3단계에서 길이를 골라 만들어요.</span>}
           <label htmlFor="ins-cap">{cur.kind === 'intro' || cur.kind === 'outro' ? '화면 글자' : '자막·말풍선'}</label>
           <input id="ins-cap" value={cur.caption} onChange={(e) => setItem({ caption: e.target.value })} />
           {s.band === 'middle' && (cur.kind === 'scene' || cur.kind === 'upload') && <CaptionStyler value={cur.capStyle ?? {}} onChange={(capStyle) => setItem({ capStyle })} />}

@@ -743,3 +743,5 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .st-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .my-works { margin-bottom: 14px; }
 .my-works .frame-sm video { pointer-events: auto; }
+.sec-row { grid-template-columns: 70px minmax(0, 1fr); }
+.sec-row > .tiny { grid-column: 1 / -1; }

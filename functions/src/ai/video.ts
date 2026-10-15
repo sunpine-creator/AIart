@@ -10,7 +10,7 @@ export type VideoJob = {
   sec: number;
   img: boolean; // 중등 이미지 모드
 };
-export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean };
+export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number };
 
 export interface VideoProvider {
   generate(job: VideoJob): Promise<VideoResult>;
@@ -85,15 +85,33 @@ async function runOmni(req: Record<string, any>, sec: number, res: string) {
   return { bytes, mimeType: m.mimeType, interactionId: created.id as string };
 }
 
+// 고른 길이를 모델이 받지 않으면(400) 더 짧은 길이로 다시 시도한다. 실제로 만든 길이를 돌려준다
+async function runOmniSec(req: Record<string, any>, sec: number, res: string): Promise<VideoResult> {
+  const tries = [sec, ...[8, 6, 5, 4, 3].filter((x) => x < sec)];
+  let last: unknown;
+  for (const s of tries) {
+    try {
+      return { ...(await runOmni(req, s, res)), sec: s };
+    } catch (e: any) {
+      last = e;
+      if (e instanceof SafetyBlockedError) throw e;
+      const msg = String(e?.message ?? e);
+      if (!/duration|INVALID_ARGUMENT|400/i.test(msg)) throw e; // 길이 문제가 아니면 바로 실패
+      logger.warn('Omni: 이 길이는 안 돼서 더 짧게 다시 시도', { sec: s, err: msg.slice(0, 200) });
+    }
+  }
+  throw last;
+}
+
 export const omniProvider: VideoProvider = {
   async generate(job) {
     if (job.img) return imageProvider.generate(job);
     const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
-    if (!job.editEn) return runOmni(t2v, job.sec, job.res);
+    if (!job.editEn) return runOmniSec(t2v, job.sec, job.res);
     // 수정: ① 이전 결과를 이어서 고치기(previous_interaction_id) → 안 되면 ② 원래 프롬프트에 수정 지시를 합쳐 새로 만들기
     if (job.previousInteractionId) {
       try {
-        return await runOmni(
+        return await runOmniSec(
           { input: job.editEn, previous_interaction_id: job.previousInteractionId, generation_config: { video_config: { task: 'edit' } } },
           job.sec,
           job.res,
@@ -103,7 +121,7 @@ export const omniProvider: VideoProvider = {
         logger.warn('Omni 이어서 고치기 실패, 합친 프롬프트로 새로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    return runOmni({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res);
+    return runOmniSec({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res);
   },
 };
 

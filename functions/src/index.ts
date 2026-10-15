@@ -8,7 +8,7 @@ import { CallableRequest, HttpsError, onCall } from 'firebase-functions/v2/https
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
 import { logger } from 'firebase-functions';
 import { randomInt, randomUUID } from 'node:crypto';
-import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, specFor } from './config';
+import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, pickSec, specFor } from './config';
 import { Builder, buildPromptKo, moderateRules } from './moderation';
 import { checkAndTranslate } from './ai/text';
 import { SafetyBlockedError, provider } from './ai/video';
@@ -82,12 +82,12 @@ export const createClass = onCall(async (req) => {
   if (!code) throw new HttpsError('resource-exhausted', '반 코드를 만들지 못했어요. 다시 해 보세요.');
   const classRef = db.collection('classes').doc();
   // 3초 영상 1개 = 9크레딧. 초등은 장면 5개 안팎(8번), 중·고등은 장면 8개 안팎(10번) 만들 수 있게
-  const credits = Number(creditsPerStudent) || (band === 'elementary' ? 72 : 90);
+  const credits = Number(creditsPerStudent) || (band === 'elementary' ? 60 : 100); // 1크레딧 = 1초
   const batch = db.batch();
   batch.set(classRef, {
     teacherUid: uid, title: String(title).slice(0, 40), school: String(school ?? '').trim().slice(0, 40), grade: String(grade ?? '').slice(0, 10), klass: String(klass ?? '').slice(0, 10), band, code, size: n,
     open: 1, paused: false, approval: true, videoInMiddle: true,
-    budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 71 : 90),
+    budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 150 : 250),
     createdAt: FieldValue.serverTimestamp(),
   });
   batch.set(db.doc(`codes/${code}`), { classId: classRef.id });
@@ -156,7 +156,13 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   if ((usage?.costUsd ?? 0) >= cls.budgetUsd) throw new HttpsError('resource-exhausted', '오늘 우리 반 예산을 다 썼어요. 선생님께 말씀드려요.');
 
   const img = false; // 초등·중고등 모두 영상으로 만든다 (예전 '이미지만' 설정은 쓰지 않음)
-  const spec = specFor(kind, img);
+  // 영상 길이: 초안은 학생이 고른 길이, 수정본은 원본과 같은 길이
+  let wantSec = pickSec(req.data?.sec);
+  if (kind === 'edit' && parentId) {
+    const ps = (await db.doc(`generations/${parentId}`).get()).data()?.sec;
+    wantSec = pickSec(ps);
+  }
+  const spec = specFor(kind, img, wantSec);
 
   // 부모(수정·완성본의 원본) 확인
   let parent: FirebaseFirestore.DocumentData | undefined;
@@ -333,7 +339,7 @@ export const runGeneration = onTaskDispatched(
         url = mediaUrl(storagePath, token);
       }
       if (!result.mock && !url) throw new Error('AI가 영상 파일을 돌려주지 않았어요');
-      await ref.update({ status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
+      await ref.update({ ...(result.sec ? { sec: result.sec } : {}), status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
       await studentRef.update({ status: 'idle' });
       const cost = result.mock ? 0 : g.costUsd ?? 0;
       await db.doc(`usage/${g.classId}_${today()}`).set(

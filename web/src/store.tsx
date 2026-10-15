@@ -7,7 +7,8 @@ import { OverlayItem, buildOverlays } from './overlays';
 
 // ───────────── 설정값 (서버 functions/src/config.ts 와 같게 유지) ─────────────
 export const PRICE = { '360p': 0.03, '720p': 0.1 } as const;
-export const CREDIT_PER_SEC = { '360p': 1, '720p': 3 } as const;
+export const CREDIT_PER_SEC = { '360p': 1, '720p': 1 } as const; // 1크레딧 = 영상 1초
+export const SEC_CHOICES = [3, 4, 5, 6, 8, 10] as const;
 // Vertex Omni 미리보기는 720p 만 만든다. 초안을 고르면 그대로 장면으로 확정한다.
 export const DRAFT = { res: '720p' as const, sec: 3 };
 export const FINAL = DRAFT;
@@ -24,7 +25,7 @@ export type Fit = 'yes' | 'partial' | 'no';
 // 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
 export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type'; x?: number; y?: number /* 마우스로 옮긴 위치: 화면 가로·세로 비율(0~1), 글자 덩어리의 가운데 */ };
 export type Builder = { who: string; what: string; where: string; how: string; when?: string; why?: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle; fill?: 'freeze' | 'slow' | 'loop' };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle; fill?: 'freeze' | 'slow' | 'loop'; genSec?: number };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
@@ -390,7 +391,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 영상 장면은 만든 영상 길이(3초)보다 길게 쓸 수 없다
       scenes: ((p.scenes ?? []) as Scene[]).map((sc) => {
         const g = gens.find((x) => x.id === sc.selectedGenId);
-        return { ...sc, edits: editsOf(sc.id), dur: Math.max(1, Math.min(sc.dur, SCENE_MAX_SEC)) };
+        return { ...sc, edits: editsOf(sc.id), dur: g && !g.img ? Math.max(1, Math.min(sc.dur, g.sec - (sc.start ?? 0))) : Math.max(1, Math.min(sc.dur, SCENE_MAX_SEC)) };
       }),
       gens,
       logs,
@@ -455,7 +456,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (local.sending.includes(a.sceneId)) return;
         setLocal((l) => ({ ...l, sending: [...l.sending, a.sceneId] }));
         api
-          .requestGeneration({ kind: a.kind, sceneId: a.sceneId, builder: sc?.builder, editText: a.editText, parentId: a.parentId })
+          .requestGeneration({ kind: a.kind, sceneId: a.sceneId, builder: sc?.builder, editText: a.editText, parentId: a.parentId, sec: sc?.genSec ?? 3 })
           .then((r) => r.blocked && toast('안전 검사에서 멈췄어요. 크레딧은 그대로예요.'))
           .catch((e) => toast(errText(e)))
           .finally(() => setLocal((l) => ({ ...l, sending: l.sending.filter((x) => x !== a.sceneId) })));

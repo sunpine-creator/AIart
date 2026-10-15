@@ -591,8 +591,8 @@ function Dashboard() {
             </span>
           </div>
           <span className="tiny muted">80%가 되면 알림, 100%면 새 생성이 멈춰요</span>
-          <button className="btn tiny" onClick={() => d({ t: 'addCredits', amount: 9 })}>
-            학생 모두 +9크레딧 (영상 1개)
+          <button className="btn tiny" onClick={() => d({ t: 'addCredits', amount: 10 })}>
+            학생 모두 +10크레딧 (영상 10초)
           </button>
         </div>
       </section>
