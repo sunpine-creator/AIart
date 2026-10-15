@@ -36,7 +36,7 @@ service cloud.firestore {
 
       match /students/{no} {
         allow read: if ownsClass(classId) || inClass(classId);
-        allow update: if (isStudentNo(classId, no) && onlyChanges(['stage', 'lastSeen']))
+        allow update: if (isStudentNo(classId, no) && onlyChanges(['stage', 'lastSeen', 'quiz']))
                       || (ownsClass(classId) && onlyChanges(['credits']));
         allow create, delete: if false;
       }

@@ -580,6 +580,38 @@ function SchoolEdit() {
   );
 }
 
+// 중·고등 1단계 문장 조각 8문제 결과
+function QuizSummary() {
+  const { s } = useStore();
+  const done = s.others.filter((r) => r.quiz);
+  const avg = done.length ? done.reduce((a, r) => a + r.quiz!.right, 0) / done.length : 0;
+  const total = done[0]?.quiz?.total ?? 8;
+  return (
+    <div className="quiz-sum">
+      <div className="panel-head">
+        <h4>1단계 프롬프트 요소 퀴즈</h4>
+        <span className="tiny muted">
+          채점한 학생 {done.length} / {s.others.length}명{done.length ? ` · 평균 ${avg.toFixed(1)} / ${total}` : ''}
+        </span>
+      </div>
+      {done.length > 0 && (
+        <div className="quiz-bars">
+          {Array.from({ length: total + 1 }, (_, n) => total - n).map((n) => {
+            const cnt = done.filter((r) => r.quiz!.right === n).length;
+            return (
+              <div key={n} className="quiz-bar" title={done.filter((r) => r.quiz!.right === n).map((r) => `${r.no}번 ${r.nick}`).join(', ')}>
+                <span className="mono tiny">{n}개</span>
+                <span className="quiz-fill" style={{ width: `${(cnt / done.length) * 100}%` }} />
+                <span className="mono tiny">{cnt}명</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Dashboard() {
   const { s, d } = useStore();
   const [showPins, setShowPins] = useState(false);
@@ -675,10 +707,12 @@ function Dashboard() {
                 <span className="seat-nick">{r.nick || '(미입장)'}</span>
                 <span className="seat-stage">{r.stage}단계</span>
                 <span className="seat-cr mono">{r.credits}</span>
+                {r.quiz && <span className="seat-quiz mono">퀴즈 {r.quiz.right}/{r.quiz.total}</span>}
               </button>
             ))}
           </div>
           <p className="tiny muted">카드를 누르면 오른쪽에 그 학생의 프롬프트 기록이 보여요.</p>
+          {s.band === 'middle' && <QuizSummary />}
         </section>
 
         <section className="panel">

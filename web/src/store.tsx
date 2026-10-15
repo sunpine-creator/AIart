@@ -35,7 +35,7 @@ export type Gen = {
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
 export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
-export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done' };
+export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string };
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
 
@@ -151,7 +151,8 @@ export type Action =
   | { t: 'signOut' }
   | { t: 'tick' }
   | { t: 'toast'; msg?: string }
-  | { t: 'addCredits'; amount: number };
+  | { t: 'addCredits'; amount: number }
+  | { t: 'quizDone'; right: number; total: number };
 
 const Ctx = createContext<{ s: State; d: (a: Action) => void } | null>(null);
 
@@ -409,7 +410,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       peer: p.peer ?? {},
       submitted: !!p.submitted,
       spent: Math.round(usage * 100) / 100,
-      others: students.map((x) => ({ no: x.no, nick: x.nick || '', stage: x.stage, credits: x.credits, status: x.status })),
+      others: students.map((x) => ({ no: x.no, nick: x.nick || '', stage: x.stage, credits: x.credits, status: x.status, quiz: x.quiz ?? undefined })),
       approvals: pending.map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '' })),
       selectedStudent: local.selectedStudent,
       peers: peers.map((p) => ({ ...p, nick: nickByNo(p.no) })),
@@ -564,6 +565,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         signOut(auth);
         setLocal((l) => ({ ...l, classId: '' }));
         return;
+      case 'quizDone': {
+        // 1단계 문장 조각 문제 채점: 내 작업에 잠그고, 선생님 현황판에 점수를 알린다
+        patchProject({ prmSortDone: true });
+        if (claims.classId)
+          updateDoc(doc(db, 'classes', claims.classId, 'students', String(claims.no)), { quiz: { right: a.right, total: a.total, at: Date.now() } }).catch(() => {});
+        return;
+      }
       case 'addCredits': {
         // 반 학생 모두에게 크레딧을 더 준다
         if (!s.classId) return;

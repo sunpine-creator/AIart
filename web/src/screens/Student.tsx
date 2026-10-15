@@ -504,7 +504,7 @@ function S1Middle() {
           </div>
         ) : (
           <div className="actions">
-            <button className="btn primary" disabled={sorted.length < FRAGS.length} onClick={() => d({ t: 'set', patch: { prmSortDone: true } })}>
+            <button className="btn primary" disabled={sorted.length < FRAGS.length} onClick={() => d({ t: 'quizDone', right, total: FRAGS.length })}>
               정답 확인
             </button>
             {sorted.length < FRAGS.length && <span className="tiny muted">아직 {FRAGS.length - sorted.length}문제가 남았어요.</span>}

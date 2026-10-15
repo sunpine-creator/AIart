@@ -751,3 +751,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .score-box { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px; background: var(--human-tint); border: 1px solid var(--line); }
 .score-num { font-size: 1.8rem; font-weight: 800; color: var(--human); white-space: nowrap; }
 .frag .pill:disabled { opacity: 1; cursor: default; }
+.seat-quiz { grid-column: 1 / -1; font-size: 0.72rem; color: var(--human); }
+.quiz-sum { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.quiz-bars { display: grid; gap: 4px; }
+.quiz-bar { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; }
+.quiz-fill { height: 10px; border-radius: 999px; background: var(--human-soft); min-width: 2px; }
