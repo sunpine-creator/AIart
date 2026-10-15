@@ -21,6 +21,7 @@ export function StudentApp() {
   if (!s.joined) return <Join />;
   // 함수 이름과 단계 번호가 다르다: 2 활동지(Sheet) · 3 AI로 만들기(S3) · 4 이야기(S2) · 5 편집(S4) · 6 검토(S5)
   const Screen = [S1, Sheet, S3, S2, S4, S5][s.tab - 1];
+  const [showMine, setShowMine] = useState(false);
   return (
     <div className="student">
       <header className="st-head">
@@ -31,11 +32,17 @@ export function StudentApp() {
             <div className="st-class">{s.cls.title} · 반 코드 <span className="mono">{s.cls.code}</span> · {s.band === 'elementary' ? '30초 영상' : '60초 영상'}</div>
           </div>
         </div>
+        <div className="st-tools">
+        <button className={`btn ${showMine ? 'primary' : ''}`} onClick={() => setShowMine(!showMine)}>
+          {showMine ? '내 작품 닫기' : '내 작품 보기'}
+        </button>
         <div className="credit" title="생성할 때마다 길이만큼 줄어들어요">
           <span className="credit-label">남은 크레딧</span>
           <span className="credit-num">{s.credits}</span>
         </div>
+        </div>
       </header>
+      {showMine && <MyWorks onClose={() => setShowMine(false)} />}
       <nav className="stepper" aria-label="수업 단계">
         {STAGES.map((st) => {
           const locked = st.n > s.cls.open;
@@ -184,6 +191,84 @@ function ScreenShareBanner() {
         거절
       </button>
     </div>
+  );
+}
+
+// 내 작품 모아 보기: 완성 영상, 장면으로 정한 AI 영상, 내가 올린 영상
+function MyWorks({ onClose }: { onClose?: () => void }) {
+  const { s, d } = useStore();
+  const ex = s.lastExport;
+  const scenes = s.scenes
+    .map((sc, i) => ({ sc, i, g: s.gens.find((g) => g.id === sc.selectedGenId) ?? [...s.gens].reverse().find((g) => g.sceneId === sc.id && g.status === 'succeeded') }))
+    .filter((x) => x.g);
+  const ups = s.uploads.filter((u) => u.url);
+  return (
+    <section className="panel my-works">
+      <div className="panel-head">
+        <h3>내 작품</h3>
+        {onClose && (
+          <button className="link" onClick={onClose}>
+            닫기
+          </button>
+        )}
+      </div>
+      <div className="work-block">
+        <span className="tiny strong">완성 영상</span>
+        {ex ? (
+          <>
+            <StoredVideo path={ex.path} url={ex.url} label="내 완성 영상" />
+            <span className="tiny muted">
+              {ex.dur}초 · {new Date(ex.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 저장
+              {ex.url && (
+                <>
+                  {' · '}
+                  <a href={ex.url} target="_blank" rel="noreferrer">
+                    새 창에서 열기
+                  </a>
+                </>
+              )}
+            </span>
+          </>
+        ) : (
+          <p className="tiny muted">
+            아직 완성 영상이 없어요. 5단계 영상 편집에서 “영상 저장하기”를 누르면 여기에 나와요.{' '}
+            {s.cls.open >= 5 && (
+              <button className="link" onClick={() => (d({ t: 'set', patch: { tab: 5 } }), onClose?.())}>
+                영상 편집으로 가기
+              </button>
+            )}
+          </p>
+        )}
+      </div>
+      {scenes.length > 0 && (
+        <div className="work-block">
+          <span className="tiny strong">AI로 만든 장면 {scenes.length}개</span>
+          <div className="work-thumbs">
+            {scenes.map(({ sc, i, g }) => (
+              <figure key={sc.id}>
+                <GenMedia g={g} label={sc.line} size="sm" badge={g!.kind === 'final' ? '확정' : 'AI'} controls />
+                <figcaption className="tiny muted">
+                  #{i + 1} {sc.line}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
+      )}
+      {ups.length > 0 && (
+        <div className="work-block">
+          <span className="tiny strong">내가 올린 영상 {ups.length}개</span>
+          <div className="work-thumbs">
+            {ups.map((u) => (
+              <figure key={u.id}>
+                <video className="work-video sm" src={u.url} controls playsInline preload="metadata" />
+                <figcaption className="tiny muted">{u.name}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1845,6 +1930,7 @@ function S5() {
   return (
     <div className="screen">
       <ScreenHead n={6} title="검토하고, 친구들과 나눠요" lead="완성도만 보지 않아요. AI를 어떻게 쓰고 어떻게 판단했는지가 더 중요해요." />
+      <MyWorks />
       <section className="panel">
         <h3>최종 체크리스트</h3>
         <ul className="checks">

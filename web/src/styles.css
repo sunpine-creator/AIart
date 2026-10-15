@@ -740,3 +740,6 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 @media (max-width: 760px) { .mirror-wrap { grid-template-columns: minmax(0, 1fr); } .mirror-roster { position: static; grid-auto-flow: column; overflow-x: auto; max-height: none; } }
 .voice-tone { color: var(--ink); background: var(--sunk); padding: 6px 10px; border-radius: 8px; }
 .voice-preview { display: flex; flex-wrap: wrap; gap: 6px; }
+.st-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.my-works { margin-bottom: 14px; }
+.my-works .frame-sm video { pointer-events: auto; }
