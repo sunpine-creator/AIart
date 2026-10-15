@@ -1007,18 +1007,13 @@ function CastPanel() {
   return (
     <section className="panel cast-panel">
       <div className="panel-head">
-        <h3>모든 장면에 똑같이 나올 주인공과 배경</h3>
+        <h3>모든 장면에 똑같이 나올 주인공</h3>
         <span className="tiny muted">장면을 만들기 전에 먼저 정해요</span>
       </div>
-      <div className="grid2">
-        <div className="field human-field">
-          <label htmlFor="cast-look">주인공 모습</label>
-          <input id="cast-look" maxLength={80} placeholder="예: 단발머리 10살 여자아이, 노란 우비와 빨간 장화" value={c.look} onChange={(e) => set({ look: e.target.value })} />
-        </div>
-        <div className="field human-field">
-          <label htmlFor="cast-place">주요 배경</label>
-          <input id="cast-place" maxLength={80} placeholder="예: 햇살이 드는 아파트 거실과 집 앞 골목" value={c.place} onChange={(e) => set({ place: e.target.value })} />
-        </div>
+      <div className="field human-field">
+        <label htmlFor="cast-look">주인공 모습</label>
+        <input id="cast-look" maxLength={80} placeholder="예: 단발머리 10살 여자아이, 노란 우비와 빨간 장화" value={c.look} onChange={(e) => set({ look: e.target.value })} />
+        <span className="tiny muted">나이, 머리 모양, 옷 색깔처럼 눈에 보이는 모습을 구체적으로 쓸수록 장면마다 같은 주인공이 나와요.</span>
       </div>
       <div className="cs-row">
         <span className="cs-label">그림 스타일</span>
@@ -1031,7 +1026,7 @@ function CastPanel() {
         </div>
       </div>
       <p className="tiny muted">
-        여기 쓴 주인공·배경·스타일이 모든 장면에 함께 들어가서 장면끼리 자연스럽게 이어져요. 실제 사람(친구·연예인)의 이름이나 얼굴 특징은 쓰지 않아요.
+        여기 쓴 주인공과 그림 스타일이 모든 장면에 함께 들어가요. 배경은 장면마다 “어디서” 칸에 쓴 대로 바뀌어요. 실제 사람(친구·연예인)의 이름이나 얼굴 특징은 쓰지 않아요.
         {made && ' 이미 만든 장면이 있으니, 바꾸면 그 장면과는 달라질 수 있어요.'}
       </p>
     </section>
@@ -1062,7 +1057,7 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
           return { ...base, line: x.line, builder: { ...base.builder, mode: 'fields', who: x.who, when: x.when, where: x.where, what: x.what, how: x.how, why: x.why } };
         });
         const next = [...kept, ...drafted];
-        const cast = !s.cast.look && !s.cast.place && r.cast ? { ...s.cast, look: r.cast.look, place: r.cast.place } : s.cast;
+        const cast = !s.cast.look && r.cast?.look ? { ...s.cast, look: r.cast.look } : s.cast;
         d({ t: 'set', patch: { scenes: next, cast, toast: `장면 초안 ${drafted.length}개를 만들었어요. 내 생각과 다른 곳은 고쳐 써요.` } });
         if (drafted[0]) onPick(drafted[0].id);
       })

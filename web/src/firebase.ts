@@ -98,7 +98,7 @@ export const api = {
   previewVoice: call<{ voice: string; text?: string }, { url: string }>('previewVoice', 60_000),
   draftScenes: call<
     Record<string, string>,
-    { blocked: boolean; reason?: string; cast?: { look: string; place: string }; scenes: { line: string; who: string; when: string; where: string; what: string; how: string; why: string }[] }
+    { blocked: boolean; reason?: string; cast?: { look: string }; scenes: { line: string; who: string; when: string; where: string; what: string; how: string; why: string }[] }
   >('draftScenes', 60_000),
   renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),

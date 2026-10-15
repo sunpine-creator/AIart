@@ -268,18 +268,17 @@ async function castPrefix(classId: string, no: number): Promise<{ text: string; 
   const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
   const cast = p.cast ?? {};
   const look = String(cast.look ?? '').trim().slice(0, 120);
-  const place = String(cast.place ?? '').trim().slice(0, 120);
   const style = `${STYLE_EN[String(cast.style ?? '')] ?? STYLE_EN['그림책']}, the same look in every scene. Safe for children, fictional people only.`;
-  if (!look && !place) return { text: '', style };
-  const key = `${look}|${place}`;
+  if (!look) return { text: '', style };
+  const key = `look:${look}`;
   const cacheRef = db.doc(`castCache/${classId}_${no}`);
   const cached = (await cacheRef.get()).data();
   if (cached?.key === key) return { text: cached.text, style };
-  const r = moderateRules(`${look} ${place}`);
-  if (!r.pass) return { text: '', style, blocked: { category: r.category!, reason: `주인공·배경 설정: ${r.reason}`, suggestion: r.suggestion! } };
-  const c = await checkAndTranslate(`주인공 모습: ${look || '-'} / 주요 배경: ${place || '-'}`, 'prompt');
-  if (!c.safe) return { text: '', style, blocked: { category: c.category ?? '기타', reason: `주인공·배경 설정: ${c.reasonKo ?? ''}`, suggestion: c.suggestionKo ?? '' } };
-  const text = `Keep the SAME main character and setting in every scene of this story. ${c.english} "I", "me" or "나" in the scene means this main character. `;
+  const r = moderateRules(look);
+  if (!r.pass) return { text: '', style, blocked: { category: r.category!, reason: `주인공 설정: ${r.reason}`, suggestion: r.suggestion! } };
+  const c = await checkAndTranslate(`주인공 모습: ${look}`, 'prompt');
+  if (!c.safe) return { text: '', style, blocked: { category: c.category ?? '기타', reason: `주인공 설정: ${c.reasonKo ?? ''}`, suggestion: c.suggestionKo ?? '' } };
+  const text = `Keep the SAME main character (same face, hair and clothes) in every scene of this story. Main character: ${c.english} "I", "me" or "나" in the scene means this main character. The background follows each scene. `;
   await cacheRef.set({ key, text, at: FieldValue.serverTimestamp() });
   return { text, style };
 }
@@ -451,7 +450,7 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
   }
   type S = { line: string; who: string; when: string; where: string; what: string; how: string; why: string };
   let scenes: S[];
-  let cast = { look: '', place: '' };
+  let cast = { look: '' };
   const cut = (v: unknown, n: number) => String(v ?? '').slice(0, n);
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
   if (!useAi) {
@@ -476,14 +475,13 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
       ],
       config: {
         systemInstruction:
-          '초등학생이 쓴 활동지로 30초 영상의 장면 초안을 만든다. look 에는 모든 장면에 똑같이 나올 주인공의 모습(나이·머리·옷차림을 짧게, 실존 인물·실명 금지), place 에는 이야기의 주요 배경을 짧게 쓴다. 장면은 3~5개, 시간 순서대로. 장면마다 line(초등학생이 읽기 쉬운 한 문장 장면 설명)과 육하원칙(who 누가, when 언제, where 어디서, what 무엇을, how 어떻게·어떤 모습으로, why 왜)을 짧은 한국어로 쓴다. 학생이 쓴 내용을 최대한 그대로 살리고, 없는 내용을 지나치게 지어내지 않는다. 마지막 장면에는 학생의 기분이 드러나게 한다. 폭력·혐오·개인정보·실존 인물·실제 상표 이름은 쓰지 않는다. 비어 있는 칸은 빈 문자열로 둔다.',
+          '초등학생이 쓴 활동지로 30초 영상의 장면 초안을 만든다. look 에는 모든 장면에 똑같이 나올 주인공의 모습(나이·머리·옷차림을 짧게, 실존 인물·실명 금지)을 쓴다. 장면은 3~5개, 시간 순서대로. 장면마다 line(초등학생이 읽기 쉬운 한 문장 장면 설명)과 육하원칙(who 누가, when 언제, where 어디서, what 무엇을, how 어떻게·어떤 모습으로, why 왜)을 짧은 한국어로 쓴다. 학생이 쓴 내용을 최대한 그대로 살리고, 없는 내용을 지나치게 지어내지 않는다. 마지막 장면에는 학생의 기분이 드러나게 한다. 폭력·혐오·개인정보·실존 인물·실제 상표 이름은 쓰지 않는다. 비어 있는 칸은 빈 문자열로 둔다.',
         temperature: 0.6,
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'OBJECT',
           properties: {
             look: { type: 'STRING' },
-            place: { type: 'STRING' },
             scenes: {
               type: 'ARRAY',
               items: {
@@ -493,13 +491,13 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
               },
             },
           },
-          required: ['look', 'place', 'scenes'],
+          required: ['look', 'scenes'],
         },
       } as any,
     });
     try {
       const parsed = JSON.parse(res.text ?? '{}');
-      cast = { look: cut(parsed.look, 80), place: cut(parsed.place, 80) };
+      cast = { look: cut(parsed.look, 80) };
       scenes = ((parsed.scenes ?? []) as any[]).slice(0, 5).map((x) => ({
         line: cut(x.line, 80), who: cut(x.who, 30), when: cut(x.when, 30), where: cut(x.where, 30), what: cut(x.what, 60), how: cut(x.how, 40), why: cut(x.why, 40),
       }));
@@ -511,7 +509,7 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
     if (bad) scenes = scenes.filter((x) => x !== bad);
   }
   await log({ classId, no, kind: '장면 초안', textKo: joined, textEn: scenes.map((x) => x.line).join(' | '), verdict: 'pass', action: `AI 장면 초안 ${scenes.length}개`, layer: useAi ? 'ai' : 'rule' });
-  if (!moderateRules(`${cast.look} ${cast.place}`).pass) cast = { look: '', place: '' };
+  if (!moderateRules(cast.look).pass) cast = { look: '' };
   return { blocked: false, scenes, cast };
 });
 
