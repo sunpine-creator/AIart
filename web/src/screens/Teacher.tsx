@@ -3,7 +3,8 @@ import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Log, Stage, useStore } from '../store';
 import { STAGES } from './Student';
 import { StudentScreens } from './Mirror';
-import { StudentWork, TeacherRow, api, auth, errText } from '../firebase';
+import { StudentWork, TeacherRow, api, auth, db, errText } from '../firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 const REJECT_REASONS = ['장면 이야기와 맞지 않아요', '더 구체적으로 써 보세요', '안전하지 않은 표현이 있어요'];
 
@@ -251,6 +252,7 @@ function AdminPanel() {
       .finally(() => setBusy(''));
   };
   return (
+    <>
     <section className="panel">
       <div className="panel-head">
         <h3>교사 승인 관리 (관리자)</h3>
@@ -281,6 +283,67 @@ function AdminPanel() {
           ))}
         </tbody>
       </table>
+    </section>
+    <AllClasses teachers={list} />
+    </>
+  );
+}
+
+// 관리자: 모든 교사가 만든 반을 교사별로 보고, 들어가서 관리한다
+function AllClasses({ teachers }: { teachers: TeacherRow[] }) {
+  const { s, d } = useStore();
+  const [all, setAll] = useState<any[] | null>(null);
+  const [q, setQ] = useState('');
+  useEffect(
+    () =>
+      onSnapshot(
+        collection(db, 'classes'),
+        (snap) => setAll(snap.docs.map((x) => ({ id: x.id, ...x.data() }))),
+        () => setAll([]),
+      ),
+    [],
+  );
+  if (!all) return null;
+  const me = auth.currentUser?.uid;
+  const nameOf = (uid: string) => {
+    const t = teachers.find((x) => x.uid === uid);
+    return t ? `${t.realName || t.name || t.email}${t.org ? ` · ${t.org}` : ''}` : '(알 수 없는 교사)';
+  };
+  const word = q.trim();
+  const shown = all.filter((c) => !word || [c.title, c.school, c.code, nameOf(c.teacherUid)].join(' ').includes(word));
+  const byTeacher = [...new Set(shown.map((c) => c.teacherUid as string))].sort((a, b) => (a === me ? -1 : b === me ? 1 : nameOf(a).localeCompare(nameOf(b), 'ko')));
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h3>전체 학급 관리 (관리자)</h3>
+        <span className="tiny muted">
+          교사 {new Set(all.map((c) => c.teacherUid)).size}명 · 반 {all.length}개
+        </span>
+      </div>
+      <input placeholder="반 이름, 학교, 반 코드, 교사 이름으로 찾기" value={q} onChange={(e) => setQ(e.target.value)} />
+      {byTeacher.map((uid) => (
+        <div key={uid} className="school-group">
+          <h4 className="school-name">
+            {uid === me ? '내 반' : nameOf(uid)}
+          </h4>
+          <div className="class-grid">
+            {shown
+              .filter((c) => c.teacherUid === uid)
+              .map((c) => (
+                <button key={c.id} className="class-card" onClick={() => d({ t: 'openClass', classId: c.id })}>
+                  <strong>{c.title}</strong>
+                  <span className="muted">
+                    {c.school ? `${c.school} · ` : ''}
+                    {c.band === 'elementary' ? '초등 버전' : '중·고등 버전'} · {c.size}명
+                  </span>
+                  <span className="mono strong">반 코드 {c.code}</span>
+                </button>
+              ))}
+          </div>
+        </div>
+      ))}
+      {shown.length === 0 && <p className="muted">찾는 반이 없어요.</p>}
+      <p className="tiny muted">반을 누르면 그 반의 현황판으로 들어가요. 승인, 학생 명단, 작품 보기, 반 삭제를 담당 교사처럼 할 수 있어요.</p>
     </section>
   );
 }

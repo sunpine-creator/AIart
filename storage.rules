@@ -9,7 +9,8 @@ service firebase.storage {
     }
     function ownsClass(classId) {
       return request.auth != null
-        && firestore.get(/databases/(default)/documents/classes/$(classId)).data.teacherUid == request.auth.uid;
+        && (firestore.get(/databases/(default)/documents/classes/$(classId)).data.teacherUid == request.auth.uid
+            || firestore.get(/databases/(default)/documents/teachers/$(request.auth.uid)).data.get('admin', false) == true);
     }
     // AI가 만든 결과물: 서버만 쓴다
     match /classes/{classId}/{no}/gens/{file} {

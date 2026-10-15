@@ -50,9 +50,14 @@ function requireStudent(req: CallableRequest) {
   if (!t || t.role !== 'student') throw new HttpsError('unauthenticated', '반 코드로 다시 들어와 주세요.');
   return { classId: String(t.classId), no: Number(t.no) };
 }
+// 내 반이거나, 관리자면 모든 반을 다룰 수 있다
 async function ownedClass(uid: string, classId: string) {
   const c = await db.doc(`classes/${classId}`).get();
-  if (!c.exists || c.data()!.teacherUid !== uid) throw new HttpsError('permission-denied', '내 반이 아니에요.');
+  if (!c.exists) throw new HttpsError('not-found', '반을 찾을 수 없어요.');
+  if (c.data()!.teacherUid !== uid) {
+    const t = await db.doc(`teachers/${uid}`).get();
+    if (t.data()?.admin !== true || t.data()?.approved !== true) throw new HttpsError('permission-denied', '내 반이 아니에요.');
+  }
   return c;
 }
 function log(e: { classId: string; no: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string; layer?: string }) {
@@ -577,6 +582,8 @@ export const claimTeacher = onCall(async (req) => {
       tx.set(tRef, { approved: true, admin: true, email: u.email, name: u.name, approvedBy: approvedNow ? t.data()?.approvedBy ?? 'admin-self' : 'admin-self', at: FieldValue.serverTimestamp() }, { merge: true });
       return { approved: true, admin: true, requested: true };
     }
+    // 관리자가 아닌데 예전에 관리자 표시가 남아 있으면 지운다
+    if (t.data()?.admin === true) tx.update(tRef, { admin: false });
     if (approvedNow) return { approved: true, admin: false, requested: true };
     if (!t.exists) tx.set(tRef, { approved: false, email: u.email, name: u.name, firstSeenAt: FieldValue.serverTimestamp() });
     return { approved: false, admin: false, requested: !!t.data()?.requestedAt };
