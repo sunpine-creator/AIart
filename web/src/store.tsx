@@ -40,7 +40,7 @@ export type Approval = { id: string; no: number; nick: string; promptKo: string;
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
 
 // 학생 작업(프로젝트 문서)에 저장되는 칸
-const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmThink', 'flow', 'editNote', 'reflect'] as const;
+const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmSortDone', 'prmThink', 'flow', 'editNote', 'reflect'] as const;
 export type PromptPart = 'goal' | 'role' | 'content' | 'cond';
 type ProjectKey = (typeof PROJECT_KEYS)[number];
 
@@ -58,6 +58,7 @@ export type State = {
   prmCmp: Record<string, { pick?: 'a' | 'b'; missing?: PromptPart[]; checked?: boolean }>;
   prmSort: Record<string, PromptPart | undefined>;
   prmThink: string;
+  prmSortDone: boolean;
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
@@ -122,7 +123,7 @@ function emptyProject(band: Band) {
 const base: State = {
   role: 'loading', view: 'student', band: 'elementary', joined: false, me: { no: 0, nick: '' }, classId: '',
   cls: { title: '', code: '', open: 1, paused: false, approval: true, videoInMiddle: false, budget: 0 },
-  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmThink: '', flow: {}, editNote: '', reflect: '', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
+  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', flow: {}, editNote: '', reflect: '', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
@@ -381,6 +382,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       prmCmp: p.prmCmp ?? {},
       prmSort: p.prmSort ?? {},
       prmThink: p.prmThink ?? '',
+      prmSortDone: !!p.prmSortDone,
       flow: p.flow ?? {},
       editNote: p.editNote ?? '',
       reflect: p.reflect ?? '',

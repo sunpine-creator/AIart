@@ -453,29 +453,63 @@ function S1Middle() {
           ))}
         </div>
         <div className="panel-head mt">
-          <h4>문장 조각을 알맞은 요소로 나눠 봐요</h4>
+          <h4>문장 조각을 알맞은 요소로 나눠 봐요 ({FRAGS.length}문제)</h4>
           <span className="tiny muted">
-            {sorted.length} / {FRAGS.length} · 맞은 것 {right}개
+            {s.prmSortDone ? `채점 끝 · ${right} / ${FRAGS.length}` : `${sorted.length} / ${FRAGS.length} 풀었어요`}
           </span>
         </div>
+        {!s.prmSortDone && <p className="tiny muted">모두 고른 뒤 “정답 확인”을 누르면 채점돼요. 채점한 뒤에는 답을 바꿀 수 없으니 잘 생각해서 골라요.</p>}
         <ul className="frags">
-          {FRAGS.map((f) => {
+          {FRAGS.map((f, idx) => {
             const v = s.prmSort[f.id];
+            const done = s.prmSortDone;
             return (
-              <li key={f.id} className={`frag ${v ? (v === f.k ? 'ok' : 'no') : ''}`}>
-                <span>“{f.t}”</span>
+              <li key={f.id} className={`frag ${done ? (v === f.k ? 'ok' : 'no') : ''}`}>
+                <span>
+                  <span className="mono muted">{idx + 1}. </span>“{f.t}”
+                </span>
                 <div className="pills">
                   {PARTS.map((x) => (
-                    <button key={x.k} className={`pill ${v === x.k ? 'on' : ''}`} aria-pressed={v === x.k} onClick={() => d({ t: 'set', patch: { prmSort: { ...s.prmSort, [f.id]: x.k } } })}>
+                    <button
+                      key={x.k}
+                      className={`pill ${v === x.k ? 'on' : ''}`}
+                      aria-pressed={v === x.k}
+                      disabled={done}
+                      onClick={() => d({ t: 'set', patch: { prmSort: { ...s.prmSort, [f.id]: x.k } } })}
+                    >
                       {x.name}
                     </button>
                   ))}
                 </div>
-                {v && v !== f.k && <span className="hint">다시 생각해 봐요: {PARTS.find((x) => x.k === f.k)!.q}</span>}
+                {done &&
+                  (v === f.k ? (
+                    <span className="good-text tiny">정답이에요</span>
+                  ) : (
+                    <span className="hint">
+                      정답: <strong>{partName(f.k)}</strong> — {PARTS.find((x) => x.k === f.k)!.q}
+                    </span>
+                  ))}
               </li>
             );
           })}
         </ul>
+        {s.prmSortDone ? (
+          <div className="score-box" role="status">
+            <span className="score-num">
+              {right} / {FRAGS.length}
+            </span>
+            <span>
+              {right === FRAGS.length ? '모두 맞았어요! 네 가지 요소를 잘 구분했어요.' : right >= 6 ? '잘했어요! 틀린 문제의 정답과 이유를 확인해 봐요.' : '틀린 문제의 정답과 이유를 꼭 읽어 봐요. 2단계에서 다시 쓰게 돼요.'}
+            </span>
+          </div>
+        ) : (
+          <div className="actions">
+            <button className="btn primary" disabled={sorted.length < FRAGS.length} onClick={() => d({ t: 'set', patch: { prmSortDone: true } })}>
+              정답 확인
+            </button>
+            {sorted.length < FRAGS.length && <span className="tiny muted">아직 {FRAGS.length - sorted.length}문제가 남았어요.</span>}
+          </div>
+        )}
       </section>
 
       <section className="panel">
