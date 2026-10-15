@@ -127,7 +127,7 @@ function Join() {
         >
           <label htmlFor="j-code">반 코드</label>
           <input id="j-code" className="mono big" value={code} maxLength={6} placeholder="예: E12345" autoComplete="off" onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
-          <span className="tiny muted">초등은 E 뒤에 숫자 5개예요. 숫자만 써도 돼요.</span>
+          <span className="tiny muted">선생님이 알려 준 반 코드를 그대로 써요. E로 시작하는 코드는 숫자만 써도 돼요.</span>
           <div className="row2">
             <div>
               <label htmlFor="j-no">번호</label>
@@ -330,7 +330,7 @@ function S1Elementary() {
 // ───────────── 1단계 중등: 좋은 프롬프트의 구성 ─────────────
 const PARTS: { k: PromptPart; name: string; q: string; ex: string }[] = [
   { k: 'goal', name: '목적', q: '무엇을 만들어 달라고 하나요? 어디에 쓰나요?', ex: '발표 시간에 보여 줄 60초 영상 시나리오를 써 줘' },
-  { k: 'role', name: '역할', q: 'AI가 누구의 입장에서 생각하면 좋을까요?', ex: '너는 중학생 눈높이를 잘 아는 영상 작가야' },
+  { k: 'role', name: '역할', q: 'AI가 누구의 입장에서 생각하면 좋을까요?', ex: '너는 학생 눈높이를 잘 아는 영상 작가야' },
   { k: 'content', name: '내용', q: '무엇에 관한 이야기인가요? 어떤 경험·감정인가요?', ex: 'AI 번역 앱 덕분에 외국인에게 길을 알려 준 내 경험' },
   { k: 'cond', name: '조건', q: '길이·형식·지켜야 할 점은 무엇인가요?', ex: '장면 5개 이내, 대사는 짧게, 실제 이름은 쓰지 않기' },
 ];
@@ -340,14 +340,14 @@ const PAIRS: { id: string; a: string; b: string; better: 'a' | 'b'; lacks: Promp
   {
     id: 'p1',
     a: 'AI 영상 시나리오 써 줘',
-    b: '너는 중학생 영상 작가야. 발표 시간에 보여 줄 60초 영상 시나리오를 써 줘. 내용은 AI 번역 앱으로 외국인에게 길을 알려 준 경험이야. 장면은 5개 이내, 대사는 짧게 써 줘.',
+    b: '너는 학생 영상 작가야. 발표 시간에 보여 줄 60초 영상 시나리오를 써 줘. 내용은 AI 번역 앱으로 외국인에게 길을 알려 준 경험이야. 장면은 5개 이내, 대사는 짧게 써 줘.',
     better: 'b',
     lacks: ['role', 'content', 'cond'],
     why: '“시나리오를 써 달라”는 목적만 있고, 누구처럼·무엇에 대해·어떤 조건으로 쓸지가 없어요.',
   },
   {
     id: 'p2',
-    a: '너는 친절한 과학 선생님이야. 추천 알고리즘이 내가 볼 영상을 어떻게 고르는지 중학생에게 설명하는 글을 써 줘. 비유를 하나 넣고 다섯 문장 이내로 써 줘.',
+    a: '너는 친절한 과학 선생님이야. 추천 알고리즘이 내가 볼 영상을 어떻게 고르는지 친구들에게 설명하는 글을 써 줘. 비유를 하나 넣고 다섯 문장 이내로 써 줘.',
     b: '추천 알고리즘에 대해 설명해 줘',
     better: 'a',
     lacks: ['role', 'cond'],
@@ -364,7 +364,7 @@ const PAIRS: { id: string; a: string; b: string; better: 'a' | 'b'; lacks: Promp
 ];
 
 const FRAGS: { id: string; t: string; k: PromptPart }[] = [
-  { id: 'f1', t: '너는 중학생 눈높이를 잘 아는 영상 작가야', k: 'role' },
+  { id: 'f1', t: '너는 학생 눈높이를 잘 아는 영상 작가야', k: 'role' },
   { id: 'f2', t: '60초짜리 영상 시나리오를 써 줘', k: 'goal' },
   { id: 'f3', t: 'AI 번역 앱 덕분에 외국인에게 길을 알려 준 내 경험이야', k: 'content' },
   { id: 'f4', t: '장면은 5개 이내로 나눠 줘', k: 'cond' },
@@ -1220,7 +1220,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
             id={`b-free-${scene.id}`}
             rows={3}
             maxLength={200}
-            placeholder={mid ? '예: 비 오는 아침, 현관에서 우산을 챙기는 중학생. 창밖으로 빗방울이 보이고, 따뜻한 조명의 차분한 분위기' : '예: 비 오는 아침에 내가 노란 우산을 들고 웃으며 집을 나서는 모습'}
+            placeholder={mid ? '예: 비 오는 아침, 현관에서 우산을 챙기는 학생. 창밖으로 빗방울이 보이고, 따뜻한 조명의 차분한 분위기' : '예: 비 오는 아침에 내가 노란 우산을 들고 웃으며 집을 나서는 모습'}
             value={b.free ?? ''}
             onChange={(e) => d({ t: 'builder', id: scene.id, patch: { free: e.target.value } })}
           />

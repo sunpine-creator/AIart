@@ -106,7 +106,7 @@ function emptyProject(band: Band) {
     topic: '',
     story: { who: '', when: '', where: '', what: '', event: '', why: '', feeling: '' },
     brief: { audience: '', purpose: '', message: '' },
-    scenario: { builder: { goal: '60초 영상 시나리오', role: '중학생 영상 작가', content: '', cond: '장면 5개 이내, 대사는 짧게' }, draft: [], marked: [], final: '' },
+    scenario: { builder: { goal: '60초 영상 시나리오', role: '학생 영상 작가', content: '', cond: '장면 5개 이내, 대사는 짧게' }, draft: [], marked: [], final: '' },
     scenes: [newScene(0), newScene(1)],
     intro: { dur: 3, caption: '' },
     outro: { dur: 3, caption: '판단은 내가, 도움은 AI가' },

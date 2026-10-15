@@ -476,7 +476,7 @@ export const draftScenario = onCall({ timeoutSeconds: 60 }, async (req) => {
       model: CONFIG.textModel(),
       contents: [{ role: 'user', parts: [{ text: `목적: ${fields[0]}\n역할: ${fields[1]}\n내용: ${fields[2]}\n조건: ${fields[3]}\n주제: ${fields[4]}` }] }],
       config: {
-        systemInstruction: '중학생이 만드는 60초 이내 영상의 시나리오 초안을 쓴다. 장면마다 한 문장, "장면 N. ..." 형식. 폭력·혐오·개인정보·실존 인물은 쓰지 않는다. 학생이 고칠 수 있게 일부러 완벽하지 않아도 된다. JSON 문자열 배열만 출력한다.',
+        systemInstruction: '중·고등학생이 만드는 60초 이내 영상의 시나리오 초안을 쓴다. 장면마다 한 문장, "장면 N. ..." 형식. 폭력·혐오·개인정보·실존 인물은 쓰지 않는다. 학생이 고칠 수 있게 일부러 완벽하지 않아도 된다. JSON 문자열 배열만 출력한다.',
         temperature: 0.7,
         responseMimeType: 'application/json',
         responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
