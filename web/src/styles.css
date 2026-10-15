@@ -745,3 +745,6 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .my-works .frame-sm video { pointer-events: auto; }
 .sec-row { grid-template-columns: 70px minmax(0, 1fr); }
 .sec-row > .tiny { grid-column: 1 / -1; }
+.countdown { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 12px; background: var(--human-tint); }
+.countdown-num { font-size: 2rem; font-weight: 800; color: var(--human); min-width: 1.2em; text-align: center; animation: cd-pop 1s ease-out infinite; }
+@keyframes cd-pop { 0% { transform: scale(1.4); opacity: 0.4; } 30% { transform: scale(1); opacity: 1; } }

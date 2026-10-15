@@ -391,14 +391,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 영상 장면은 만든 영상 길이(3초)보다 길게 쓸 수 없다
       scenes: ((p.scenes ?? []) as Scene[]).map((sc) => {
         const g = gens.find((x) => x.id === sc.selectedGenId);
-        return { ...sc, edits: editsOf(sc.id), dur: g && !g.img ? Math.max(1, Math.min(sc.dur, g.sec - (sc.start ?? 0))) : Math.max(1, Math.min(sc.dur, SCENE_MAX_SEC)) };
+        return { ...sc, edits: editsOf(sc.id), // 길이는 편집에서 고치지 않는다: 만든 영상 길이 − 앞부분 자른 만큼
+        dur: g && !g.img ? Math.max(1, g.sec - (sc.start ?? 0)) : Math.max(1, Math.min(sc.dur, SCENE_MAX_SEC)) };
       }),
       gens,
       logs,
       intro: p.intro ?? base.intro,
       outro: p.outro ?? base.outro,
       bgm: p.bgm ?? '없음',
-      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, url: u.url || u.dl || uploadUrls[u.id] || '' })),
+      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, dur: Math.max(1, Math.min(Math.floor((u.srcDur || u.dur) - (u.start ?? 0)), band === 'elementary' ? 30 : 60)), url: u.url || u.dl || uploadUrls[u.id] || '' })),
       order: p.order ?? [],
       checklist: p.checklist ?? {},
       aiNote: p.aiNote ?? '',

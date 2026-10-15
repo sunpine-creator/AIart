@@ -1517,11 +1517,18 @@ function S4() {
             )}
           </div>
           {cur.kind === 'upload' && <p className="tiny muted file-name">{cur.upload!.name} · 원본 {Math.round(cur.upload!.srcDur)}초</p>}
-          <label htmlFor="ins-dur">
-            길이 <span className="mono">{cur.dur}초</span>
-          </label>
-          <input id="ins-dur" type="range" min={1} max={maxDur} step={1} value={Math.min(cur.dur, maxDur)} onChange={(e) => setItem({ dur: Number(e.target.value) })} />
-          {cur.kind === 'scene' && cur.gen && <span className="tiny muted">이 장면의 AI 영상은 {cur.gen.sec}초예요. 더 길게 하려면 3단계에서 길이를 골라 만들어요.</span>}
+          {cur.kind === 'intro' || cur.kind === 'outro' ? (
+            <>
+              <label htmlFor="ins-dur">
+                길이 <span className="mono">{cur.dur}초</span>
+              </label>
+              <input id="ins-dur" type="range" min={1} max={5} step={1} value={Math.min(cur.dur, 5)} onChange={(e) => setItem({ dur: Number(e.target.value) })} />
+            </>
+          ) : (
+            <p className="tiny muted">
+              길이 <span className="mono">{cur.dur}초</span> · {cur.kind === 'scene' ? '3단계에서 만든 영상 길이 그대로예요.' : '올린 영상 길이 그대로예요.'} 앞부분만 자를 수 있어요.
+            </p>
+          )}
           <label htmlFor="ins-cap">{cur.kind === 'intro' || cur.kind === 'outro' ? '화면 글자' : '자막·말풍선'}</label>
           <input id="ins-cap" value={cur.caption} onChange={(e) => setItem({ caption: e.target.value })} />
           {s.band === 'middle' && (cur.kind === 'scene' || cur.kind === 'upload') && <CaptionStyler value={cur.capStyle ?? {}} onChange={(capStyle) => setItem({ capStyle })} />}
@@ -1553,10 +1560,10 @@ function S4() {
                 value={start}
                 onChange={(e) => {
                   const v = Number(e.target.value);
-                  setItem({ start: v, dur: Math.max(1, Math.min(cur.dur, Math.floor(srcLen - v))) });
+                  setItem({ start: v });
                 }}
               />
-              <p className="tiny muted">마음에 안 드는 앞부분은 자르고, 뒷부분은 “길이”를 줄여서 빼요.</p>
+              <p className="tiny muted">마음에 안 드는 앞부분을 잘라요. 자른 만큼 장면이 짧아져요.</p>
             </>
           )}
           {cur.kind === 'upload' && (
@@ -1802,8 +1809,9 @@ function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec
   const { d } = useStore();
   const fetched = useStorageUrl(url ? undefined : path);
   const saved = url ?? fetched;
-  const [state, setState] = useState<'idle' | 'rec' | 'done'>('idle');
+  const [state, setState] = useState<'idle' | 'count' | 'rec' | 'done'>('idle');
   const [left, setLeft] = useState(maxSec);
+  const [count, setCount] = useState(3);
   const [local, setLocalUrl] = useState<string | undefined>(undefined);
   const [err, setErr] = useState('');
   const recRef = React.useRef<MediaRecorder | null>(null);
@@ -1822,6 +1830,12 @@ function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec
         d({ t: 'voice', key: itemKey, blob });
       };
       recRef.current = rec;
+      // 3, 2, 1 세고 나서 녹음 시작
+      setState('count');
+      for (let c = 3; c >= 1; c--) {
+        setCount(c);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
       rec.start();
       setState('rec');
       setLeft(maxSec);
@@ -1841,7 +1855,12 @@ function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec
   const src = local ?? saved;
   return (
     <div className="recorder">
-      {state === 'rec' ? (
+      {state === 'count' ? (
+        <div className="countdown" role="status" aria-live="assertive">
+          <span className="countdown-num">{count}</span>
+          <span className="tiny">준비하세요… 숫자가 끝나면 녹음이 시작돼요</span>
+        </div>
+      ) : state === 'rec' ? (
         <button className="btn danger tiny" onClick={() => recRef.current?.stop()}>
           ■ 멈추기 · {left}초 남음
         </button>
@@ -1850,7 +1869,7 @@ function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec
           ● {src ? '다시 녹음하기' : `녹음하기 (최대 ${maxSec}초)`}
         </button>
       )}
-      {src && state !== 'rec' && <audio controls src={src} preload="metadata" />}
+      {src && state !== 'rec' && state !== 'count' && <audio controls src={src} preload="metadata" />}
       {err && <span className="danger-text tiny">{err}</span>}
     </div>
   );

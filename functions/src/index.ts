@@ -413,8 +413,25 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   const all = [...scenes.filter((s) => !s.skip).map((s) => s.id), ...uploads.map((u) => u.id)];
   const kept = (p.order ?? []).filter((k: string) => all.includes(k));
   const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
-  const total = (p.intro?.dur ?? 3) + (p.outro?.dur ?? 3) + keys.reduce((a, k) => a + ((scenes.find((s) => s.id === k) ?? uploads.find((u) => u.id === k))?.dur ?? 0), 0);
-  if (total > limit) throw new HttpsError('failed-precondition', `영상이 ${limit}초를 넘었어요. 길이를 줄여 주세요.`);
+  const gens = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  // 길이는 편집에서 고치지 않는다: 장면 = 만든 AI 영상 길이 − 앞부분 자른 만큼, 올린 영상 = 원본 길이 − 앞부분(최대 반 제한까지)
+  const genOf = (sc: any) => gens.find((x) => x.id === sc.selectedGenId) ?? gens.filter((x) => x.sceneId === sc.id && x.status === 'succeeded').pop();
+  const sceneDur = (sc: any) => {
+    const g = genOf(sc);
+    if (!g || g.img) return Math.max(1, Math.min(Number(sc.dur) || 3, 10));
+    return Math.max(1, (g.sec ?? 3) - Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1)));
+  };
+  const uploadDur = (u: any) => Math.max(1, Math.min(Math.floor((Number(u.srcDur) || Number(u.dur) || 5) - (Number(u.start) || 0)), limit));
+  const total =
+    (p.intro?.dur ?? 3) +
+    (p.outro?.dur ?? 3) +
+    keys.reduce((a, k) => {
+      const sc = scenes.find((s) => s.id === k);
+      if (sc) return a + sceneDur(sc);
+      const u = uploads.find((x) => x.id === k);
+      return a + (u ? uploadDur(u) : 0);
+    }, 0);
+  if (total > limit) throw new HttpsError('failed-precondition', `영상이 ${limit}초를 넘었어요. 장면을 빼거나 앞부분을 잘라 주세요.`);
 
   await projRef.update({ rendering: Date.now() });
   const dir = mkdtempSync(pjoin(tmpdir(), 'render-'));
@@ -433,7 +450,6 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     }
   };
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
-  const gens = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
 
   try {
     const voiceFor = async (item: any, i: number) => {
@@ -470,10 +486,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
         const src = g?.storagePath ? await fetchFile(g.storagePath, `gen_${i}`) : undefined;
         if (g && src) {
           const start = g.img ? 0 : Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1));
-          // 장면은 최대 10초. AI 영상보다 길면 멈춤·느리게·반복 중 학생이 고른 방법으로 채운다
-          const dur = Math.max(1, Math.min(Number(sc.dur) || 3, 10));
-          const fill = (['freeze', 'slow', 'loop'].includes(sc.fill) ? sc.fill : 'freeze') as Clip['fill'];
-          clips.push({ kind: g.img ? 'image' : 'video', dur, start, srcLen: g.sec ?? 3, fill, src, voice, layers: layersOf(sc.id) });
+          clips.push({ kind: g.img ? 'image' : 'video', dur: sceneDur(sc), start, srcLen: g.sec ?? 3, src, voice, layers: layersOf(sc.id) });
         } else {
           clips.push({ kind: 'placeholder', dur: sc.dur, voice, layers: layersOf(sc.id) });
         }
@@ -484,7 +497,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       if (u && usrc) {
         const src = usrc;
         const voice = await voiceFor(u, i);
-        clips.push({ kind: 'video', dur: u.dur, start: Math.max(0, Number(u.start) || 0), src, keepAudio: u.voice === '원래 소리', voice, layers: layersOf(u.id) });
+        clips.push({ kind: 'video', dur: uploadDur(u), start: Math.max(0, Number(u.start) || 0), src, keepAudio: u.voice === '원래 소리', voice, layers: layersOf(u.id) });
       }
     }
     clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, layers: layersOf('outro') });
