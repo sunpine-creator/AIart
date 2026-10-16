@@ -4,7 +4,7 @@ import { buildPromptKo, moderate } from '../moderation';
 import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
 import { api, errText } from '../firebase';
 import { ShareState, studentDecline, studentListen, studentShare } from '../screenshare';
-import { Timeline, TlCap, TlVoice, absAt, anchorAt, atMap, baseLen, cutTotal, emptyTl, layout, mergeCuts, r1, skipCut, tid, ttsGuess } from '../timeline';
+import { Timeline, TlCap, TlVoice, XF, absAt, anchorAt, atMap, baseLen, cutTotal, emptyTl, layout, mergeCuts, r1, skipCut, tid, ttsGuess } from '../timeline';
 
 export const STAGES: { n: Stage; name: string; el: number; mid: number }[] = [
   { n: 1, name: '시작하기', el: 20, mid: 20 },
@@ -1577,6 +1577,8 @@ function S4() {
   const [playing, setPlaying] = useState(false);
   const [sel, setSel] = useState<Sel>(null);
   const [range, setRange] = useState<{ a: number; b: number } | null>(null);
+  // 구간 고르기 모드: 버튼(✂ 구간 지우기·자막 넣기·목소리 넣기)을 누르면 파란 구간이 나타난다
+  const [mode, setMode] = useState<null | 'cut' | 'cap' | 'voice'>(null);
 
   // 조각 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (뺀 장면은 넣지 않는다)
   const middleKeys = useMemo(() => {
@@ -1731,12 +1733,26 @@ function S4() {
       setSel({ t: 'voice', id });
     }
     setRange(null);
-    seek(range.a);
+    setMode(null);
   };
+  const startMode = (m: 'cut' | 'cap' | 'voice') => {
+    setPlaying(false);
+    const len = Math.min(2, B);
+    const a = r1(Math.max(0, Math.min(t, B - len)));
+    setRange({ a, b: r1(a + len) });
+    setMode(m);
+    setSel(null);
+  };
+  const cancelMode = () => (setRange(null), setMode(null));
 
-  // 타임라인 마우스: 끌면 구간 고르기, 누르기만 하면 그 위치로 이동(블록을 누르면 그것을 고름)
+  // 타임라인 마우스(편집 프로그램처럼):
+  // · 눈금·빈 곳을 누르거나 끌면 빨간 선(지금 위치)만 움직인다
+  // · 장면·자막·목소리·지운 구간 막대를 누르면 그것만 고른다(빨간 선은 그대로)
+  // · 자막·목소리 막대는 가운데를 끌면 옮겨지고, 자막은 양 끝을 끌면 길이가 바뀐다
+  // · 구간 고르기 모드에서는 파란 구간의 양 끝이나 가운데를 끌어 구간을 정한다
   const trackRef = React.useRef<HTMLDivElement | null>(null);
-  const drag = React.useRef<{ mode: 'new' | 'a' | 'b'; a: number; moved: boolean; sel?: string } | null>(null);
+  type Drag = { mode: 'scrub' | 'a' | 'b' | 'move' | 'select' | 'bar'; x0: number; r0?: { a: number; b: number }; moved: boolean; sel?: string; bar?: { kind: 'cap' | 'voice'; id: string; part: 'move' | 'a' | 'b'; a0: number; b0: number } };
+  const drag = React.useRef<Drag | null>(null);
   const timeAt = (clientX: number) => {
     const r = trackRef.current?.getBoundingClientRect();
     if (!r || !B) return 0;
@@ -1746,32 +1762,74 @@ function S4() {
   const onDown = (e: React.PointerEvent) => {
     const el = e.target as HTMLElement;
     const edge = el.closest('[data-edge]')?.getAttribute('data-edge') as 'a' | 'b' | null;
+    const inRange = !!el.closest('.tl-range');
     const selAttr = el.closest('[data-sel]')?.getAttribute('data-sel') ?? undefined;
+    const bedge = el.closest('[data-bedge]')?.getAttribute('data-bedge') as 'a' | 'b' | null;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setPlaying(false);
     const x = timeAt(e.clientX);
-    drag.current = { mode: edge ?? 'new', a: x, moved: false, sel: selAttr };
-    if (!edge) setT(x);
+    if (range && (edge || inRange)) {
+      drag.current = { mode: edge ?? 'move', x0: x, r0: range, moved: false };
+      return;
+    }
+    if (selAttr && !mode) {
+      const [kind, id] = selAttr.split(':') as [NonNullable<Sel>['t'], string];
+      setSel({ t: kind, id });
+      const cap = kind === 'cap' ? capsAbs.find((c) => c.id === id) : undefined;
+      const voi = kind === 'voice' ? voicesAbs.find((v) => v.id === id) : undefined;
+      if (cap || voi) {
+        const a0 = cap ? cap.a : voi!.a;
+        const b0 = cap ? cap.b : voi!.a + voi!.dur;
+        drag.current = { mode: 'bar', x0: x, moved: false, bar: { kind: kind as 'cap' | 'voice', id, part: cap && bedge ? bedge : 'move', a0, b0 } };
+      } else drag.current = { mode: 'select', x0: x, moved: false };
+      return;
+    }
+    drag.current = { mode: 'scrub', x0: x, moved: false };
+    if (!mode) setT(x);
   };
   const onMove = (e: React.PointerEvent) => {
     const g = drag.current;
     if (!g) return;
     const x = timeAt(e.clientX);
-    if (g.mode === 'a' && range) return setRange({ a: Math.min(x, range.b - 0.2), b: range.b });
-    if (g.mode === 'b' && range) return setRange({ a: range.a, b: Math.max(x, range.a + 0.2) });
-    if (Math.abs(x - g.a) >= 0.2) {
-      g.moved = true;
-      setRange({ a: Math.min(g.a, x), b: Math.max(g.a, x) });
-      setT(Math.min(g.a, x));
+    if (Math.abs(x - g.x0) >= 0.1) g.moved = true;
+    const r = g.r0;
+    if (g.mode === 'a' && r) return setRange({ a: r1(Math.max(0, Math.min(x, r.b - 0.2))), b: r.b });
+    if (g.mode === 'b' && r) return setRange({ a: r.a, b: r1(Math.min(B, Math.max(x, r.a + 0.2))) });
+    if (g.mode === 'move' && r) {
+      const len = r.b - r.a;
+      const a = r1(Math.max(0, Math.min(B - len, r.a + (x - g.x0))));
+      return setRange({ a, b: r1(a + len) });
     }
+    if (g.mode === 'bar' && g.bar && g.moved) {
+      const { kind, id, part, a0, b0 } = g.bar;
+      const dx = x - g.x0;
+      if (kind === 'voice') {
+        const a = r1(Math.max(0, Math.min(B - 0.2, a0 + dx)));
+        return updVoice(id, anchorAt(a, lay));
+      }
+      if (part === 'move') {
+        const len = b0 - a0;
+        const a = r1(Math.max(0, Math.min(B - len, a0 + dx)));
+        return updCap(id, { ...anchorAt(a, lay), len: r1(len) });
+      }
+      if (part === 'a') {
+        const a = r1(Math.max(0, Math.min(b0 - 0.3, a0 + dx)));
+        return updCap(id, { ...anchorAt(a, lay), len: r1(b0 - a) });
+      }
+      const b2 = r1(Math.min(B, Math.max(a0 + 0.3, b0 + dx)));
+      return updCap(id, { len: r1(b2 - a0) });
+    }
+    if (g.mode === 'scrub' && !mode) setT(x);
   };
   const onUp = () => {
     const g = drag.current;
     drag.current = null;
-    if (!g || g.moved || g.mode !== 'new') return;
-    if (g.sel) {
-      const [kind, id] = g.sel.split(':') as [NonNullable<Sel>['t'], string];
-      setSel({ t: kind, id });
+    if (!g || g.moved || g.mode !== 'scrub') return;
+    // 구간 고르기 모드에서 다른 곳을 누르면 그 자리로 파란 구간을 옮긴다
+    if (mode && range) {
+      const len = range.b - range.a;
+      const a = r1(Math.max(0, Math.min(B - len, g.x0 - len / 2)));
+      setRange({ a, b: r1(a + len) });
     }
   };
 
@@ -1790,11 +1848,25 @@ function S4() {
 
   return (
     <div className="screen">
-      <ScreenHead n={5} title="한 편의 영상으로 이어 붙여요" lead="장면들이 하나의 영상처럼 이어져요. 타임라인에서 원하는 구간을 골라 지우거나, 자막·목소리를 넣어요." />
+      <ScreenHead n={5} title="한 편의 영상으로 이어 붙여요" lead="장면들이 하나의 영상처럼 이어져요. 필요 없는 구간은 지우고, 자막·목소리를 넣어요." />
       <div className="editor">
         <div className="viewer">
           <div className="stage">
-            <ClipView key={curE.item.key} e={curE} t={t} playing={playing} />
+            <div className="clip-stack">
+              {lay.map((e, i) => {
+                const next = lay[i + 1];
+                const on = e === curE;
+                // 다음 장면이 시작되는 겹침 구간에서는 서서히 바뀐다(저장한 영상과 같게)
+                const prevOn = !!next && next === curE && t < e.end;
+                const op = on ? (i > 0 && t < lay[i - 1].end ? Math.min(1, Math.max(0, (t - e.at) / XF)) : 1) : prevOn ? 1 : 0;
+                const near = Math.abs(i - lay.indexOf(curE)) <= 1;
+                return (
+                  <div key={e.item.key} className="clip-layer" style={{ opacity: op, zIndex: on ? 2 : prevOn ? 1 : 0 }} aria-hidden={!on}>
+                    {near && <ClipView e={e} t={t} playing={playing && (on || prevOn)} active={on || prevOn} />}
+                  </div>
+                );
+              })}
+            </div>
             {capsAbs
               .filter((c) => t >= c.a && t < c.b && c.text.trim())
               .map((c) => (
@@ -1817,7 +1889,7 @@ function S4() {
             <span className="mono">
               {tcf(t)} / {tcf(B)}
             </span>
-            <span className="tiny muted">미리보기에서는 장면이 바로 바뀌고, 저장한 영상에서는 부드럽게 겹쳐 넘어가요.</span>
+            <span className="tiny muted">장면과 장면 사이는 부드럽게 겹쳐 넘어가요. 저장한 영상도 똑같아요.</span>
           </div>
         </div>
 
@@ -1846,6 +1918,11 @@ function S4() {
               </div>
               <label htmlFor="cap-text">글자</label>
               <input id="cap-text" maxLength={60} value={selCap.text} placeholder="화면에 보일 글자를 써요" onChange={(e) => updCap(selCap.id, { text: e.target.value })} autoFocus />
+              <label htmlFor="cap-len">
+                보이는 길이 <span className="mono">{r1(selCap.len)}초</span>
+              </label>
+              <input id="cap-len" type="range" min={0.5} max={Math.max(0.5, Math.min(15, r1(B - selCap.a)))} step={0.1} value={selCap.len} onChange={(e) => updCap(selCap.id, { len: r1(Number(e.target.value)) })} />
+              <p className="tiny muted">타임라인의 자막 막대 양 끝을 끌어도 길이가 바뀌고, 가운데를 끌면 옮겨져요.</p>
               <div className="pills">
                 <button className="btn tiny" onClick={() => selCap.b - t > 0.3 && updCap(selCap.id, { ...anchorAt(t, lay), len: r1(selCap.b - t) })}>
                   지금 위치를 시작으로
@@ -1921,11 +1998,12 @@ function S4() {
               <h3>이렇게 편집해요</h3>
               <ol className="tiny">
                 <li>▶ 재생으로 영상 전체를 이어서 봐요.</li>
-                <li>타임라인을 마우스로 <strong>끌어서</strong> 구간을 골라요. 시작·끝 손잡이를 끌어 다듬을 수 있어요.</li>
+                <li>타임라인을 누르거나 끌면 빨간 선이 움직여 그 장면을 볼 수 있어요.</li>
                 <li>
-                  고른 구간을 <strong>✂ 지우기</strong>, <strong>자막 넣기</strong>, <strong>목소리 넣기</strong> 중에서 골라요.
+                  <strong>✂ 구간 지우기</strong>를 누르면 파란 구간이 나타나요. 양 끝을 끌어 지우고 싶은 곳의 처음과 끝을 맞추고 <strong>이 구간 지우기</strong>를 눌러요.
                 </li>
-                <li>장면·자막·목소리 막대를 누르면 여기서 고칠 수 있어요.</li>
+                <li>자막·목소리도 같은 방법으로 넣어요.</li>
+                <li>장면·자막·목소리 막대를 누르면 여기서 고칠 수 있어요. 자막 막대는 끌어서 옮기고, 양 끝을 끌어 길이를 바꿔요.</li>
               </ol>
             </div>
           )}
@@ -1970,14 +2048,16 @@ function S4() {
             </div>
             <div className="tl-row">
               {capsAbs.map((c) => (
-                <span key={c.id} data-sel={`cap:${c.id}`} className={`tl-bar cap ${sel?.t === 'cap' && sel.id === c.id ? 'on' : ''}`} style={{ left: pct(c.a), width: pct(c.len) }} title={c.text}>
-                  {c.text || '(빈 자막)'}
+                <span key={c.id} data-sel={`cap:${c.id}`} className={`tl-bar cap ${sel?.t === 'cap' && sel.id === c.id ? 'on' : ''}`} style={{ left: pct(c.a), width: pct(c.len) }} title="가운데를 끌면 옮겨지고, 양 끝을 끌면 길이가 바뀌어요">
+                  <span className="bar-edge a" data-bedge="a" aria-label="자막 시작 끌기" />
+                  <span className="bar-text">{c.text || '(빈 자막)'}</span>
+                  <span className="bar-edge b" data-bedge="b" aria-label="자막 끝 끌기" />
                 </span>
               ))}
             </div>
             <div className="tl-row">
               {voicesAbs.map((v) => (
-                <span key={v.id} data-sel={`voice:${v.id}`} className={`tl-bar voice ${sel?.t === 'voice' && sel.id === v.id ? 'on' : ''}`} style={{ left: pct(v.a), width: pct(v.dur) }} title={v.kind === 'mine' ? '내 목소리' : v.text}>
+                <span key={v.id} data-sel={`voice:${v.id}`} className={`tl-bar voice ${sel?.t === 'voice' && sel.id === v.id ? 'on' : ''}`} style={{ left: pct(v.a), width: pct(v.dur) }} title="가운데를 끌면 목소리가 시작하는 곳이 옮겨져요">
                   {v.kind === 'mine' ? (v.path ? '🎙 내 목소리' : '🎙 녹음 전') : `🔊 ${v.text || v.voice}`}
                 </span>
               ))}
@@ -1988,7 +2068,7 @@ function S4() {
               </span>
             ))}
             {range && (
-              <span className="tl-range" style={{ left: pct(range.a), width: pct(range.b - range.a) }}>
+              <span className={`tl-range ${mode ?? ''}`} style={{ left: pct(range.a), width: pct(range.b - range.a) }} title="가운데를 끌면 구간이 통째로 움직여요">
                 <span className="tl-edge a" data-edge="a" aria-label="구간 시작 손잡이" />
                 <span className="tl-edge b" data-edge="b" aria-label="구간 끝 손잡이" />
               </span>
@@ -1997,37 +2077,61 @@ function S4() {
           </div>
         </div>
 
-        <div className="range-bar">
-          {range ? (
+        <div className={`range-bar ${mode ? 'on' : ''}`}>
+          {mode && range ? (
             <>
               <span className="strong">
-                고른 구간 <span className="mono">{tcf(range.a)} ~ {tcf(range.b)}</span> ({r1(range.b - range.a)}초)
+                {mode === 'cut' ? '✂ 지울 구간 고르기' : mode === 'cap' ? '자막 넣을 구간 고르기' : '목소리 넣을 구간 고르기'} ·{' '}
+                <span className="mono">
+                  {tcf(range.a)} ~ {tcf(range.b)}
+                </span>{' '}
+                ({r1(range.b - range.a)}초)
               </span>
+              <span className="tiny muted">파란 구간의 양 끝을 끌어서 {mode === 'cut' ? '지우고 싶은 곳의 처음과 끝' : '시작과 끝'}을 맞춰요. 가운데를 끌면 통째로 움직여요.</span>
               <span className="range-nudge">
-                시작
-                <button className="btn tiny" onClick={() => setRange({ ...range, a: r1(Math.max(0, range.a - 0.1)) })} aria-label="시작 0.1초 앞으로">−</button>
-                <button className="btn tiny" onClick={() => setRange({ ...range, a: r1(Math.min(range.b - 0.2, range.a + 0.1)) })} aria-label="시작 0.1초 뒤로">+</button>
-                <button className="btn tiny" onClick={() => t < range.b - 0.2 && setRange({ ...range, a: r1(t) })}>지금 위치</button>
+                처음
+                <button className="btn tiny" onClick={() => setRange({ ...range, a: r1(Math.max(0, range.a - 0.1)) })} aria-label="처음 0.1초 앞으로">
+                  −
+                </button>
+                <button className="btn tiny" onClick={() => setRange({ ...range, a: r1(Math.min(range.b - 0.2, range.a + 0.1)) })} aria-label="처음 0.1초 뒤로">
+                  +
+                </button>
               </span>
               <span className="range-nudge">
                 끝
-                <button className="btn tiny" onClick={() => setRange({ ...range, b: r1(Math.max(range.a + 0.2, range.b - 0.1)) })} aria-label="끝 0.1초 앞으로">−</button>
-                <button className="btn tiny" onClick={() => setRange({ ...range, b: r1(Math.min(B, range.b + 0.1)) })} aria-label="끝 0.1초 뒤로">+</button>
-                <button className="btn tiny" onClick={() => t > range.a + 0.2 && setRange({ ...range, b: r1(t) })}>지금 위치</button>
+                <button className="btn tiny" onClick={() => setRange({ ...range, b: r1(Math.max(range.a + 0.2, range.b - 0.1)) })} aria-label="끝 0.1초 앞으로">
+                  −
+                </button>
+                <button className="btn tiny" onClick={() => setRange({ ...range, b: r1(Math.min(B, range.b + 0.1)) })} aria-label="끝 0.1초 뒤로">
+                  +
+                </button>
               </span>
               <span className="range-acts">
-                <button className="btn danger" onClick={() => addFromRange('cut')}>✂ 이 구간 지우기</button>
-                <button className="btn" onClick={() => addFromRange('cap')}>자막 넣기</button>
-                <button className="btn" onClick={() => addFromRange('voice')}>목소리 넣기</button>
-                <button className="link" onClick={() => setRange(null)}>선택 취소</button>
+                <button className="btn tiny" onClick={() => (setT(range.a), setPlaying(true))}>
+                  ▶ 이 구간 보기
+                </button>
+                <button className={`btn ${mode === 'cut' ? 'danger' : 'primary'}`} onClick={() => addFromRange(mode)}>
+                  {mode === 'cut' ? '✂ 이 구간 지우기' : mode === 'cap' ? '여기에 자막 넣기' : '여기에 목소리 넣기'}
+                </button>
+                <button className="btn tiny" onClick={cancelMode}>
+                  취소
+                </button>
               </span>
             </>
           ) : (
             <>
-              <span className="tiny muted">타임라인을 마우스로 끌어서 지우거나 꾸밀 구간을 골라요.</span>
-              <button className="btn tiny" onClick={() => setRange({ a: r1(t), b: r1(Math.min(B, t + 2)) })} disabled={t > B - 0.3}>
-                지금 위치부터 구간 고르기
-              </button>
+              <span className="range-acts">
+                <button className="btn danger" onClick={() => startMode('cut')} disabled={B < 0.5}>
+                  ✂ 구간 지우기
+                </button>
+                <button className="btn" onClick={() => startMode('cap')} disabled={B < 0.5}>
+                  자막 넣기
+                </button>
+                <button className="btn" onClick={() => startMode('voice')} disabled={B < 0.5}>
+                  목소리 넣기
+                </button>
+              </span>
+              <span className="tiny muted">타임라인을 누르거나 끌면 빨간 선이 움직여 그 장면을 볼 수 있어요.</span>
             </>
           )}
         </div>
@@ -2091,9 +2195,10 @@ function S4() {
 }
 
 // 미리보기 화면: 지금 시각의 조각(장면·올린 영상·제목 화면)을 보여 준다
-function ClipView({ e, t, playing }: { e: LayE; t: number; playing: boolean }) {
+function ClipView({ e, t, playing, active }: { e: LayE; t: number; playing: boolean; active: boolean }) {
   const it = e.item;
-  const local = Math.max(0, t - e.at);
+  // 보이지 않는 조각(바로 다음 장면)은 첫 화면에 미리 맞춰 두어 바뀔 때 검은 화면이 없게 한다
+  const local = active ? Math.max(0, Math.min(it.dur, t - e.at)) : t < e.at ? 0 : it.dur;
   const vref = React.useRef<HTMLVideoElement | null>(null);
   const g = it.gen;
   const genUrl = useStorageUrl(g && !g.url && !g.mock ? g.storagePath : undefined);
@@ -2108,7 +2213,7 @@ function ClipView({ e, t, playing }: { e: LayE; t: number; playing: boolean }) {
   useEffect(() => {
     const v = vref.current;
     if (!v) return;
-    if (!playing || Math.abs(v.currentTime - local) > 0.35) {
+    if (!playing || Math.abs(v.currentTime - local) > 0.4) {
       try {
         v.currentTime = local;
       } catch {
@@ -2132,6 +2237,7 @@ function ClipView({ e, t, playing }: { e: LayE; t: number; playing: boolean }) {
   if (it.kind === 'scene' && !isVideoGen) return <GenMedia g={g} label={it.scene!.line} badge="AI 생성" size="lg" />;
   return (
     <div className="frame frame-lg video-frame">
+      {g?.storagePath && it.kind === 'scene' && <KeyPoster g={g} />}
       {url ? (
         <video
           ref={vref}
@@ -2139,7 +2245,7 @@ function ClipView({ e, t, playing }: { e: LayE; t: number; playing: boolean }) {
           muted={!(it.kind === 'upload' && it.voice === '원래 소리')}
           playsInline
           preload="auto"
-          onLoadedMetadata={(ev) => {
+          onLoadedData={(ev) => {
             try {
               (ev.target as HTMLVideoElement).currentTime = local;
             } catch {
@@ -2153,6 +2259,13 @@ function ClipView({ e, t, playing }: { e: LayE; t: number; playing: boolean }) {
       <span className={`frame-badge ${it.kind === 'upload' ? 'human-badge' : ''}`}>{it.kind === 'upload' ? '내가 올린 영상' : 'AI 생성'}</span>
     </div>
   );
+}
+
+// 영상을 불러오는 동안 검은 화면 대신 장면 첫 그림을 깔아 둔다(있을 때만)
+function KeyPoster({ g }: { g: Gen }) {
+  const path = g.storagePath ? g.storagePath.replace(/\.mp4$/, '_key.png') : undefined;
+  const url = useStorageUrl(path && path !== g.storagePath ? path : undefined);
+  return url ? <img className="key-poster" src={url} alt="" aria-hidden="true" /> : null;
 }
 
 // 조각(장면·올린 영상·제목·끝 화면) 고치기
