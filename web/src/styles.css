@@ -850,3 +850,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .mirror-scene-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
 .reset-btns, .reset-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .reset-ask { background: var(--warn-tint); border-radius: 8px; padding: 4px 8px; }
+
+/* 잘못 추가한 장면 지우기 */
+.work-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.scene-del-btn, .scene-del, .scene-del-note { margin-left: auto; }
+.scene-del { display: inline-flex; align-items: center; gap: 6px; background: var(--critical-tint); border-radius: 8px; padding: 4px 8px; }

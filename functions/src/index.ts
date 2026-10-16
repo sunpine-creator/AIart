@@ -423,6 +423,13 @@ export const teacherResetScene = onCall(async (req) => {
   const targets = mode === 'redo' ? docs.filter((g) => g.status !== 'retired') : docs.filter((g) => g.kind === 'final' && g.status !== 'retired');
   const batch = db.batch();
   targets.forEach((g) => batch.update(g.ref, { status: 'retired', retiredBy: uid, retiredAt: FieldValue.serverTimestamp(), retiredMode: mode }));
+  // 확정 풀기: 확정했던 영상(원본)은 그대로 남기고 "전에 정했던 영상"으로 표시해서 다시 고를 수 있게 한다
+  if (mode === 'unfinal') {
+    for (const g of targets) {
+      const parent = g.parentId ? docs.find((x) => x.ref.id === g.parentId) : undefined;
+      if (parent && parent.status === 'succeeded') batch.update(parent.ref, { wasFinal: true });
+    }
+  }
   const projRef = db.doc(`projects/${classId}_${no}`);
   const p = (await projRef.get()).data();
   if (p?.scenes) {

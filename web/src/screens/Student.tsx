@@ -1173,7 +1173,7 @@ function S3() {
   useEffect(() => {
     if (!s.scenes.find((x) => x.id === sel)) setSel(s.scenes[0]?.id);
   }, [s.scenes, sel]);
-  const scene = s.scenes.find((x) => x.id === sel);
+  const scene = s.scenes.find((x) => x.id === sel) ?? s.scenes[0];
   const word = mediaWord(s);
   return (
     <div className="screen">
@@ -1219,6 +1219,35 @@ function S3() {
   );
 }
 
+// 잘못 추가한 장면 지우기: 아직 AI로 만든 적이 없는 장면만 지울 수 있다(만든 장면은 편집 단계에서 뺄 수 있어요)
+function SceneDelete({ scene }: { scene: Scene }) {
+  const { s, d } = useStore();
+  const [ask, setAsk] = useState(false);
+  useEffect(() => setAsk(false), [scene.id]);
+  const used = s.gens.some((g) => g.sceneId === scene.id);
+  if (s.scenes.length <= 1) return null;
+  if (used) return <span className="tiny muted scene-del-note">AI로 만든 장면은 지울 수 없어요. 편집 단계에서 뺄 수 있어요.</span>;
+  const del = () => {
+    d({ t: 'set', patch: { scenes: s.scenes.filter((x) => x.id !== scene.id), order: s.order.filter((k) => k !== scene.id) } });
+    d({ t: 'toast', msg: '장면을 지웠어요.' });
+  };
+  return ask ? (
+    <span className="scene-del">
+      <span className="tiny">이 장면을 지울까요?</span>
+      <button className="btn tiny danger" onClick={del}>
+        네, 지워요
+      </button>
+      <button className="btn tiny" onClick={() => setAsk(false)}>
+        아니요
+      </button>
+    </span>
+  ) : (
+    <button className="btn tiny scene-del-btn" onClick={() => setAsk(true)}>
+      🗑 이 장면 지우기
+    </button>
+  );
+}
+
 function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const { s, d } = useStore();
   const word = mediaWord(s);
@@ -1245,6 +1274,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
       <div className="work-head">
         <span className="mono muted">장면 #{index + 1}</span>
         <h3>{scene.line}</h3>
+        <SceneDelete scene={scene} />
       </div>
       {mid && (
         <p className="tiny muted plan-line">
@@ -1348,9 +1378,15 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
         </div>
       )}
 
+      {!final && gens.some((g) => g.wasFinal) && (
+        <div className="notice warn" role="status">
+          <strong>선생님이 이 장면의 확정을 풀었어요.</strong>
+          <span>아래에서 만든 영상 중 하나를 골라 “이 영상으로 장면 정하기”를 눌러요.</span>
+        </div>
+      )}
       <ol className="history" aria-label="이 장면의 생성 기록">
         {[...gens].reverse().map((g) => (
-          <GenCard key={g.id} g={g} scene={scene} isLatestGood={g.id === lastGood?.id && !final} finalCost={finalCost} />
+          <GenCard key={g.id} g={g} scene={scene} isLatestGood={g.id === lastGood?.id && !final} canPick={!final} finalCost={finalCost} />
         ))}
       </ol>
     </section>
@@ -1365,7 +1401,7 @@ const THINK_QS = [
   '이 장면이 핵심 메시지를 전하는 데 꼭 필요한가요?',
 ];
 
-function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; isLatestGood: boolean; finalCost: number }) {
+function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene: Scene; isLatestGood: boolean; canPick: boolean; finalCost: number }) {
   const { s, d } = useStore();
   const [edit, setEdit] = useState('');
   const [fit, setFit] = useState<Fit | undefined>(g.judgement?.fit);
@@ -1444,6 +1480,7 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
     <li className={`gen done ${g.kind === 'final' ? 'final' : ''}`}>
       <div className="gen-top">
         <span className={`chip ${g.kind === 'final' ? 'good' : 'ai'}`}>{label}</span>
+        {g.wasFinal && canPick && <span className="chip warn">전에 정했던 영상</span>}
         <span className="mono muted">
           {g.img ? '이미지' : `${g.res} · ${g.sec}초`} · {time}
         </span>
@@ -1460,7 +1497,7 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
             <p className="good-text">이 장면으로 정했어요. 편집 단계에서 사용할 수 있어요.</p>
           ) : (
             <>
-              <fieldset className="judge" disabled={judged && !isLatestGood}>
+              <fieldset className="judge" disabled={judged && !isLatestGood && !canPick}>
                 <legend>내 의도와 맞나요?</legend>
                 <div className="pills">
                   <button
@@ -1496,6 +1533,14 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
                   </>
                 )}
               </fieldset>
+              {!isLatestGood && canPick && judged && (
+                <div className="actions">
+                  <button className="btn primary" disabled={s.cls.paused || s.sending.includes(scene.id)} onClick={() => d({ t: 'request', sceneId: scene.id, kind: 'final', parentId: g.id })}>
+                    이 영상으로 장면 정하기
+                  </button>
+                  <span className="cost mono">추가 크레딧 없음</span>
+                </div>
+              )}
               {isLatestGood && judged && (
                 <div className="next-choice">
                   {g.judgement!.fit !== 'yes' && scene.edits < MAX_EDITS && (
@@ -1522,7 +1567,7 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
                   {g.judgement!.fit !== 'yes' && scene.edits >= MAX_EDITS && (
                     <p className="tiny muted">고치기 기회를 다 썼어요. 이 결과로 정하고, 편집 단계에서 자막·목소리·내 영상으로 보완해 봐요.</p>
                   )}
-                  {(g.judgement!.fit !== 'no' || scene.edits >= MAX_EDITS) && (
+                  {(g.judgement!.fit !== 'no' || scene.edits >= MAX_EDITS || gensOfScene(s.gens, scene.id).length > 1) && (
                     <div className="actions">
                       <button className="btn primary" disabled={s.cls.paused || s.sending.includes(scene.id)} onClick={() => d({ t: 'request', sceneId: scene.id, kind: 'final', parentId: g.id })}>
                         이 결과로 장면 정하기
@@ -1539,6 +1584,8 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
     </li>
   );
 }
+
+const gensOfScene = (gens: Gen[], sceneId: string) => gens.filter((x) => x.sceneId === sceneId && x.status === 'succeeded' && x.kind !== 'final');
 
 function Progress({ text, running }: { text: string; running?: boolean }) {
   return (
