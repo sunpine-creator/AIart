@@ -15,7 +15,7 @@ import { SafetyBlockedError, drawImage, provider } from './ai/video';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
-import { Clip, Layers, renderAll } from './render';
+import { Clip, Layers, TlCapIn, TlVoiceIn, XF, applyTimeline, concatCopy, joinXfade, lastFrame, mergeCuts, probeDur, renderSegment } from './render';
 import { isAiVoice, speak, voiceId } from './ai/tts';
 
 initializeApp();
@@ -388,6 +388,34 @@ export const logEvent = onCall(async (req) => {
   return { ok: true };
 });
 
+// 이야기 순서에서 바로 앞 장면(뺀 장면 제외)의 영상 마지막 화면
+async function prevSceneFrame(classId: string, no: number, sceneId: string): Promise<{ png: Buffer; genId: string } | undefined> {
+  const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
+  const scenes: any[] = (p.scenes ?? []).filter((x: any) => !x.skip || x.id === sceneId);
+  const ids = scenes.map((x) => x.id);
+  const kept = ((p.order ?? []) as string[]).filter((k) => ids.includes(k));
+  const ordered = [...kept, ...ids.filter((k) => !kept.includes(k))];
+  const idx = ordered.indexOf(sceneId);
+  if (idx <= 0) return undefined;
+  const prevId = ordered[idx - 1];
+  const prev = scenes.find((x) => x.id === prevId);
+  const gens = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', prevId).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  const done = gens.filter((x) => x.status === 'succeeded' && x.storagePath && !x.img).sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0));
+  const g = done.find((x) => x.id === prev?.selectedGenId) ?? done.pop();
+  if (!g) return undefined;
+  const dir = mkdtempSync(pjoin(tmpdir(), 'prev-'));
+  try {
+    const v = pjoin(dir, 'v.mp4');
+    const f = pjoin(dir, 'last.png');
+    await getStorage().bucket().file(g.storagePath).download({ destination: v });
+    if (!(await lastFrame(v, f))) return undefined;
+    const { readFileSync } = await import('node:fs');
+    return { png: readFileSync(f), genId: g.id };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // ───────── 대기열 작업자: 실제 생성 ─────────
 export const runGeneration = onTaskDispatched(
   {
@@ -414,9 +442,12 @@ export const runGeneration = onTaskDispatched(
       // 주인공 카드가 있으면 내려받아 함께 보낸다
       let refImage: Buffer | undefined;
       if (g.refPath && !g.editEn) refImage = await getStorage().bucket().file(g.refPath).download().then(([b]) => b).catch(() => undefined);
+      // 앞 장면의 마지막 화면에서 이어 시작하게 한다(초안만)
+      const prevFrame = g.kind === 'draft' && !g.editEn && CONFIG.videoProvider() === 'omni' ? await prevSceneFrame(g.classId, g.no, g.sceneId).catch(() => undefined) : undefined;
+      if (prevFrame) await ref.update({ contFrom: prevFrame.genId }).catch(() => {});
       const result = await provider().generate({
         promptEn: g.promptEn, editEn: g.editEn ?? undefined, previousInteractionId: g.previousInteractionId ?? undefined,
-        res: g.res, sec: g.sec, img: g.img, refImage,
+        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png,
       });
       if (result.keyframe) {
         const kp = `classes/${g.classId}/${g.no}/gens/${genId}_key.png`;
@@ -435,7 +466,20 @@ export const runGeneration = onTaskDispatched(
         url = mediaUrl(storagePath, token);
       }
       if (!result.mock && !url) throw new Error('AI가 영상 파일을 돌려주지 않았어요');
-      await ref.update({ ...(result.sec ? { sec: result.sec } : {}), status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
+      // 실제 영상 길이를 재서 저장한다(요청한 길이와 다를 수 있어서)
+      let realSec = result.sec ?? 0;
+      if (result.bytes && !result.mimeType.includes('image')) {
+        const tdir = mkdtempSync(pjoin(tmpdir(), 'probe-'));
+        try {
+          const f = pjoin(tdir, 'v.mp4');
+          writeFileSync(f, result.bytes);
+          const d = await probeDur(f);
+          if (d > 0) realSec = Math.round(d * 10) / 10;
+        } finally {
+          rmSync(tdir, { recursive: true, force: true });
+        }
+      }
+      await ref.update({ ...(realSec ? { sec: realSec } : {}), status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
       await studentRef.update({ status: 'idle' });
       const cost = result.mock ? 0 : g.costUsd ?? 0;
       await db.doc(`usage/${g.classId}_${today()}`).set(
@@ -589,24 +633,10 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   const kept = (p.order ?? []).filter((k: string) => all.includes(k));
   const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
   const gens = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-  // 길이는 편집에서 고치지 않는다: 장면 = 만든 AI 영상 길이 − 앞부분 자른 만큼, 올린 영상 = 원본 길이 − 앞부분(최대 반 제한까지)
   const genOf = (sc: any) => gens.find((x) => x.id === sc.selectedGenId) ?? gens.filter((x) => x.sceneId === sc.id && x.status === 'succeeded').pop();
-  const sceneDur = (sc: any) => {
-    const g = genOf(sc);
-    if (!g || g.img) return Math.max(1, Math.min(Number(sc.dur) || 3, 10));
-    return Math.max(1, (g.sec ?? 3) - Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1)));
-  };
-  const uploadDur = (u: any) => Math.max(1, Math.min(Math.floor((Number(u.srcDur) || Number(u.dur) || 5) - (Number(u.start) || 0)), limit));
-  const total =
-    (p.intro?.dur ?? 3) +
-    (p.outro?.dur ?? 3) +
-    keys.reduce((a, k) => {
-      const sc = scenes.find((s) => s.id === k);
-      if (sc) return a + sceneDur(sc);
-      const u = uploads.find((x) => x.id === k);
-      return a + (u ? uploadDur(u) : 0);
-    }, 0);
-  if (total > limit) throw new HttpsError('failed-precondition', `영상이 ${limit}초를 넘었어요. 장면을 빼거나 앞부분을 잘라 주세요.`);
+  const uploadDur = (u: any) => Math.max(1, Math.min(Math.floor(Number(u.srcDur) || Number(u.dur) || 5), limit));
+  const tl = (p.tl ?? {}) as { cuts?: any[]; caps?: any[]; voices?: any[] };
+  const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
   await projRef.update({ rendering: Date.now() });
   const dir = mkdtempSync(pjoin(tmpdir(), 'render-'));
@@ -627,13 +657,8 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
 
   try {
-    const voiceFor = async (item: any, i: number) => {
-      if (item.voice === '내 목소리' && item.voicePath) return fetchFile(item.voicePath, `voice_${i}`);
-      if (isAiVoice(item.voice) && item.caption && useAi) return speak(item.caption, item.voice, pjoin(dir, `tts_${i}.wav`)).catch(() => undefined);
-      return undefined;
-    };
-    // 브라우저가 그려 보낸 글자 그림(PNG)을 파일로 저장한다. 키: intro / outro / 장면 id / 올린 영상 id
-    const ovIn = (req.data?.overlays ?? {}) as Record<string, { fixed?: string; cap?: string[]; anim?: string }>;
+    // 브라우저가 그려 보낸 글자 그림(PNG)을 파일로 저장한다
+    const ov = (req.data?.overlays ?? {}) as { intro?: string; outro?: string; clips?: Record<string, string>; caps?: Record<string, string[]> };
     let pngN = 0;
     const savePng = (dataUrl?: string) => {
       const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? ''));
@@ -644,46 +669,109 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       writeFileSync(f, buf);
       return f;
     };
-    const layersOf = (key: string): Layers | undefined => {
-      const o = ovIn[key];
-      if (!o) return undefined;
-      const anim = (['none', 'fade', 'slide', 'type'].includes(String(o.anim)) ? o.anim : 'none') as Layers['anim'];
-      return { fixed: savePng(o.fixed), cap: (Array.isArray(o.cap) ? o.cap.slice(0, 20) : []).map(savePng).filter((x): x is string => !!x), anim };
+    const fixedOf = (png?: string): Layers | undefined => {
+      const f = savePng(png);
+      return f ? { fixed: f } : undefined;
     };
-    const clips: Clip[] = [{ kind: 'title', dur: p.intro?.dur ?? 3, layers: layersOf('intro') }];
+
+    // ① 바탕 조각: 제목 · 장면(만든 영상 길이 그대로) · 올린 영상 · 끝 화면
+    const clips: Clip[] = [{ kind: 'title', dur: Math.max(1, Math.min(num(p.intro?.dur) || 3, 5)), layers: fixedOf(ov.intro) }];
+    const ckeys: string[] = ['intro'];
     let i = 0;
     for (const k of keys) {
       i++;
       const sc = scenes.find((s) => s.id === k);
       if (sc) {
-        const g = gens.find((x) => x.id === sc.selectedGenId) ?? gens.filter((x) => x.sceneId === sc.id && x.status === 'succeeded').pop();
-        const voice = await voiceFor(sc, i);
+        const g = genOf(sc);
         const src = g?.storagePath ? await fetchFile(g.storagePath, `gen_${i}`) : undefined;
         if (g && src) {
-          const start = g.img ? 0 : Math.max(0, Math.min(Number(sc.start) || 0, (g.sec ?? 3) - 1));
-          clips.push({ kind: g.img ? 'image' : 'video', dur: sceneDur(sc), start, srcLen: g.sec ?? 3, src, voice, layers: layersOf(sc.id), grade: true });
+          const real = g.img ? 0 : await probeDur(src);
+          const srcLen = real > 0 ? real : g.sec ?? 3;
+          const dur = g.img ? Math.max(1, Math.min(num(sc.dur) || 3, 10)) : Math.max(1, Math.round(srcLen * 10) / 10);
+          clips.push({ kind: g.img ? 'image' : 'video', dur, start: 0, srcLen, src, layers: fixedOf(ov.clips?.[sc.id]), grade: true });
         } else {
-          clips.push({ kind: 'placeholder', dur: sc.dur, voice, layers: layersOf(sc.id) });
+          clips.push({ kind: 'placeholder', dur: Math.max(1, Math.min(num(sc.dur) || 3, 10)), layers: fixedOf(ov.clips?.[sc.id]) });
         }
+        ckeys.push(sc.id);
         continue;
       }
       const u = uploads.find((x) => x.id === k);
       const usrc = u?.path ? await fetchFile(u.path, `up_${i}`) : undefined;
       if (u && usrc) {
-        const src = usrc;
-        const voice = await voiceFor(u, i);
-        clips.push({ kind: 'video', dur: uploadDur(u), start: Math.max(0, Number(u.start) || 0), src, keepAudio: u.voice === '원래 소리', voice, layers: layersOf(u.id) });
+        clips.push({ kind: 'video', dur: uploadDur(u), start: 0, src: usrc, keepAudio: u.voice === '원래 소리', layers: fixedOf(ov.clips?.[u.id]) });
+        ckeys.push(u.id);
       }
     }
-    clips.push({ kind: 'outro', dur: p.outro?.dur ?? 3, layers: layersOf('outro') });
+    clips.push({ kind: 'outro', dur: Math.max(1, Math.min(num(p.outro?.dur) || 3, 5)), layers: fixedOf(ov.outro) });
+    ckeys.push('outro');
+    // 조각마다 바탕 영상에서 시작하는 시각. 자막·목소리·지운 구간은 "조각 + 그 안의 초"로 저장돼 있다
+    const atOf: Record<string, { at: number; dur: number }> = {};
+    {
+      let acc = 0;
+      clips.forEach((c, k) => {
+        const at = k === 0 ? 0 : acc - XF;
+        acc = at + c.dur;
+        atOf[ckeys[k]] = { at, dur: c.dur };
+      });
+    }
+    const absAt = (x: any): number | undefined => {
+      const m = atOf[String(x?.k ?? '')];
+      return m ? m.at + Math.max(0, Math.min(num(x.o), m.dur)) : undefined;
+    };
 
-    const out = await renderAll(clips, dir);
+    const base = clips.reduce((a, c) => a + c.dur, 0) - XF * (clips.length - 1);
+    const cuts = mergeCuts(
+      (tl.cuts ?? []).slice(0, 40).flatMap((c) => {
+        const a = absAt(c);
+        return a === undefined ? [] : [{ a, b: a + Math.max(0, num(c.len)) }];
+      }),
+      base,
+    );
+    const finalDur = base - cuts.reduce((a, c) => a + (c.b - c.a), 0);
+    if (finalDur > limit + 0.5) throw new HttpsError('failed-precondition', `영상이 ${limit}초를 넘었어요(지금 ${Math.round(finalDur)}초). 필요 없는 구간을 지우거나 장면을 빼 주세요.`);
+
+    // 조각을 만들고 디졸브로 잇는다. 이을 수 없으면(오래된 ffmpeg) 그냥 붙인다.
+    const segs: string[] = [];
+    for (let k = 0; k < clips.length; k++) segs.push(await renderSegment(clips[k], k, dir));
+    let baseFile: string;
+    try {
+      baseFile = await joinXfade(segs, clips.map((c) => c.dur), dir);
+    } catch (e: any) {
+      logger.warn('render: 디졸브 잇기 실패, 그냥 붙입니다', { err: String(e?.message ?? e).slice(0, 300) });
+      const list = pjoin(dir, 'list.txt');
+      writeFileSync(list, segs.map((x) => `file '${x}'`).join('\n'));
+      baseFile = pjoin(dir, 'joined.mp4');
+      await concatCopy(list, baseFile);
+    }
+
+    // 구간 자막
+    const caps: TlCapIn[] = [];
+    for (const c of (tl.caps ?? []).slice(0, 40)) {
+      const pngs = (ov.caps?.[String(c.id)] ?? []).slice(0, 16).map(savePng).filter((x): x is string => !!x);
+      const anim = (['none', 'fade', 'slide', 'type'].includes(String(c.style?.anim)) ? c.style.anim : 'none') as TlCapIn['anim'];
+      const a = absAt(c);
+      if (pngs.length && a !== undefined) caps.push({ a, b: a + Math.max(0, num(c.len)), pngs, anim });
+    }
+    // 구간 목소리: 내 녹음 또는 AI 목소리(정해진 목소리만)
+    const voices: TlVoiceIn[] = [];
+    let vn = 0;
+    for (const v of (tl.voices ?? []).slice(0, 30)) {
+      vn++;
+      const at = absAt(v);
+      if (at === undefined) continue;
+      let file: string | undefined;
+      if (v.kind === 'mine' && v.path) file = await fetchFile(String(v.path), `voice_${vn}`);
+      else if (v.kind === 'ai' && isAiVoice(v.voice) && String(v.text ?? '').trim() && useAi) file = await speak(String(v.text).slice(0, 120), v.voice, pjoin(dir, `tts_${vn}.wav`)).catch(() => undefined);
+      if (file) voices.push({ a: at, file });
+    }
+
+    const out = await applyTimeline(baseFile, base, cuts, caps, voices, dir);
     const exportId = `${Date.now()}`;
     const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
     const token = randomUUID();
-    await bucket.upload(out, { destination: path, contentType: 'video/mp4', metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
-    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: total }, rendering: FieldValue.delete() });
-    await log({ classId, no, kind: '완성 영상', textKo: `${total}초 · 클립 ${clips.length}개`, verdict: 'pass', action: '영상 저장' });
+    await bucket.upload(out.file, { destination: path, contentType: 'video/mp4', metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
+    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: out.dur }, rendering: FieldValue.delete() });
+    await log({ classId, no, kind: '완성 영상', textKo: `${out.dur}초 · 클립 ${clips.length}개 · 지운 구간 ${cuts.length}개 · 자막 ${caps.length}개 · 목소리 ${voices.length}개`, verdict: 'pass', action: '영상 저장' });
     return { path, missing: missingFiles.length };
   } catch (e: any) {
     logger.error('render failed', { pid, err: String(e?.message ?? e) });

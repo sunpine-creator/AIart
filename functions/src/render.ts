@@ -80,6 +80,27 @@ export function wrap(text: string, max = 22): string {
   return lines.slice(0, 3).join('\n');
 }
 
+// 영상의 마지막 화면을 PNG 로 꺼낸다 (다음 장면을 이 화면에서 이어 시작하게)
+export async function lastFrame(file: string, out: string): Promise<boolean> {
+  try {
+    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-sseof', '-0.25', '-i', file, '-frames:v', '1', '-update', '1', out]);
+    return existsSync(out);
+  } catch {
+    return false;
+  }
+}
+
+// 영상 파일의 실제 길이(초). 알 수 없으면 0
+export async function probeDur(file: string): Promise<number> {
+  try {
+    const out = await run(bin('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]);
+    const n = parseFloat(out.trim());
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function renderSegment(c: Clip, i: number, dir: string): Promise<string> {
   const out = join(dir, `seg_${String(i).padStart(2, '0')}.mp4`);
   const args: string[] = ['-y', '-hide_banner', '-loglevel', 'error'];
@@ -180,4 +201,153 @@ export async function renderAll(clips: Clip[], dir: string, bgm?: string): Promi
     await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', joined, '-c', 'copy', ...meta, '-movflags', '+faststart', final]);
   }
   return final;
+}
+
+// ───────── 하나의 타임라인으로 합치기 ─────────
+// ① 조각들을 장면 사이 XF 초씩 겹쳐(디졸브) 한 편의 바탕 영상으로 잇는다
+// ② 학생이 지운 구간을 빼고 ③ 구간마다 넣은 자막·목소리를 얹는다. 모든 시각은 ①의 바탕 영상 기준(초).
+export const XF = 0.5;
+const ENC = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-r', String(FPS), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2'];
+
+export async function concatCopy(list: string, out: string) {
+  await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', out]);
+}
+
+export async function joinXfade(segs: string[], durs: number[], dir: string): Promise<string> {
+  if (segs.length === 1) return segs[0];
+  const out = join(dir, 'base.mp4');
+  const args = ['-y', '-hide_banner', '-loglevel', 'error'];
+  segs.forEach((s) => args.push('-i', s));
+  const f: string[] = [];
+  let v = '0:v';
+  let a = '0:a';
+  let acc = durs[0];
+  for (let k = 1; k < segs.length; k++) {
+    const off = Math.max(0, acc - XF);
+    f.push(`[${v}][${k}:v]xfade=transition=fade:duration=${XF}:offset=${off.toFixed(3)}[xv${k}]`);
+    f.push(`[${a}][${k}:a]acrossfade=d=${XF}:c1=tri:c2=tri[xa${k}]`);
+    v = `xv${k}`;
+    a = `xa${k}`;
+    acc = acc + durs[k] - XF;
+  }
+  args.push('-filter_complex', f.join(';'), '-map', `[${v}]`, '-map', `[${a}]`, ...ENC, out);
+  await run(bin('ffmpeg'), args);
+  return out;
+}
+
+export type Range = { a: number; b: number };
+export type TlCapIn = { a: number; b: number; pngs: string[]; anim: 'none' | 'fade' | 'slide' | 'type' };
+export type TlVoiceIn = { a: number; file: string };
+
+// 지운 구간을 정리한다(겹치면 합치고, 바탕 영상 길이 안으로)
+export function mergeCuts(cuts: Range[], total: number): Range[] {
+  const xs = cuts
+    .map((c) => ({ a: Math.max(0, Math.min(c.a, c.b)), b: Math.min(total, Math.max(c.a, c.b)) }))
+    .filter((c) => c.b - c.a >= 0.05)
+    .sort((p, q) => p.a - q.a);
+  const out: Range[] = [];
+  for (const c of xs) {
+    const last = out[out.length - 1];
+    if (last && c.a <= last.b) last.b = Math.max(last.b, c.b);
+    else out.push({ ...c });
+  }
+  return out;
+}
+
+// 바탕 영상 시각 → 지운 구간을 뺀 완성 영상 시각
+export function mapTime(t: number, cuts: Range[]): number {
+  let o = t;
+  for (const c of cuts) {
+    if (t >= c.b) o -= c.b - c.a;
+    else if (t > c.a) o -= t - c.a;
+  }
+  return o;
+}
+
+export async function applyTimeline(
+  base: string,
+  total: number,
+  cutsIn: Range[],
+  caps: TlCapIn[],
+  voices: TlVoiceIn[],
+  dir: string,
+): Promise<{ file: string; dur: number }> {
+  const cuts = mergeCuts(cutsIn, total);
+  const keep: Range[] = [];
+  let pos = 0;
+  for (const c of cuts) {
+    if (c.a - pos >= 0.05) keep.push({ a: pos, b: c.a });
+    pos = c.b;
+  }
+  if (total - pos >= 0.05) keep.push({ a: pos, b: total });
+  const dur = keep.reduce((s, r) => s + (r.b - r.a), 0);
+  if (dur < 0.5) throw new Error('지우고 남은 영상이 없어요');
+
+  // ② 지운 구간 빼기
+  let cutFile = base;
+  if (cuts.length) {
+    cutFile = join(dir, 'cut.mp4');
+    const f: string[] = [];
+    keep.forEach((r, i) => {
+      f.push(`[0:v]trim=start=${r.a.toFixed(3)}:end=${r.b.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
+      f.push(`[0:a]atrim=start=${r.a.toFixed(3)}:end=${r.b.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
+    });
+    f.push(`${keep.map((_, i) => `[v${i}][a${i}]`).join('')}concat=n=${keep.length}:v=1:a=1[v][a]`);
+    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', base, '-filter_complex', f.join(';'), '-map', '[v]', '-map', '[a]', ...ENC, cutFile]);
+  }
+
+  // ③ 자막·목소리 얹기
+  const final = join(dir, 'final.mp4');
+  const meta = ['-metadata', 'comment=AI 생성 콘텐츠 포함 (AI 스튜디오)', '-metadata', 'title=AI로 달라진 나의 일상'];
+  const D = dur.toFixed(3);
+  const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', cutFile];
+  const f: string[] = [];
+  let idx = 1;
+  let cur = '0:v';
+  let n = 0;
+  const lay = (png: string, enable: string, opt: { fadeAt?: number; slideAt?: number }) => {
+    args.push('-loop', '1', '-t', D, '-i', png);
+    const o = `o${idx}`;
+    f.push(`[${idx}:v]format=rgba${opt.fadeAt !== undefined ? `,fade=in:st=${opt.fadeAt.toFixed(3)}:d=0.6:alpha=1` : ''}[${o}]`);
+    const y = opt.slideAt !== undefined ? `'if(lt(t,${(opt.slideAt + 0.6).toFixed(3)}),(${(opt.slideAt + 0.6).toFixed(3)}-t)*160,0)'` : '0';
+    const next = `c${idx}`;
+    f.push(`[${cur}][${o}]overlay=x=0:y=${y}:eof_action=pass:enable='${enable}'[${next}]`);
+    cur = next;
+    idx++;
+    n++;
+  };
+  for (const c of caps) {
+    if (n > 150) break;
+    const a = mapTime(c.a, cuts);
+    const b = mapTime(c.b, cuts);
+    if (b - a < 0.1 || !c.pngs.length) continue;
+    const win = (x: number, y: number) => `between(t,${x.toFixed(3)},${y.toFixed(3)})`;
+    if (c.anim === 'type' && c.pngs.length > 1) {
+      const step = Math.min(1.6, (b - a) * 0.6) / c.pngs.length;
+      c.pngs.forEach((p, k) => lay(p, win(a + k * step, k < c.pngs.length - 1 ? a + (k + 1) * step : b), {}));
+    } else {
+      const p = c.pngs[c.pngs.length - 1];
+      lay(p, win(a, b), { fadeAt: c.anim === 'fade' || c.anim === 'slide' ? a : undefined, slideAt: c.anim === 'slide' ? a : undefined });
+    }
+  }
+  const vOut = cur === '0:v' ? '0:v' : cur;
+  if (vOut !== '0:v') f.push(`[${vOut}]format=yuv420p[vo]`);
+  const mix: string[] = ['[0:a]'];
+  for (const v of voices.slice(0, 30)) {
+    const at = mapTime(v.a, cuts);
+    if (at >= dur - 0.1) continue;
+    args.push('-i', v.file);
+    const ms = Math.round(at * 1000);
+    f.push(`[${idx}:a]aresample=48000,aformat=channel_layouts=stereo,adelay=${ms}|${ms}[m${idx}]`);
+    mix.push(`[m${idx}]`);
+    idx++;
+  }
+  if (mix.length > 1) f.push(`${mix.join('')}amix=inputs=${mix.length}:duration=first:dropout_transition=0:normalize=0[ao]`);
+  if (!f.length) {
+    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', cutFile, '-c', 'copy', ...meta, '-movflags', '+faststart', final]);
+  } else {
+    args.push('-filter_complex', f.join(';'), '-map', vOut === '0:v' ? '0:v' : '[vo]', '-map', mix.length > 1 ? '[ao]' : '0:a', '-t', D, ...ENC, ...meta, '-movflags', '+faststart', final);
+    await run(bin('ffmpeg'), args);
+  }
+  return { file: final, dur: Math.round(dur * 10) / 10 };
 }

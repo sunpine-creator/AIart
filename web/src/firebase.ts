@@ -101,7 +101,7 @@ export const api = {
     { blocked: boolean; reason?: string; cast?: { look: string }; scenes: { line: string; who: string; when: string; where: string; what: string; how: string; why: string }[] }
   >('draftScenes', 60_000),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number }>('makeCharacter', 120_000),
-  renderVideo: call<{ overlays: Record<string, { fixed?: string; cap?: string[]; anim?: string }> }, { path: string; missing?: number }>('renderVideo', 540_000),
+  renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),
   requestTeacher: call<{ org: string; realName: string }, { ok: boolean }>('requestTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),

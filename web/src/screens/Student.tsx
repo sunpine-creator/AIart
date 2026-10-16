@@ -4,6 +4,7 @@ import { buildPromptKo, moderate } from '../moderation';
 import { GenMedia, MediaFrame, StoredVideo, useStorageUrl } from '../MediaFrame';
 import { api, errText } from '../firebase';
 import { ShareState, studentDecline, studentListen, studentShare } from '../screenshare';
+import { Timeline, TlCap, TlVoice, absAt, anchorAt, atMap, baseLen, cutTotal, emptyTl, layout, mergeCuts, r1, skipCut, tid, ttsGuess } from '../timeline';
 
 export const STAGES: { n: Stage; name: string; el: number; mid: number }[] = [
   { n: 1, name: '시작하기', el: 20, mid: 20 },
@@ -1556,253 +1557,481 @@ type Item = {
   capStyle?: CapStyle;
 };
 
+// 하나의 타임라인 편집: 장면들을 한 편의 영상처럼 이어 보고, 원하는 구간을 골라 지우기·자막·목소리를 넣는다
+const tcf = (x: number) => {
+  const v = Math.max(0, x);
+  const m = Math.floor(v / 60);
+  return `${m}:${(v - m * 60).toFixed(1).padStart(4, '0')}`;
+};
+const AI_VOICES = VOICES.filter((v) => v.startsWith('AI'));
+const ttsCache = new Map<string, string>(); // `${목소리}|${글}` → 들어 볼 소리
+
+type Sel = { t: 'clip' | 'cap' | 'voice' | 'cut'; id: string } | null;
+type LayE = { item: Item; at: number; end: number };
+
 function S4() {
   const { s, d } = useStore();
-  const [sel, setSel] = useState('intro');
-  const [playing, setPlaying] = useState(false);
+  const limit = maxSec(s.band);
+  const mid = s.band === 'middle';
   const [t, setT] = useState(0);
-  const [dragKey, setDragKey] = useState<string | null>(null);
-  const [overKey, setOverKey] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [sel, setSel] = useState<Sel>(null);
+  const [range, setRange] = useState<{ a: number; b: number } | null>(null);
 
-  // 타임라인 가운데 클립 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 붙인다
+  // 조각 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (뺀 장면은 넣지 않는다)
   const middleKeys = useMemo(() => {
-    // 편집에서 뺀 장면은 타임라인에 넣지 않는다
     const all = [...s.scenes.filter((x) => !x.skip).map((x) => x.id), ...s.uploads.map((u) => u.id)];
     const kept = s.order.filter((k) => all.includes(k));
     return [...kept, ...all.filter((k) => !kept.includes(k))];
   }, [s.order, s.scenes, s.uploads]);
 
   const items: Item[] = useMemo(() => {
-    const mid = middleKeys.map((k): Item => {
+    const midItems = middleKeys.map((k): Item => {
       const sc = s.scenes.find((x) => x.id === k);
       if (sc) {
         const gen = s.gens.find((g) => g.id === sc.selectedGenId) ?? [...s.gens].reverse().find((g) => g.sceneId === sc.id && g.status === 'succeeded');
-        return { key: sc.id, kind: 'scene', scene: sc, dur: sc.dur, caption: sc.caption, voice: sc.voice, hue: gen?.hue ?? 0, gen, still: gen?.img, capStyle: sc.capStyle };
+        return { key: sc.id, kind: 'scene', scene: sc, dur: sc.dur, caption: '', hue: gen?.hue ?? 0, gen, still: gen?.img };
       }
       const u = s.uploads.find((x) => x.id === k)!;
-      return { key: u.id, kind: 'upload', upload: u, dur: u.dur, caption: u.caption, voice: u.voice, hue: 0, capStyle: u.capStyle };
+      return { key: u.id, kind: 'upload', upload: u, dur: u.dur, caption: '', voice: u.voice, hue: 0 };
     });
     return [
-      { key: 'intro', kind: 'intro', dur: s.intro.dur, caption: s.intro.caption, hue: 210, still: true },
-      ...mid,
+      { key: 'intro', kind: 'intro', dur: s.intro.dur, caption: s.intro.caption || s.topic || 'AI로 달라진 나의 일상', hue: 210, still: true },
+      ...midItems,
       { key: 'outro', kind: 'outro', dur: s.outro.dur, caption: s.outro.caption, hue: 30, still: true },
     ];
-  }, [middleKeys, s.intro, s.outro, s.scenes, s.uploads, s.gens]);
+  }, [middleKeys, s.intro, s.outro, s.scenes, s.uploads, s.gens, s.topic]);
 
-  const total = items.reduce((a, b) => a + b.dur, 0);
-  const limit = maxSec(s.band);
-  const over = total > limit;
-  const missing = items.filter((i) => i.kind === 'scene' && !i.scene!.selectedGenId).length; // 뺀 장면은 items 에 없다
-  const cur = items.find((i) => i.key === sel) ?? items[0];
-  const curIdx = middleKeys.indexOf(cur.key);
-
-  useEffect(() => {
-    if (!playing) return;
-    const id = setInterval(() => setT((x) => (x + 0.25 >= total ? (setPlaying(false), 0) : x + 0.25)), 250);
-    return () => clearInterval(id);
-  }, [playing, total]);
-  let acc = 0;
-  const atItem =
-    items.find((i) => {
-      acc += i.dur;
-      return t < acc;
-    }) ?? items[0];
-  const show = playing ? atItem : cur;
-
-  const setItem = (patch: { dur?: number; caption?: string; voice?: string; start?: number; capStyle?: CapStyle }) => {
-    if (cur.kind === 'intro') d({ t: 'set', patch: { intro: { ...s.intro, ...patch } } });
-    else if (cur.kind === 'outro') d({ t: 'set', patch: { outro: { ...s.outro, ...patch } } });
-    else if (cur.kind === 'upload') d({ t: 'set', patch: { uploads: s.uploads.map((u) => (u.id === cur.key ? { ...u, ...patch } : u)) } });
-    else d({ t: 'scene', id: cur.key, patch });
-  };
-  // 자를 수 있는 원본 길이(영상만). 앞부분을 자르면 쓸 수 있는 길이가 그만큼 줄어든다
-  const srcLen = cur.kind === 'scene' && cur.gen && !cur.gen.img ? cur.gen.sec : cur.kind === 'upload' ? Math.max(1, Math.floor(cur.upload!.srcDur) || 1) : 0;
-  const start = cur.kind === 'scene' ? cur.scene!.start ?? 0 : cur.kind === 'upload' ? cur.upload!.start ?? 0 : 0;
-  // 길이는 만든 영상(또는 올린 영상)에서 앞부분을 뺀 만큼까지만. 더 긴 장면은 3단계에서 길게 만든다
-  const maxDur = srcLen > 0 ? Math.max(1, Math.min(Math.floor(srcLen - start), limit)) : cur.kind === 'scene' ? (s.band === 'elementary' ? 5 : 10) : 5;
+  const lay: LayE[] = useMemo(() => layout(items), [items]);
+  const B = r1(baseLen(items));
+  const am = useMemo(() => atMap(lay), [lay]);
+  const tl: Timeline = s.tl ?? emptyTl();
+  const setTl = (next: Partial<Timeline>) => d({ t: 'set', patch: { tl: { ...tl, ...next } } });
+  const cutsAbs = tl.cuts.flatMap((c) => {
+    const a = absAt(c, am);
+    return a === undefined ? [] : [{ ...c, a, b: Math.min(B, a + c.len) }];
+  });
+  const cuts = mergeCuts(cutsAbs, B);
+  const cutsKey = JSON.stringify(cuts);
+  const F = r1(B - cutTotal(cuts));
+  const over = F > limit + 0.5;
+  const capsAbs = tl.caps.flatMap((c) => {
+    const a = absAt(c, am);
+    return a === undefined ? [] : [{ ...c, a, b: a + c.len }];
+  });
+  const voicesAbs = tl.voices.flatMap((v) => {
+    const a = absAt(v, am);
+    return a === undefined ? [] : [{ ...v, a }];
+  });
+  const missing = items.filter((i) => i.kind === 'scene' && !i.gen).length;
   const skipped = s.scenes.filter((x) => x.skip);
 
+  // 예전(장면별) 편집을 한 번만 타임라인으로 옮긴다: 앞부분 자르기 → 지운 구간, 장면 자막·목소리 → 구간 자막·목소리
+  const ready = s.scenes.every((sc) => !sc.selectedGenId || s.gens.some((g) => g.id === sc.selectedGenId));
+  useEffect(() => {
+    if (s.tl || !ready) return;
+    const next = emptyTl();
+    for (const e of lay) {
+      const it = e.item;
+      const src = it.scene ?? it.upload;
+      if (!src) continue;
+      const start = Math.max(0, Math.min(src.start ?? 0, it.dur - 1));
+      const rest = r1(it.dur - start);
+      if (start > 0) next.cuts.push({ id: tid('c'), k: it.key, o: 0, len: start });
+      if (src.caption?.trim()) next.caps.push({ id: tid('t'), k: it.key, o: start, len: rest, text: src.caption, style: src.capStyle });
+      if (src.voice === '내 목소리' && src.voicePath) next.voices.push({ id: tid('v'), k: it.key, o: start, kind: 'mine', voice: '내 목소리', path: src.voicePath, url: src.voiceUrl, dur: rest });
+      else if (src.voice?.startsWith('AI 목소리') && src.caption?.trim()) next.voices.push({ id: tid('v'), k: it.key, o: start, kind: 'ai', voice: src.voice, text: src.caption, dur: ttsGuess(src.caption) });
+    }
+    d({ t: 'set', patch: { tl: next } });
+  }, [!!s.tl, ready]);
+
+  // 재생 시계: 지운 구간은 건너뛴다
+  const tRef = React.useRef(t);
+  tRef.current = t;
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last = performance.now();
+    let acc = 0;
+    let cur = tRef.current;
+    const step = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      cur = skipCut(cur + dt, cuts);
+      if (cur >= B) {
+        setPlaying(false);
+        setT(0);
+        return;
+      }
+      acc += dt;
+      if (acc >= 0.05) {
+        acc = 0;
+        setT(cur);
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, B, cutsKey]);
+
+  // 목소리 미리 듣기(재생 중 그 시각이 되면 소리를 낸다)
+  const audios = React.useRef<Map<string, HTMLAudioElement>>(new Map());
+  const started = React.useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!playing) {
+      audios.current.forEach((a) => a.pause());
+      started.current.clear();
+    }
+  }, [playing]);
+  useEffect(() => () => audios.current.forEach((a) => a.pause()), []);
+  useEffect(() => {
+    if (!playing) return;
+    for (const v of voicesAbs) {
+      if (started.current.has(v.id) || t < v.a || t >= v.a + v.dur) continue;
+      started.current.add(v.id);
+      const url = v.kind === 'mine' ? v.url : ttsCache.get(`${v.voice}|${v.text ?? ''}`);
+      if (!url) continue;
+      let a = audios.current.get(v.id);
+      if (!a || a.src !== url) {
+        a = new Audio(url);
+        audios.current.set(v.id, a);
+      }
+      a.currentTime = Math.max(0, t - v.a);
+      a.play().catch(() => {});
+    }
+  }, [t, playing]);
+
+  const curE = lay.reduce((e, x) => (x.at <= t + 1e-6 ? x : e), lay[0]);
+  const inCut = cuts.some((c) => t >= c.a && t < c.b);
+  const seek = (x: number) => {
+    setPlaying(false);
+    setT(Math.max(0, Math.min(B, x)));
+  };
+
+  // 자막·목소리·지운 구간 고치기
+  const updCap = (id: string, patch: Partial<TlCap>) => setTl({ caps: tl.caps.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  const updVoice = (id: string, patch: Partial<TlVoice>) => setTl({ voices: tl.voices.map((v) => (v.id === id ? { ...v, ...patch } : v)) });
+  const addFromRange = (kind: 'cut' | 'cap' | 'voice') => {
+    if (!range) return;
+    const an = anchorAt(range.a, lay);
+    const len = r1(range.b - range.a);
+    if (len < 0.2) return d({ t: 'toast', msg: '구간이 너무 짧아요. 조금 더 길게 골라 주세요.' });
+    if (kind === 'cut') {
+      const id = tid('c');
+      setTl({ cuts: [...tl.cuts, { id, ...an, len }] });
+      setSel({ t: 'cut', id });
+      d({ t: 'toast', msg: `${tcf(range.a)} ~ ${tcf(range.b)} 구간을 지웠어요. 빗금 친 곳을 누르면 되살릴 수 있어요.` });
+    } else if (kind === 'cap') {
+      const id = tid('t');
+      setTl({ caps: [...tl.caps, { id, ...an, len, text: '', style: {} }] });
+      setSel({ t: 'cap', id });
+    } else {
+      const id = tid('v');
+      setTl({ voices: [...tl.voices, { id, ...an, kind: 'ai', voice: AI_VOICES[0], text: '', dur: Math.min(len, 5) }] });
+      setSel({ t: 'voice', id });
+    }
+    setRange(null);
+    seek(range.a);
+  };
+
+  // 타임라인 마우스: 끌면 구간 고르기, 누르기만 하면 그 위치로 이동(블록을 누르면 그것을 고름)
+  const trackRef = React.useRef<HTMLDivElement | null>(null);
+  const drag = React.useRef<{ mode: 'new' | 'a' | 'b'; a: number; moved: boolean; sel?: string } | null>(null);
+  const timeAt = (clientX: number) => {
+    const r = trackRef.current?.getBoundingClientRect();
+    if (!r || !B) return 0;
+    return r1(Math.max(0, Math.min(B, ((clientX - r.left) / r.width) * B)));
+  };
+  const pct = (x: number) => `${(Math.max(0, Math.min(B, x)) / Math.max(B, 0.1)) * 100}%`;
+  const onDown = (e: React.PointerEvent) => {
+    const el = e.target as HTMLElement;
+    const edge = el.closest('[data-edge]')?.getAttribute('data-edge') as 'a' | 'b' | null;
+    const selAttr = el.closest('[data-sel]')?.getAttribute('data-sel') ?? undefined;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setPlaying(false);
+    const x = timeAt(e.clientX);
+    drag.current = { mode: edge ?? 'new', a: x, moved: false, sel: selAttr };
+    if (!edge) setT(x);
+  };
+  const onMove = (e: React.PointerEvent) => {
+    const g = drag.current;
+    if (!g) return;
+    const x = timeAt(e.clientX);
+    if (g.mode === 'a' && range) return setRange({ a: Math.min(x, range.b - 0.2), b: range.b });
+    if (g.mode === 'b' && range) return setRange({ a: range.a, b: Math.max(x, range.a + 0.2) });
+    if (Math.abs(x - g.a) >= 0.2) {
+      g.moved = true;
+      setRange({ a: Math.min(g.a, x), b: Math.max(g.a, x) });
+      setT(Math.min(g.a, x));
+    }
+  };
+  const onUp = () => {
+    const g = drag.current;
+    drag.current = null;
+    if (!g || g.moved || g.mode !== 'new') return;
+    if (g.sel) {
+      const [kind, id] = g.sel.split(':') as [NonNullable<Sel>['t'], string];
+      setSel({ t: kind, id });
+    }
+  };
+
+  const ticks = useMemo(() => Array.from({ length: Math.floor(B) + 1 }, (_, i) => i), [B]);
   const moveTo = (key: string, target: number) => {
     const arr = middleKeys.filter((k) => k !== key);
-    const i = Math.max(0, Math.min(arr.length, target));
-    arr.splice(i, 0, key);
+    arr.splice(Math.max(0, Math.min(arr.length, target)), 0, key);
     d({ t: 'set', patch: { order: arr } });
   };
-  const nudge = (dir: -1 | 1) => curIdx >= 0 && moveTo(cur.key, curIdx + dir);
-  const removeUpload = (id: string) => {
-    d({ t: 'removeUpload', id });
-    setSel('intro');
-  };
   const sceneNo = (sc: Scene) => s.scenes.indexOf(sc) + 1;
-  const clipLabel = (it: Item) =>
-    it.kind === 'intro' ? '제목' : it.kind === 'outro' ? '끝' : it.kind === 'upload' ? '내 영상' : `장면 #${sceneNo(it.scene!)}`;
+  const clipLabel = (it: Item) => (it.kind === 'intro' ? '제목' : it.kind === 'outro' ? '끝' : it.kind === 'upload' ? '내 영상' : `장면 #${sceneNo(it.scene!)}`);
+  const selCap = sel?.t === 'cap' ? capsAbs.find((c) => c.id === sel.id) : undefined;
+  const selVoice = sel?.t === 'voice' ? voicesAbs.find((v) => v.id === sel.id) : undefined;
+  const selCut = sel?.t === 'cut' ? cutsAbs.find((c) => c.id === sel.id) : undefined;
+  const selClip = sel?.t === 'clip' ? lay.find((e) => e.item.key === sel.id) : undefined;
 
   return (
     <div className="screen">
-      <ScreenHead n={5} title="장면을 이어 붙여 영상으로 만들어요" lead="화려한 효과보다 이야기 순서와 내용이 잘 전해지는지가 중요해요. 내가 찍은 영상도 넣을 수 있어요." />
+      <ScreenHead n={5} title="한 편의 영상으로 이어 붙여요" lead="장면들이 하나의 영상처럼 이어져요. 타임라인에서 원하는 구간을 골라 지우거나, 자막·목소리를 넣어요." />
       <div className="editor">
         <div className="viewer">
           <div className="stage">
-          {show.kind === 'upload' ? (
-            <div className="frame frame-lg video-frame">
-              {show.upload!.playable ? (
-                <video key={show.key + (playing ? '-p' : '')} src={`${show.upload!.url}#t=${show.upload!.start ?? 0}`} muted playsInline autoPlay={playing} controls={!playing} />
-              ) : (
-                <span className="no-preview">이 브라우저에서는 미리 볼 수 없는 형식이에요. 저장할 때 자동으로 바꿔서 넣어요.</span>
-              )}
-              <span className="frame-badge human-badge">내가 올린 영상</span>
-            </div>
-          ) : show.kind === 'scene' && show.gen ? (
-            <GenMedia g={show.gen} label={show.scene!.line} badge="AI 생성" size="lg" autoPlay={playing} controls={!playing} start={show.scene!.start} />
-          ) : show.kind === 'scene' ? (
-            <div className="frame frame-lg empty-frame">
-              <span>아직 만든 장면이 없어요</span>
-            </div>
-          ) : (
-            <div className={`frame frame-lg title-card ${show.kind}`}>
-              <span className="title-card-text">{show.caption}</span>
-              {show.kind === 'outro' && <span className="title-card-sub">이 영상에는 AI 생성 콘텐츠가 포함되어 있어요</span>}
-            </div>
-          )}
-          {(show.kind === 'scene' || show.kind === 'upload') && show.caption && (
-            <CaptionOverlay
-              key={`${show.key}-${playing ? 'p' : 's'}-${JSON.stringify(show.capStyle ?? {})}`}
-              text={show.caption}
-              st={show.capStyle}
-              onMove={s.band === 'middle' && !playing ? (x, y) => setItem({ capStyle: { ...(cur.capStyle ?? {}), x, y } }) : undefined}
-            />
-          )}
+            <ClipView key={curE.item.key} e={curE} t={t} playing={playing} />
+            {capsAbs
+              .filter((c) => t >= c.a && t < c.b && c.text.trim())
+              .map((c) => (
+                <CaptionOverlay
+                  key={`${c.id}-${playing ? 'p' : 's'}-${JSON.stringify(c.style ?? {})}`}
+                  text={c.text}
+                  st={c.style}
+                  onMove={mid && !playing && sel?.t === 'cap' && sel.id === c.id ? (x, y) => updCap(c.id, { style: { ...(c.style ?? {}), x, y } }) : undefined}
+                />
+              ))}
+            {inCut && !playing && <span className="cut-flag">지운 구간 · 재생할 때 건너뛰어요</span>}
           </div>
           <div className="transport">
-            <button className="btn" onClick={() => (setPlaying(!playing), playing ? null : setT(0))}>
-              {playing ? '멈추기' : '처음부터 재생'}
+            <button className="btn primary" onClick={() => (playing ? setPlaying(false) : (setT(t >= B - 0.1 ? 0 : skipCut(t, cuts)), setPlaying(true)))}>
+              {playing ? '❚❚ 멈추기' : '▶ 재생'}
+            </button>
+            <button className="btn" onClick={() => seek(0)}>
+              ⏮ 처음으로
             </button>
             <span className="mono">
-              {tc(playing ? t : 0)} / {tc(total)}
+              {tcf(t)} / {tcf(B)}
             </span>
+            <span className="tiny muted">미리보기에서는 장면이 바로 바뀌고, 저장한 영상에서는 부드럽게 겹쳐 넘어가요.</span>
           </div>
         </div>
+
         <div className="inspector">
-          <div className="ins-head">
-            <h3>{cur.kind === 'intro' ? '제목 화면' : cur.kind === 'outro' ? '마무리 화면' : cur.kind === 'upload' ? '내가 올린 영상' : `장면 #${sceneNo(cur.scene!)}`}</h3>
-            {curIdx >= 0 && (
-              <div className="order-btns">
-                <button className="btn tiny" onClick={() => nudge(-1)} disabled={curIdx === 0} aria-label="앞으로 옮기기">
-                  ◀ 앞으로
+          {selCut ? (
+            <>
+              <h3>지운 구간</h3>
+              <p>
+                <span className="mono">
+                  {tcf(selCut.a)} ~ {tcf(selCut.b)}
+                </span>{' '}
+                ({r1(selCut.len)}초)
+              </p>
+              <p className="tiny muted">이 구간은 완성 영상에서 빠져요.</p>
+              <button className="btn" onClick={() => (setTl({ cuts: tl.cuts.filter((c) => c.id !== selCut.id) }), setSel(null))}>
+                ↩ 되살리기
+              </button>
+            </>
+          ) : selCap ? (
+            <>
+              <div className="ins-head">
+                <h3>자막</h3>
+                <span className="mono tiny">
+                  {tcf(selCap.a)} ~ {tcf(selCap.b)}
+                </span>
+              </div>
+              <label htmlFor="cap-text">글자</label>
+              <input id="cap-text" maxLength={60} value={selCap.text} placeholder="화면에 보일 글자를 써요" onChange={(e) => updCap(selCap.id, { text: e.target.value })} autoFocus />
+              <div className="pills">
+                <button className="btn tiny" onClick={() => selCap.b - t > 0.3 && updCap(selCap.id, { ...anchorAt(t, lay), len: r1(selCap.b - t) })}>
+                  지금 위치를 시작으로
                 </button>
-                <button className="btn tiny" onClick={() => nudge(1)} disabled={curIdx === middleKeys.length - 1} aria-label="뒤로 옮기기">
-                  뒤로 ▶
+                <button className="btn tiny" onClick={() => t - selCap.a > 0.3 && updCap(selCap.id, { len: r1(t - selCap.a) })}>
+                  지금 위치를 끝으로
                 </button>
               </div>
-            )}
-          </div>
-          {cur.kind === 'upload' && <p className="tiny muted file-name">{cur.upload!.name} · 원본 {Math.round(cur.upload!.srcDur)}초</p>}
-          {cur.kind === 'intro' || cur.kind === 'outro' ? (
-            <>
-              <label htmlFor="ins-dur">
-                길이 <span className="mono">{cur.dur}초</span>
-              </label>
-              <input id="ins-dur" type="range" min={1} max={5} step={1} value={Math.min(cur.dur, 5)} onChange={(e) => setItem({ dur: Number(e.target.value) })} />
+              {mid ? <CaptionStyler value={selCap.style ?? {}} onChange={(style) => updCap(selCap.id, { style })} /> : (
+                <div className="cs-row">
+                  <span className="cs-label">위치</span>
+                  <div className="pills">
+                    {([['top', '위'], ['bottom', '아래']] as const).map(([k, l]) => (
+                      <button key={k} className={`pill ${(selCap.style?.pos ?? 'bottom') === k ? 'on' : ''}`} onClick={() => updCap(selCap.id, { style: { ...(selCap.style ?? {}), pos: k } })}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button className="btn tiny" onClick={() => (setTl({ caps: tl.caps.filter((c) => c.id !== selCap.id) }), setSel(null))}>
+                이 자막 지우기
+              </button>
             </>
+          ) : selVoice ? (
+            <>
+              <div className="ins-head">
+                <h3>목소리</h3>
+                <span className="mono tiny">{tcf(selVoice.a)}부터</span>
+              </div>
+              <div className="pills">
+                <button className={`pill ${selVoice.kind === 'ai' ? 'on' : ''}`} onClick={() => updVoice(selVoice.id, { kind: 'ai', voice: AI_VOICES.includes(selVoice.voice) ? selVoice.voice : AI_VOICES[0] })}>
+                  AI 목소리
+                </button>
+                <button className={`pill ${selVoice.kind === 'mine' ? 'on' : ''}`} onClick={() => updVoice(selVoice.id, { kind: 'mine', voice: '내 목소리' })}>
+                  내 목소리
+                </button>
+              </div>
+              {selVoice.kind === 'ai' ? (
+                <>
+                  <select value={selVoice.voice} onChange={(e) => updVoice(selVoice.id, { voice: e.target.value })} aria-label="AI 목소리 고르기">
+                    {AI_VOICES.map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                  {VOICE_TONE[selVoice.voice] && <p className="tiny voice-tone">{VOICE_TONE[selVoice.voice]}</p>}
+                  <label htmlFor="v-text">읽어 줄 말</label>
+                  <input id="v-text" maxLength={60} value={selVoice.text ?? ''} onChange={(e) => updVoice(selVoice.id, { text: e.target.value, dur: ttsGuess(e.target.value) })} placeholder="AI 목소리가 읽어 줄 문장" />
+                  <TtsPreview voice={selVoice.voice} text={selVoice.text ?? ''} onDur={(dur) => updVoice(selVoice.id, { dur })} />
+                  <p className="tiny muted">AI 목소리는 정해진 목소리만 쓸 수 있어요. 내 목소리를 AI로 흉내 내지 않아요.</p>
+                </>
+              ) : (
+                <VoiceRecorder key={selVoice.id} itemKey={selVoice.id} maxSec={Math.max(1, Math.min(15, Math.floor(B - selVoice.a)))} path={selVoice.path} url={selVoice.url} />
+              )}
+              <button className="btn tiny" onClick={() => updVoice(selVoice.id, anchorAt(t, lay))}>
+                지금 위치에서 시작하기
+              </button>
+              <button className="btn tiny" onClick={() => (setTl({ voices: tl.voices.filter((v) => v.id !== selVoice.id) }), setSel(null))}>
+                이 목소리 지우기
+              </button>
+            </>
+          ) : selClip ? (
+            <ClipInspector
+              e={selClip}
+              label={clipLabel(selClip.item)}
+              idx={middleKeys.indexOf(selClip.item.key)}
+              count={middleKeys.length}
+              onMove={(dir) => moveTo(selClip.item.key, middleKeys.indexOf(selClip.item.key) + dir)}
+              onClose={() => setSel(null)}
+            />
           ) : (
-            <p className="tiny muted">
-              길이 <span className="mono">{cur.dur}초</span> · {cur.kind === 'scene' ? '3단계에서 만든 영상 길이 그대로예요.' : '올린 영상 길이 그대로예요.'} 앞부분만 자를 수 있어요.
-            </p>
-          )}
-          <label htmlFor="ins-cap">{cur.kind === 'intro' || cur.kind === 'outro' ? '화면 글자' : '자막·말풍선'}</label>
-          <input id="ins-cap" value={cur.caption} onChange={(e) => setItem({ caption: e.target.value })} />
-          {s.band === 'middle' && (cur.kind === 'scene' || cur.kind === 'upload') && <CaptionStyler value={cur.capStyle ?? {}} onChange={(capStyle) => setItem({ capStyle })} />}
-          {(cur.kind === 'scene' || cur.kind === 'upload') && (
-            <>
-              <label htmlFor="ins-voice">목소리</label>
-              <select id="ins-voice" value={cur.voice} onChange={(e) => setItem({ voice: e.target.value })}>
-                {(cur.kind === 'upload' ? ['원래 소리', ...VOICES] : VOICES).map((v) => (
-                  <option key={v}>{v}</option>
-                ))}
-              </select>
-              {cur.voice && VOICE_TONE[cur.voice] && <p className="tiny voice-tone">{VOICE_TONE[cur.voice]}</p>}
-              {cur.voice?.startsWith('AI 목소리') && <VoicePreview key={cur.voice} voice={cur.voice} caption={cur.caption} />}
-              {cur.voice === '내 목소리' && <VoiceRecorder key={cur.key} itemKey={cur.key} maxSec={cur.dur} path={cur.scene?.voicePath ?? cur.upload?.voicePath} url={cur.scene?.voiceUrl ?? cur.upload?.voiceUrl} />}
-              <p className="tiny muted">AI 목소리는 정해진 목소리만 쓸 수 있어요. 내 목소리를 AI로 흉내 내지 않아요.</p>
-            </>
-          )}
-          {srcLen > 1 && (
-            <>
-              <label htmlFor="ins-start">
-                앞부분 자르기 <span className="mono">{start}초</span>
-              </label>
-              <input
-                id="ins-start"
-                type="range"
-                min={0}
-                max={Math.max(0, srcLen - 1)}
-                step={0.5}
-                value={start}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setItem({ start: v });
-                }}
-              />
-              <p className="tiny muted">마음에 안 드는 앞부분을 잘라요. 자른 만큼 장면이 짧아져요.</p>
-            </>
-          )}
-          {cur.kind === 'upload' && (
-            <button className="btn tiny" onClick={() => removeUpload(cur.key)}>
-              이 영상 빼기
-            </button>
-          )}
-          {cur.kind === 'scene' && (
-            <button className="btn tiny" onClick={() => (d({ t: 'scene', id: cur.key, patch: { skip: true } }), setSel('intro'))}>
-              이 장면 빼기
-            </button>
+            <div className="tl-help">
+              <h3>이렇게 편집해요</h3>
+              <ol className="tiny">
+                <li>▶ 재생으로 영상 전체를 이어서 봐요.</li>
+                <li>타임라인을 마우스로 <strong>끌어서</strong> 구간을 골라요. 시작·끝 손잡이를 끌어 다듬을 수 있어요.</li>
+                <li>
+                  고른 구간을 <strong>✂ 지우기</strong>, <strong>자막 넣기</strong>, <strong>목소리 넣기</strong> 중에서 골라요.
+                </li>
+                <li>장면·자막·목소리 막대를 누르면 여기서 고칠 수 있어요.</li>
+              </ol>
+            </div>
           )}
         </div>
       </div>
+
       <div className="timeline-wrap">
         <div className={`meter ${over ? 'over' : ''}`}>
-          <div className="meter-fill" style={{ width: `${Math.min(100, (total / limit) * 100)}%` }} />
+          <div className="meter-fill" style={{ width: `${Math.min(100, (F / limit) * 100)}%` }} />
           <span className="mono">
-            {total}초 / {limit}초
+            완성 길이 {F}초 / {limit}초{cuts.length ? ` (지운 구간 ${r1(cutTotal(cuts))}초 빠짐)` : ''}
           </span>
         </div>
-        <p className="tiny muted">클립을 끌어서 순서를 바꿀 수 있어요. 태블릿에서는 클립을 고른 뒤 “◀ 앞으로 / 뒤로 ▶”를 눌러요. 제목과 끝 화면은 움직이지 않아요.</p>
-        <div className="timeline" role="list" aria-label="타임라인">
-          {items.map((it) => {
-            const movable = it.kind === 'scene' || it.kind === 'upload';
-            return (
-              <button
-                key={it.key}
-                role="listitem"
-                draggable={movable}
-                onDragStart={(e) => {
-                  if (!movable) return;
-                  setDragKey(it.key);
-                  e.dataTransfer.effectAllowed = 'move';
-                  e.dataTransfer.setData('text/plain', it.key);
-                }}
-                onDragOver={(e) => {
-                  if (!dragKey || !movable) return;
-                  e.preventDefault();
-                  setOverKey(it.key);
-                }}
-                onDragLeave={() => setOverKey((k) => (k === it.key ? null : k))}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (dragKey && movable && dragKey !== it.key) moveTo(dragKey, middleKeys.filter((k) => k !== dragKey).indexOf(it.key) + (middleKeys.indexOf(dragKey) < middleKeys.indexOf(it.key) ? 1 : 0));
-                  setDragKey(null);
-                  setOverKey(null);
-                }}
-                onDragEnd={() => (setDragKey(null), setOverKey(null))}
-                className={`clip ${it.kind} ${sel === it.key ? 'on' : ''} ${it.kind === 'scene' && !it.gen ? 'missing' : ''} ${dragKey === it.key ? 'dragging' : ''} ${overKey === it.key && dragKey !== it.key ? 'drop-target' : ''}`}
-                style={{ flexGrow: it.dur, ['--h' as any]: it.hue }}
-                onClick={() => (setSel(it.key), setPlaying(false))}
-              >
-                <span className="clip-n mono">{clipLabel(it)}</span>
-                <span className="clip-d mono">{it.dur}s</span>
-              </button>
-            );
-          })}
+
+        <div className="tl-grid">
+          <div className="tl-labels" aria-hidden="true">
+            <span />
+            <span>장면</span>
+            <span>자막</span>
+            <span>목소리</span>
+          </div>
+          <div className="tl" ref={trackRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} role="group" aria-label="타임라인: 끌어서 구간을 골라요">
+            <div className="tl-ruler">
+              {ticks.map((i) => (
+                <span key={i} className={`tl-tick ${i % 5 === 0 ? 'major' : ''}`} style={{ left: pct(i) }}>
+                  {i % 5 === 0 ? <em>{i}초</em> : null}
+                </span>
+              ))}
+            </div>
+            <div className="tl-row">
+              {lay.map((e) => (
+                <span
+                  key={e.item.key}
+                  data-sel={`clip:${e.item.key}`}
+                  className={`tl-clip clip ${e.item.kind} ${e.item.kind === 'scene' && !e.item.gen ? 'missing' : ''} ${sel?.t === 'clip' && sel.id === e.item.key ? 'on' : ''}`}
+                  style={{ left: pct(e.at), width: pct(e.item.dur), ['--h' as any]: e.item.hue }}
+                  title={`${clipLabel(e.item)} · ${e.item.dur}초`}
+                >
+                  <span className="clip-n mono">{clipLabel(e.item)}</span>
+                </span>
+              ))}
+            </div>
+            <div className="tl-row">
+              {capsAbs.map((c) => (
+                <span key={c.id} data-sel={`cap:${c.id}`} className={`tl-bar cap ${sel?.t === 'cap' && sel.id === c.id ? 'on' : ''}`} style={{ left: pct(c.a), width: pct(c.len) }} title={c.text}>
+                  {c.text || '(빈 자막)'}
+                </span>
+              ))}
+            </div>
+            <div className="tl-row">
+              {voicesAbs.map((v) => (
+                <span key={v.id} data-sel={`voice:${v.id}`} className={`tl-bar voice ${sel?.t === 'voice' && sel.id === v.id ? 'on' : ''}`} style={{ left: pct(v.a), width: pct(v.dur) }} title={v.kind === 'mine' ? '내 목소리' : v.text}>
+                  {v.kind === 'mine' ? (v.path ? '🎙 내 목소리' : '🎙 녹음 전') : `🔊 ${v.text || v.voice}`}
+                </span>
+              ))}
+            </div>
+            {cutsAbs.map((c) => (
+              <span key={c.id} data-sel={`cut:${c.id}`} className={`tl-cut ${sel?.t === 'cut' && sel.id === c.id ? 'on' : ''}`} style={{ left: pct(c.a), width: pct(c.b - c.a) }} title="지운 구간 · 눌러서 되살리기">
+                <span>✂</span>
+              </span>
+            ))}
+            {range && (
+              <span className="tl-range" style={{ left: pct(range.a), width: pct(range.b - range.a) }}>
+                <span className="tl-edge a" data-edge="a" aria-label="구간 시작 손잡이" />
+                <span className="tl-edge b" data-edge="b" aria-label="구간 끝 손잡이" />
+              </span>
+            )}
+            <span className="tl-head" style={{ left: pct(t) }} />
+          </div>
         </div>
+
+        <div className="range-bar">
+          {range ? (
+            <>
+              <span className="strong">
+                고른 구간 <span className="mono">{tcf(range.a)} ~ {tcf(range.b)}</span> ({r1(range.b - range.a)}초)
+              </span>
+              <span className="range-nudge">
+                시작
+                <button className="btn tiny" onClick={() => setRange({ ...range, a: r1(Math.max(0, range.a - 0.1)) })} aria-label="시작 0.1초 앞으로">−</button>
+                <button className="btn tiny" onClick={() => setRange({ ...range, a: r1(Math.min(range.b - 0.2, range.a + 0.1)) })} aria-label="시작 0.1초 뒤로">+</button>
+                <button className="btn tiny" onClick={() => t < range.b - 0.2 && setRange({ ...range, a: r1(t) })}>지금 위치</button>
+              </span>
+              <span className="range-nudge">
+                끝
+                <button className="btn tiny" onClick={() => setRange({ ...range, b: r1(Math.max(range.a + 0.2, range.b - 0.1)) })} aria-label="끝 0.1초 앞으로">−</button>
+                <button className="btn tiny" onClick={() => setRange({ ...range, b: r1(Math.min(B, range.b + 0.1)) })} aria-label="끝 0.1초 뒤로">+</button>
+                <button className="btn tiny" onClick={() => t > range.a + 0.2 && setRange({ ...range, b: r1(t) })}>지금 위치</button>
+              </span>
+              <span className="range-acts">
+                <button className="btn danger" onClick={() => addFromRange('cut')}>✂ 이 구간 지우기</button>
+                <button className="btn" onClick={() => addFromRange('cap')}>자막 넣기</button>
+                <button className="btn" onClick={() => addFromRange('voice')}>목소리 넣기</button>
+                <button className="link" onClick={() => setRange(null)}>선택 취소</button>
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="tiny muted">타임라인을 마우스로 끌어서 지우거나 꾸밀 구간을 골라요.</span>
+              <button className="btn tiny" onClick={() => setRange({ a: r1(t), b: r1(Math.min(B, t + 2)) })} disabled={t > B - 0.3}>
+                지금 위치부터 구간 고르기
+              </button>
+            </>
+          )}
+        </div>
+
         {skipped.length > 0 && (
           <div className="skipped">
             <span className="tiny muted">뺀 장면</span>
@@ -1818,16 +2047,16 @@ function S4() {
             d({ t: 'set', patch: { order: [...middleKeys, u.id] } });
             d({ t: 'upload', file, meta: u });
             d({ t: 'log', entry: { kind: '영상 업로드', textKo: `${u.name} (${Math.round(u.srcDur)}초)`, action: '타임라인에 추가' } });
-            setSel(u.id);
+            setSel({ t: 'clip', id: u.id });
           }}
         />
-        {over && <p className="danger-text">영상이 {limit}초를 넘었어요. 길이를 줄이거나 클립을 빼야 저장할 수 있어요.</p>}
-        {missing > 0 && <p className="muted">아직 정하지 않은 장면이 {missing}개 있어요. 3단계에서 마음에 드는 결과로 장면을 정해 주세요.</p>}
+        {over && <p className="danger-text">영상이 {limit}초를 넘었어요. 필요 없는 구간을 지우거나 장면을 빼야 저장할 수 있어요.</p>}
+        {missing > 0 && <p className="muted">아직 만든 영상이 없는 장면이 {missing}개 있어요. 3단계에서 장면을 만들어 주세요.</p>}
         <div className="actions">
-          <button className="btn primary" disabled={over || s.rendering} onClick={() => d({ t: 'render' })}>
-            {s.rendering ? '영상을 합치는 중… (1분쯤 걸려요)' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}
+          <button className="btn primary" disabled={over || s.rendering} onClick={() => (setPlaying(false), d({ t: 'render' }))}>
+            {s.rendering ? '영상을 합치는 중… (1~2분쯤 걸려요)' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}
           </button>
-          <span className="tiny muted">장면을 한 편의 MP4로 합쳐요. 끝 화면에 “AI 생성 콘텐츠 포함” 표시가 자동으로 들어가요.</span>
+          <span className="tiny muted">한 편의 MP4로 합쳐요. 장면 사이는 부드럽게 겹쳐 넘어가고, 끝 화면에 “AI 생성 콘텐츠 포함” 표시가 자동으로 들어가요.</span>
         </div>
         {s.lastExport && (
           <div className="export">
@@ -1842,15 +2071,15 @@ function S4() {
           </div>
         )}
       </div>
-      {s.band === 'middle' && (
+      {mid && (
         <section className="panel">
           <label htmlFor="edit-note" className="label-human">
-            편집 설명: 장면 순서, 길이, 자막·목소리를 이렇게 정한 이유는?
+            편집 설명: 장면 순서, 지운 구간, 자막·목소리를 이렇게 정한 이유는?
           </label>
           <textarea
             id="edit-note"
             rows={3}
-            placeholder="예: 2번 장면을 짧게 줄여서 망설이는 마음이 빨리 지나가게 했어요. 마지막 장면에는 내 목소리를 넣어 메시지를 직접 말했어요."
+            placeholder="예: 2번 장면의 앞부분을 지워서 망설이는 마음이 빨리 지나가게 했어요. 마지막 장면에는 내 목소리를 넣어 메시지를 직접 말했어요."
             value={s.editNote}
             onChange={(e) => d({ t: 'set', patch: { editNote: e.target.value } })}
           />
@@ -1858,6 +2087,170 @@ function S4() {
       )}
       <NextBar to={6} />
     </div>
+  );
+}
+
+// 미리보기 화면: 지금 시각의 조각(장면·올린 영상·제목 화면)을 보여 준다
+function ClipView({ e, t, playing }: { e: LayE; t: number; playing: boolean }) {
+  const it = e.item;
+  const local = Math.max(0, t - e.at);
+  const vref = React.useRef<HTMLVideoElement | null>(null);
+  const g = it.gen;
+  const genUrl = useStorageUrl(g && !g.url && !g.mock ? g.storagePath : undefined);
+  const isVideoGen = !!g && !g.mock && !!g.storagePath && !(g.img || (g.mimeType ?? '').startsWith('image/'));
+  const url = it.kind === 'upload' ? (it.upload!.playable ? it.upload!.url : '') : isVideoGen ? g!.url ?? genUrl : '';
+  useEffect(() => {
+    const v = vref.current;
+    if (!v) return;
+    if (playing) v.play().catch(() => {});
+    else v.pause();
+  }, [playing, url]);
+  useEffect(() => {
+    const v = vref.current;
+    if (!v) return;
+    if (!playing || Math.abs(v.currentTime - local) > 0.35) {
+      try {
+        v.currentTime = local;
+      } catch {
+        /* 아직 불러오는 중 */
+      }
+    }
+  }, [local, playing, url]);
+  if (it.kind === 'intro' || it.kind === 'outro')
+    return (
+      <div className={`frame frame-lg title-card ${it.kind}`}>
+        <span className="title-card-text">{it.caption}</span>
+        {it.kind === 'outro' && <span className="title-card-sub">이 영상에는 AI 생성 콘텐츠가 포함되어 있어요</span>}
+      </div>
+    );
+  if (it.kind === 'scene' && !g)
+    return (
+      <div className="frame frame-lg empty-frame">
+        <span>아직 만든 장면이 없어요</span>
+      </div>
+    );
+  if (it.kind === 'scene' && !isVideoGen) return <GenMedia g={g} label={it.scene!.line} badge="AI 생성" size="lg" />;
+  return (
+    <div className="frame frame-lg video-frame">
+      {url ? (
+        <video
+          ref={vref}
+          src={url}
+          muted={!(it.kind === 'upload' && it.voice === '원래 소리')}
+          playsInline
+          preload="auto"
+          onLoadedMetadata={(ev) => {
+            try {
+              (ev.target as HTMLVideoElement).currentTime = local;
+            } catch {
+              /* 무시 */
+            }
+          }}
+        />
+      ) : (
+        <span className="no-preview">{it.kind === 'upload' ? '이 브라우저에서는 미리 볼 수 없는 형식이에요. 저장할 때 자동으로 바꿔서 넣어요.' : '불러오는 중…'}</span>
+      )}
+      <span className={`frame-badge ${it.kind === 'upload' ? 'human-badge' : ''}`}>{it.kind === 'upload' ? '내가 올린 영상' : 'AI 생성'}</span>
+    </div>
+  );
+}
+
+// 조각(장면·올린 영상·제목·끝 화면) 고치기
+function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; label: string; idx: number; count: number; onMove: (dir: -1 | 1) => void; onClose: () => void }) {
+  const { s, d } = useStore();
+  const it = e.item;
+  return (
+    <>
+      <div className="ins-head">
+        <h3>{label}</h3>
+        {idx >= 0 && (
+          <div className="order-btns">
+            <button className="btn tiny" onClick={() => onMove(-1)} disabled={idx === 0} aria-label="앞으로 옮기기">
+              ◀ 앞으로
+            </button>
+            <button className="btn tiny" onClick={() => onMove(1)} disabled={idx === count - 1} aria-label="뒤로 옮기기">
+              뒤로 ▶
+            </button>
+          </div>
+        )}
+      </div>
+      <p className="tiny muted">
+        <span className="mono">
+          {tcf(e.at)} ~ {tcf(e.end)}
+        </span>{' '}
+        · {it.dur}초
+      </p>
+      {it.kind === 'intro' || it.kind === 'outro' ? (
+        <>
+          <label htmlFor="ins-cap">화면 글자</label>
+          <input
+            id="ins-cap"
+            maxLength={40}
+            value={it.kind === 'intro' ? s.intro.caption : s.outro.caption}
+            placeholder={it.kind === 'intro' ? s.topic || '영상 제목' : '마무리 한마디'}
+            onChange={(ev) => d({ t: 'set', patch: it.kind === 'intro' ? { intro: { ...s.intro, caption: ev.target.value } } : { outro: { ...s.outro, caption: ev.target.value } } })}
+          />
+          <label htmlFor="ins-dur">
+            길이 <span className="mono">{it.dur}초</span>
+          </label>
+          <input
+            id="ins-dur"
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            value={Math.min(it.dur, 5)}
+            onChange={(ev) => d({ t: 'set', patch: it.kind === 'intro' ? { intro: { ...s.intro, dur: Number(ev.target.value) } } : { outro: { ...s.outro, dur: Number(ev.target.value) } } })}
+          />
+        </>
+      ) : it.kind === 'upload' ? (
+        <>
+          <p className="tiny muted file-name">
+            {it.upload!.name} · 원본 {Math.round(it.upload!.srcDur)}초
+          </p>
+          <label className="check">
+            <input type="checkbox" checked={it.upload!.voice === '원래 소리'} onChange={(ev) => d({ t: 'set', patch: { uploads: s.uploads.map((u) => (u.id === it.key ? { ...u, voice: ev.target.checked ? '원래 소리' : '없음' } : u)) } })} /> 영상에 들어 있던 원래 소리 쓰기
+          </label>
+          <button className="btn tiny" onClick={() => (d({ t: 'removeUpload', id: it.key }), onClose())}>
+            이 영상 빼기
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="tiny muted">3단계에서 만든 영상 길이 그대로예요. 필요 없는 부분은 타임라인에서 구간을 골라 지워요.</p>
+          <button className="btn tiny" onClick={() => (d({ t: 'scene', id: it.key, patch: { skip: true } }), onClose())}>
+            이 장면 통째로 빼기
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+// AI 목소리로 내 문장 들어 보기(들어 본 소리는 미리보기 재생에도 쓰인다)
+function TtsPreview({ voice, text, onDur }: { voice: string; text: string; onDur: (sec: number) => void }) {
+  const { d } = useStore();
+  const [busy, setBusy] = useState(false);
+  const key = `${voice}|${text}`;
+  const play = () => {
+    const cached = ttsCache.get(key);
+    const go = (url: string) => {
+      const a = new Audio(url);
+      a.onloadedmetadata = () => Number.isFinite(a.duration) && a.duration > 0 && onDur(r1(Math.min(15, a.duration)));
+      return a.play();
+    };
+    if (cached) return void go(cached).catch(() => {});
+    setBusy(true);
+    api
+      .previewVoice({ voice, text })
+      .then((r) => (ttsCache.set(key, r.url), go(r.url)))
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <button className="btn tiny" disabled={busy || !text.trim()} onClick={play}>
+      {busy ? '만드는 중…' : '▶ 이 목소리로 들어 보기'}
+    </button>
   );
 }
 
@@ -1995,6 +2388,7 @@ function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec
   const [local, setLocalUrl] = useState<string | undefined>(undefined);
   const [err, setErr] = useState('');
   const recRef = React.useRef<MediaRecorder | null>(null);
+  const t0 = React.useRef(0);
   const start = async () => {
     setErr('');
     try {
@@ -2007,7 +2401,7 @@ function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec
         const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
         setLocalUrl(URL.createObjectURL(blob));
         setState('done');
-        d({ t: 'voice', key: itemKey, blob });
+        d({ t: 'voice', key: itemKey, blob, dur: Math.max(0.5, Math.round(((Date.now() - (t0.current || Date.now())) / 1000) * 10) / 10) });
       };
       recRef.current = rec;
       // 3, 2, 1 세고 나서 녹음 시작
@@ -2017,6 +2411,7 @@ function VoiceRecorder({ itemKey, maxSec, path, url }: { itemKey: string; maxSec
         await new Promise((r) => setTimeout(r, 1000));
       }
       rec.start();
+      t0.current = Date.now();
       setState('rec');
       setLeft(maxSec);
       let n = maxSec;

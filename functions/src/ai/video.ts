@@ -10,6 +10,7 @@ export type VideoJob = {
   sec: number;
   img: boolean; // 중등 이미지 모드
   refImage?: Buffer; // 주인공 카드(기준 그림)
+  prevFrame?: Buffer; // 앞 장면의 마지막 화면(이어지게)
 };
 export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number; keyframe?: Buffer; usedRef?: boolean };
 
@@ -109,17 +110,22 @@ export const omniProvider: VideoProvider = {
   async generate(job) {
     if (job.img) return imageProvider.generate(job);
     const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
-    if (!job.editEn && job.refImage) {
+    if (!job.editEn && (job.refImage || job.prevFrame)) {
       // ① 주인공 카드를 보고 이 장면의 첫 그림(같은 주인공·같은 그림체)을 그린다
       // ② 그 그림을 첫 장면으로 영상을 만든다. 어느 단계든 안 되면 글만으로 만든다.
       try {
-        const key = await drawImage(
-          [
-            { inlineData: { mimeType: 'image/png', data: job.refImage.toString('base64') } },
-            { text: `The attached image is the main character reference. Draw ONE 16:9 frame of the scene below with exactly this character (same face, hair, body, clothes and colors) and exactly the same art style. No text.\n${job.promptEn}` },
-          ],
-          '16:9',
-        );
+        const parts: any[] = [];
+        const notes: string[] = [];
+        if (job.refImage) {
+          parts.push({ inlineData: { mimeType: 'image/png', data: job.refImage.toString('base64') } });
+          notes.push(`Image ${parts.length} is the main character reference: keep exactly this character (same face, hair, body, clothes and colors) and exactly the same art style.`);
+        }
+        if (job.prevFrame) {
+          parts.push({ inlineData: { mimeType: 'image/png', data: job.prevFrame.toString('base64') } });
+          notes.push(`Image ${parts.length} is the LAST frame of the previous scene of the same story. This new frame must feel like the very next moment of one continuous film: same art style, same color palette and lighting mood, same character look, natural continuation of position and camera. If the scene below happens in a different place, keep the style and mood and change only the place.`);
+        }
+        parts.push({ text: `${notes.join(' ')} Draw ONE 16:9 frame of the scene below. No text.\n${job.promptEn}` });
+        const key = await drawImage(parts, '16:9');
         try {
           const r = await runOmniSec(
             {

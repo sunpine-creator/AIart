@@ -151,3 +151,23 @@ export async function buildOverlays(items: OverlayItem[]): Promise<Record<string
   }
   return out;
 }
+
+// 하나의 타임라인용 글자 그림: 조각마다 고정 글자(AI 표시·빈 장면 안내), 구간 자막마다 그림
+export async function buildTimelineOverlays(x: {
+  intro: string;
+  outro: string;
+  clips: { key: string; aiBadge?: boolean; placeholder?: string }[];
+  caps: { id: string; text: string; style?: CapStyle }[];
+}): Promise<{ intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> }> {
+  const items: OverlayItem[] = [
+    { key: 'intro', text: x.intro },
+    { key: 'outro', text: x.outro },
+    ...x.clips.map((c) => ({ key: c.key, kind: 'scene' as const, caption: '', aiBadge: c.aiBadge, placeholder: c.placeholder })),
+  ];
+  const o = await buildOverlays(items);
+  const clips: Record<string, string> = {};
+  for (const c of x.clips) if (o[c.key]?.fixed) clips[c.key] = o[c.key].fixed!;
+  const caps: Record<string, string[]> = {};
+  for (const c of x.caps) caps[c.id] = captionPngs(c.text, c.style).slice(0, 16);
+  return { intro: o.intro?.fixed, outro: o.outro?.fixed, clips, caps };
+}

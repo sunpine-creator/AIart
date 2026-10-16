@@ -3,7 +3,8 @@ import { onAuthStateChanged, signInWithCustomToken, signOut, User } from 'fireba
 import { collection, doc, getDoc, increment, limit, onSnapshot, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref as sref, uploadBytes } from 'firebase/storage';
 import { api, auth, db, errText, storage } from './firebase';
-import { OverlayItem, buildOverlays } from './overlays';
+import { buildTimelineOverlays } from './overlays';
+import { Timeline } from './timeline';
 
 // ───────────── 설정값 (서버 functions/src/config.ts 와 같게 유지) ─────────────
 export const PRICE = { '360p': 0.03, '720p': 0.1 } as const;
@@ -40,7 +41,7 @@ export type Approval = { id: string; no: number; nick: string; promptKo: string;
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
 
 // 학생 작업(프로젝트 문서)에 저장되는 칸
-const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmSortDone', 'prmThink', 'cast', 'flow', 'editNote', 'reflect'] as const;
+const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmSortDone', 'prmThink', 'cast', 'flow', 'editNote', 'reflect', 'tl'] as const;
 export type PromptPart = 'goal' | 'role' | 'content' | 'cond';
 type ProjectKey = (typeof PROJECT_KEYS)[number];
 
@@ -63,6 +64,7 @@ export type State = {
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
+  tl?: Timeline; // 하나의 타임라인 편집(지운 구간·자막·목소리). 없으면 예전 장면별 편집을 옮겨 온다
   topic: string;
   story: { who: string; when?: string; where: string; what: string; event: string; why?: string; feeling: string };
   brief: { audience: string; purpose: string; message: string };
@@ -145,7 +147,7 @@ export type Action =
   | { t: 'log'; entry: { kind: string; textKo: string; action: string } }
   | { t: 'upload'; file: File; meta: Upload }
   | { t: 'removeUpload'; id: string }
-  | { t: 'voice'; key: string; blob: Blob }
+  | { t: 'voice'; key: string; blob: Blob; dur?: number }
   | { t: 'render' }
   | { t: 'join'; code: string; no: number; name: string }
   | { t: 'openClass'; classId: string }
@@ -390,22 +392,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       flow: p.flow ?? {},
       editNote: p.editNote ?? '',
       reflect: p.reflect ?? '',
+      tl: p.tl ?? undefined,
       topic: p.topic ?? '',
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,
       scenario: p.scenario ?? base.scenario,
       // 영상 장면은 만든 영상 길이(3초)보다 길게 쓸 수 없다
       scenes: ((p.scenes ?? []) as Scene[]).map((sc) => {
-        const g = gens.find((x) => x.id === sc.selectedGenId);
-        return { ...sc, edits: editsOf(sc.id), // 길이는 편집에서 고치지 않는다: 만든 영상 길이 − 앞부분 자른 만큼
-        dur: g && !g.img ? Math.max(1, g.sec - (sc.start ?? 0)) : Math.max(1, Math.min(sc.dur, SCENE_MAX_SEC)) };
+        const g = gens.find((x) => x.id === sc.selectedGenId) ?? [...gens].reverse().find((x) => x.sceneId === sc.id && x.status === 'succeeded' && x.kind !== 'final');
+        // 장면 길이 = 만든 영상 길이 그대로(필요 없는 부분은 타임라인에서 구간을 지운다)
+        return { ...sc, edits: editsOf(sc.id), dur: g && !g.img ? Math.max(1, g.sec) : Math.max(1, Math.min(sc.dur, SCENE_MAX_SEC)) };
       }),
       gens,
       logs,
       intro: p.intro ?? base.intro,
       outro: p.outro ?? base.outro,
       bgm: p.bgm ?? '없음',
-      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, dur: Math.max(1, Math.min(Math.floor((u.srcDur || u.dur) - (u.start ?? 0)), band === 'elementary' ? 30 : 60)), url: u.url || u.dl || uploadUrls[u.id] || '' })),
+      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, dur: Math.max(1, Math.min(Math.floor(u.srcDur || u.dur), band === 'elementary' ? 30 : 60)), url: u.url || u.dl || uploadUrls[u.id] || '' })),
       order: p.order ?? [],
       checklist: p.checklist ?? {},
       aiNote: p.aiNote ?? '',
@@ -511,7 +514,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .then((r) => {
             const cur = projectRef.current ?? {};
             const patch = { voicePath: r.path, voiceUrl: r.url, voice: '내 목소리' };
-            if ((cur.scenes ?? []).some((x: Scene) => x.id === a.key)) patchProject({ scenes: cur.scenes.map((x: Scene) => (x.id === a.key ? { ...x, ...patch } : x)) });
+            const tl = cur.tl as Timeline | undefined;
+            if (tl?.voices?.some((v) => v.id === a.key)) patchProject({ tl: { ...tl, voices: tl.voices.map((v) => (v.id === a.key ? { ...v, kind: 'mine', path: r.path, url: r.url, dur: a.dur ?? v.dur } : v)) } });
+            else if ((cur.scenes ?? []).some((x: Scene) => x.id === a.key)) patchProject({ scenes: cur.scenes.map((x: Scene) => (x.id === a.key ? { ...x, ...patch } : x)) });
             else patchProject({ uploads: (cur.uploads ?? []).map((u: Upload) => (u.id === a.key ? { ...u, ...patch } : u)) });
             toast('녹음을 저장했어요.');
           })
@@ -529,20 +534,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             const all = [...scenes.map((x) => x.id), ...uploads.map((u) => u.id)];
             const kept = ((p.order ?? []) as string[]).filter((k) => all.includes(k));
             const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
-            const items: OverlayItem[] = [{ key: 'intro', text: p.intro?.caption || p.topic || 'AI로 달라진 나의 일상' }];
-            keys.forEach((k, i) => {
+            const clips = keys.map((k, i) => {
               const sc = scenes.find((x) => x.id === k);
-              if (sc) {
-                const g = gens.find((x) => x.id === sc.selectedGenId) ?? [...gens].reverse().find((x) => x.sceneId === sc.id && x.status === 'succeeded');
-                const has = !!g?.storagePath;
-                items.push({ key: sc.id, kind: 'scene', caption: sc.caption ?? '', capStyle: sc.capStyle, aiBadge: has, placeholder: has ? undefined : sc.line || `장면 ${i + 1}` });
-              } else {
-                const u = uploads.find((x) => x.id === k)!;
-                items.push({ key: u.id, kind: 'upload', caption: u.caption ?? '', capStyle: u.capStyle });
-              }
+              if (!sc) return { key: k };
+              const g = gens.find((x) => x.id === sc.selectedGenId) ?? [...gens].reverse().find((x) => x.sceneId === sc.id && x.status === 'succeeded');
+              const has = !!g?.storagePath;
+              return { key: sc.id, aiBadge: has, placeholder: has ? undefined : sc.line || `장면 ${i + 1}` };
             });
-            items.push({ key: 'outro', text: p.outro?.caption || '' });
-            const overlays = await buildOverlays(items);
+            const tl = (p.tl ?? { caps: [] }) as Timeline;
+            const overlays = await buildTimelineOverlays({
+              intro: p.intro?.caption || p.topic || 'AI로 달라진 나의 일상',
+              outro: p.outro?.caption || '',
+              clips,
+              caps: (tl.caps ?? []).filter((c) => c.text.trim()),
+            });
             const r = await api.renderVideo({ overlays });
             toast(r.missing ? `영상을 저장했어요. 불러오지 못한 조각 ${r.missing}개는 빼고 만들었어요.` : '영상을 저장했어요!');
           } catch (e) {

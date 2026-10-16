@@ -181,15 +181,21 @@ function StudentMirror({ no, name, stage }: { no: number; name: string; stage: n
                   .filter((x) => !x.skip)
                   .map((sc) => (
                     <li key={sc.id}>
-                      장면 {scenes.indexOf(sc) + 1} · {sc.dur}초{sc.start ? ` (앞 ${sc.start}초 자름)` : ''} · 자막: {sc.caption || '—'} · 목소리: {sc.voice}
+                      장면 {scenes.indexOf(sc) + 1} · {sc.line || '—'}
                     </li>
                   ))}
                 {uploads.map((u) => (
                   <li key={u.id}>
-                    내 영상 {u.name} · {u.dur}초 · 자막: {u.caption || '—'}
+                    내 영상 {u.name} · {u.dur}초
                   </li>
                 ))}
               </ol>
+              <p className="tiny">
+                지운 구간 {(p.tl?.cuts ?? []).length}개 · 자막 {(p.tl?.caps ?? []).length}개 · 목소리 {(p.tl?.voices ?? []).length}개
+              </p>
+              {(p.tl?.caps ?? []).length > 0 && (
+                <p className="tiny muted">자막: {(p.tl.caps as { text: string }[]).map((c) => c.text).filter(Boolean).join(' / ')}</p>
+              )}
               {p.lastExport?.path ? (
                 <StoredVideo path={p.lastExport.path} url={p.lastExport.url} label="저장한 영상" size="md" />
               ) : (
