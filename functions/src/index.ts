@@ -188,7 +188,12 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   if (!checkText) throw new HttpsError('invalid-argument', '빈칸을 채워 주세요.');
   const kindLabel = (img ? '이미지 ' : '영상 ') + (kind === 'draft' ? '초안' : kind === 'edit' ? '대화형 수정' : '장면 확정');
   const genRef = db.collection('generations').doc();
-  const base = { classId, no, sceneId, kind, img, promptKo, editText: kind === 'edit' ? editText : null, res: spec.res, sec: spec.sec, hue: hueOf(genRef.id), parentId: parentId ?? null, createdAt: FieldValue.serverTimestamp() };
+  // 선생님 승인 목록에서 몇 번 장면인지 알 수 있게 장면 번호·내용을 함께 저장한다
+  const projScenes: any[] = (await db.doc(`projects/${classId}_${no}`).get()).data()?.scenes ?? [];
+  const sceneIdx = projScenes.findIndex((x) => x.id === sceneId);
+  const sceneNo = sceneIdx >= 0 ? sceneIdx + 1 : null;
+  const sceneLine = sceneIdx >= 0 ? String(projScenes[sceneIdx].line ?? '').slice(0, 80) : '';
+  const base = { classId, no, sceneId, sceneNo, sceneLine, kind, img, promptKo, editText: kind === 'edit' ? editText : null, res: spec.res, sec: spec.sec, hue: hueOf(genRef.id), parentId: parentId ?? null, createdAt: FieldValue.serverTimestamp() };
 
   // 장면 확정: 학생이 고른 결과를 그대로 장면으로 쓴다. 새로 만들지 않으므로 비용·크레딧이 없다.
   if (kind === 'final') {

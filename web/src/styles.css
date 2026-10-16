@@ -841,3 +841,7 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .world-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0 0; }
 .world-grid dt { color: var(--muted); font-size: 0.85rem; }
 .world-grid dd { margin: 0; font-weight: 600; }
+
+/* 승인 목록: 몇 번 장면인지 */
+.appr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.appr-scene { font-weight: 700; color: var(--human); background: var(--human-tint); border-radius: 999px; padding: 1px 10px; font-size: 0.85rem; }

@@ -37,7 +37,7 @@ export type Log = { id: string; at: number; who: number; kind: string; textKo: s
 export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
-export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string } };
+export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string }; sceneNo?: number; sceneLine?: string; kind?: string; sec?: number; editText?: string };
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
 
 // 학생 작업(프로젝트 문서)에 저장되는 칸
@@ -417,7 +417,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       submitted: !!p.submitted,
       spent: Math.round(usage * 100) / 100,
       others: students.map((x) => ({ no: x.no, nick: x.nick || '', stage: x.stage, credits: x.credits, status: x.status, quiz: x.quiz ?? undefined })),
-      approvals: pending.map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '', flag: g.status === 'flagged' ? { category: g.flag?.category ?? '안전 검사', reason: g.flag?.reason ?? '' } : undefined })),
+      approvals: [...pending].sort((a, b) => a.no - b.no || (a.sceneNo ?? 99) - (b.sceneNo ?? 99)).map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '', sceneNo: g.sceneNo ?? undefined, sceneLine: g.sceneLine ?? '', kind: g.kind, sec: g.sec, editText: g.editText ?? undefined, flag: g.status === 'flagged' ? { category: g.flag?.category ?? '안전 검사', reason: g.flag?.reason ?? '' } : undefined })),
       selectedStudent: local.selectedStudent,
       peers: peers.map((p) => ({ ...p, nick: nickByNo(p.no) })),
       lastExport: p.lastExport,

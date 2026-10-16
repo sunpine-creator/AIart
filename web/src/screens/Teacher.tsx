@@ -798,15 +798,26 @@ function FlagAlert() {
   );
 }
 
-function ApprovalItem({ a }: { a: { id: string; no: number; nick: string; promptKo: string; promptEn: string; flag?: { category: string; reason: string } } }) {
+function ApprovalItem({ a }: { a: { id: string; no: number; nick: string; promptKo: string; promptEn: string; flag?: { category: string; reason: string }; sceneNo?: number; sceneLine?: string; kind?: string; sec?: number; editText?: string } }) {
   const { d } = useStore();
   const [rejecting, setRejecting] = useState(false);
   return (
     <li className="approval">
       <div>
-        <strong>
-          {a.no}번 {a.nick}
-        </strong>
+        <div className="appr-head">
+          <strong>
+            {a.no}번 {a.nick}
+          </strong>
+          <span className="appr-scene">{a.sceneNo ? `장면 #${a.sceneNo}` : '장면'}</span>
+          <span className={`chip ${a.kind === 'edit' ? 'warn' : ''}`}>{a.kind === 'edit' ? '수정본' : '초안'}</span>
+          {a.sec ? <span className="tiny muted mono">{a.sec}초</span> : null}
+        </div>
+        {a.sceneLine && <p className="tiny muted">장면 내용: {a.sceneLine}</p>}
+        {a.kind === 'edit' && a.editText && (
+          <p className="tiny">
+            <strong>고친 부분:</strong> {a.editText}
+          </p>
+        )}
         {a.flag && (
           <p className="tiny">
             <span className="chip critical">{a.flag.category}</span> {a.flag.reason}
