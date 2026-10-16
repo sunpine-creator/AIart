@@ -764,3 +764,7 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .cast-card { aspect-ratio: 1; border-radius: 14px; border: 1px dashed var(--line); background: var(--sunk); display: grid; place-items: center; overflow: hidden; text-align: center; padding: 8px; }
 .cast-card img { width: 100%; height: 100%; object-fit: contain; }
 @media (max-width: 640px) { .cast-body { grid-template-columns: minmax(0, 1fr); } .cast-card { max-width: 220px; } }
+
+/* 안전 검사 확인 알림 */
+.flag-alert { border: 2px solid var(--critical); background: var(--critical-tint); margin-bottom: 14px; }
+.flag-alert .approvals { margin: 0; }

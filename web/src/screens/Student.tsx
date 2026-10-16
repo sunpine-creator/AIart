@@ -1005,14 +1005,16 @@ function CastPanel() {
   const set = (patch: Partial<typeof c>) => d({ t: 'set', patch: { cast: { ...c, ...patch } } });
   const hasCard = !!c.cardUrl;
   const tries = c.tries ?? 0;
-  const changed = hasCard && c.cardLook !== c.look;
+  const lookChanged = hasCard && c.cardLook !== c.look;
+  const styleChanged = hasCard && !!c.cardStyle && c.cardStyle !== c.style;
+  const changed = lookChanged || styleChanged;
   const make = () => {
     setBusy(true);
     api
       .makeCharacter({ look: c.look.trim(), style: c.style })
       .then((r) => {
         if (r.blocked) return d({ t: 'toast', msg: `${r.reason ?? '이 설명은 쓸 수 없어요.'} ${r.suggestion ?? ''}` });
-        set({ cardUrl: r.url || undefined, cardLook: c.look.trim(), tries: r.tries ?? tries + 1 });
+        set({ cardUrl: r.url || undefined, cardLook: c.look.trim(), cardStyle: c.style, tries: r.tries ?? tries + 1 });
         d({ t: 'toast', msg: '주인공 카드를 만들었어요. 모든 장면이 이 주인공과 그림체로 만들어져요.' });
       })
       .catch((e) => d({ t: 'toast', msg: errText(e) }))
@@ -1035,18 +1037,18 @@ function CastPanel() {
             <span className="cs-label">그림체</span>
             <div className="pills">
               {STYLES.map((st) => (
-                <button key={st} type="button" disabled={hasCard} className={`pill ${c.style === st ? 'on' : ''}`} aria-pressed={c.style === st} onClick={() => set({ style: st })}>
+                <button key={st} type="button" className={`pill ${c.style === st ? 'on' : ''}`} aria-pressed={c.style === st} onClick={() => set({ style: st })}>
                   {st}
                 </button>
               ))}
             </div>
           </div>
-          {hasCard && <p className="tiny muted">그림체는 주인공 카드를 만들 때 정해져서, 모든 장면이 같은 그림체로 만들어져요.</p>}
+          {hasCard && <p className="tiny muted">장면은 주인공 카드의 그림체로 만들어져요. 그림체를 바꾸려면 다른 그림체를 고른 뒤 카드를 다시 만들어요.</p>}
           <div className="actions">
             <button className="btn ai" disabled={busy || !c.look.trim() || tries >= 3 || s.cls.paused} onClick={make}>
               {busy ? 'AI가 주인공을 그리는 중…' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
             </button>
-            {changed && <span className="tiny hint">주인공 설명을 바꿨어요. 카드를 다시 만들어야 장면에 반영돼요.</span>}
+            {changed && <span className="tiny hint">{styleChanged && !lookChanged ? '그림체를 바꿨어요.' : '주인공 설명을 바꿨어요.'} {tries >= 3 ? '카드를 더 만들 수 없어서 지금 카드의 그림체로 만들어져요.' : '“주인공 카드 다시 만들기”를 눌러야 장면에 반영돼요.'}</span>}
             {tries >= 3 && <span className="tiny muted">카드는 3번까지 만들 수 있어요.</span>}
           </div>
         </div>
@@ -1068,7 +1070,7 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
   const [busy, setBusy] = useState(false);
   const st = s.story;
   const filled = [s.topic, st.who, st.when, st.where, st.what, st.event, st.why].filter((x) => String(x ?? '').trim()).length;
-  const used = s.gens.some((g) => ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+  const used = s.gens.some((g) => ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
   const run = () => {
     setBusy(true);
     api
@@ -1077,7 +1079,7 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
         if (r.blocked) return d({ t: 'toast', msg: `활동지에 고쳐야 할 표현이 있어요: ${r.reason}` });
         if (!r.scenes.length) return d({ t: 'toast', msg: '초안을 만들지 못했어요. 활동지를 조금 더 써 보세요.' });
         // 이미 AI 영상을 만든 장면은 그대로 두고, 나머지 자리에 초안을 넣는다
-        const hasGen = (id: string) => s.gens.some((g) => g.sceneId === id && ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+        const hasGen = (id: string) => s.gens.some((g) => g.sceneId === id && ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
         const kept = s.scenes.filter((x) => hasGen(x.id));
         const free = s.scenes.filter((x) => !hasGen(x.id));
         const drafted: Scene[] = r.scenes.slice(0, Math.max(0, 5 - kept.length)).map((x, i) => {
@@ -1138,7 +1140,7 @@ function S3() {
         <aside className="scene-list" aria-label="장면 목록">
           {s.scenes.map((sc, i) => {
             const done = !!sc.selectedGenId;
-            const busy = s.gens.some((g) => g.sceneId === sc.id && ['awaiting_approval', 'queued', 'running'].includes(g.status));
+            const busy = s.gens.some((g) => g.sceneId === sc.id && ['flagged', 'awaiting_approval', 'queued', 'running'].includes(g.status));
             return (
               <button key={sc.id} className={`scene-tab ${sel === sc.id ? 'on' : ''}`} onClick={() => setSel(sc.id)}>
                 <span className="mono">#{i + 1}</span>
@@ -1172,7 +1174,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const word = mediaWord(s);
   const gens = s.gens.filter((g) => g.sceneId === scene.id);
   const latest = gens[gens.length - 1];
-  const busy = latest && ['awaiting_approval', 'queued', 'running'].includes(latest.status);
+  const busy = latest && ['flagged', 'awaiting_approval', 'queued', 'running'].includes(latest.status);
   const b = scene.builder;
   const ko = buildPromptKo(b);
   const lastSent = [...gens].reverse().find((g) => g.promptEn && g.status !== 'blocked');
@@ -1186,7 +1188,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const lastGood = [...gens].reverse().find((g) => g.status === 'succeeded' && g.kind !== 'final');
   const final = gens.find((g) => g.kind === 'final' && g.status === 'succeeded');
   // 이미 보낸 초안(승인 대기·대기열·만드는 중·완성)이 있으면 새 초안은 못 만든다. 차단·반려·실패면 다시 할 수 있다.
-  const hasDraft = gens.some((g) => g.kind === 'draft' && ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+  const hasDraft = gens.some((g) => g.kind === 'draft' && ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
   const sending = s.sending.includes(scene.id);
   return (
     <section className="work">
@@ -1336,6 +1338,28 @@ function GenCard({ g, scene, isLatestGood, finalCost }: { g: Gen; scene: Scene; 
           <strong>이렇게 바꿔 볼까요?</strong> {tip}
         </p>
         <p className="tiny muted">크레딧은 줄지 않았어요. 선생님 화면에도 알림이 갔어요.</p>
+      </li>
+    );
+  }
+  if (g.status === 'flagged') {
+    const [why, tip] = (g.rejectReason ?? '|').split('|');
+    return (
+      <li className="gen blocked">
+        <div className="gen-top">
+          <span className="chip warn">선생님 확인 중</span>
+          <span className="mono muted">{time}</span>
+        </div>
+        <p className="gen-prompt">“{g.editText ?? g.promptKo}”</p>
+        <p>
+          <strong>왜 확인하나요?</strong> {why}
+        </p>
+        {tip && (
+          <p>
+            <strong>이렇게 바꿔 볼 수도 있어요</strong> {tip}
+          </p>
+        )}
+        <Progress text="선생님이 보고 괜찮다고 하면 바로 만들기 시작해요" />
+        <p className="tiny muted">크레딧은 선생님이 허락할 때 줄어요.</p>
       </li>
     );
   }

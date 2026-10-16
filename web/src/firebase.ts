@@ -87,7 +87,7 @@ export const api = {
   joinClass: call<{ code: string; no: number; name: string }, { token: string }>('joinClass'),
   requestGeneration: call<
     { kind: 'draft' | 'edit' | 'final'; sceneId: string; builder?: Record<string, any>; editText?: string; parentId?: string; sec?: number },
-    { genId: string; blocked: boolean; category?: string; reason?: string; suggestion?: string }
+    { genId: string; blocked: boolean; flagged?: boolean; category?: string; reason?: string; suggestion?: string }
   >('requestGeneration'),
   reviewGeneration: call<{ genId: string; approve: boolean; reason?: string }, { ok: boolean }>('reviewGeneration'),
   deleteClass: call<{ classId: string }, { ok: boolean }>('deleteClass', 300_000),

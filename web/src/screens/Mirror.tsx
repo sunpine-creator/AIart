@@ -10,6 +10,7 @@ import { STAGES } from './Student';
 import { ShareState, teacherRequest, teacherStop, teacherWatch } from '../screenshare';
 
 const STATUS: Record<string, string> = {
+  flagged: '안전 검사 확인 중',
   awaiting_approval: '승인 대기',
   queued: '대기열',
   running: '만드는 중',

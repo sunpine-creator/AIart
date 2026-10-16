@@ -657,6 +657,7 @@ function Dashboard() {
         </div>
       </header>
 
+      <FlagAlert />
       {askDelete && <DeleteClass onClose={() => setAskDelete(false)} />}
       {showScreens ? <StudentScreens /> : showWorks ? <StudentWorks /> : showPins ? <PinCards /> : <>
       <section className="t-bar">
@@ -717,16 +718,16 @@ function Dashboard() {
 
         <section className="panel">
           <div className="panel-head">
-            <h3>승인 대기 {s.approvals.length}건</h3>
+            <h3>승인 대기 {s.approvals.filter((a) => !a.flag).length}건</h3>
             {!s.cls.approval && <span className="tiny muted">자동 생성 모드</span>}
           </div>
-          {s.approvals.length === 0 && <p className="muted">확인할 프롬프트가 없어요.</p>}
+          {s.approvals.filter((a) => !a.flag).length === 0 && <p className="muted">확인할 프롬프트가 없어요.</p>}
           <ul className="approvals">
-            {s.approvals.map((a) => (
+            {s.approvals.filter((a) => !a.flag).map((a) => (
               <ApprovalItem key={a.id} a={a} />
             ))}
           </ul>
-          <h3 className="mt">차단 알림</h3>
+          <h3 className="mt">안전 검사 기록</h3>
           <ul className="alerts">
             {blocked.map((l) => (
               <li key={l.id}>
@@ -772,7 +773,32 @@ function Dashboard() {
   );
 }
 
-function ApprovalItem({ a }: { a: { id: string; no: number; nick: string; promptKo: string; promptEn: string } }) {
+// 안전 검사에 걸린 요청: 화면 맨 위에 알림으로 띄우고, 선생님이 괜찮다고 하면 만든다
+function FlagAlert() {
+  const { s, d } = useStore();
+  const flagged = s.approvals.filter((a) => a.flag);
+  const seen = React.useRef(flagged.length);
+  React.useEffect(() => {
+    if (flagged.length > seen.current) d({ t: 'toast', msg: `안전 검사 확인이 필요한 요청이 ${flagged.length}건 있어요.` });
+    seen.current = flagged.length;
+  }, [flagged.length]);
+  if (!flagged.length) return null;
+  return (
+    <section className="panel flag-alert" role="alert">
+      <div className="panel-head">
+        <h3>안전 검사 확인 {flagged.length}건</h3>
+        <span className="tiny muted">AI 안전 검사에 걸린 프롬프트예요. 읽어 보고 괜찮으면 “괜찮아요, 만들기”를 눌러 주세요.</span>
+      </div>
+      <ul className="approvals">
+        {flagged.map((a) => (
+          <ApprovalItem key={a.id} a={a} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function ApprovalItem({ a }: { a: { id: string; no: number; nick: string; promptKo: string; promptEn: string; flag?: { category: string; reason: string } } }) {
   const { d } = useStore();
   const [rejecting, setRejecting] = useState(false);
   return (
@@ -781,6 +807,11 @@ function ApprovalItem({ a }: { a: { id: string; no: number; nick: string; prompt
         <strong>
           {a.no}번 {a.nick}
         </strong>
+        {a.flag && (
+          <p className="tiny">
+            <span className="chip critical">{a.flag.category}</span> {a.flag.reason}
+          </p>
+        )}
         <p>{a.promptKo}</p>
         <p className="en tiny">{a.promptEn}</p>
       </div>
@@ -798,7 +829,7 @@ function ApprovalItem({ a }: { a: { id: string; no: number; nick: string; prompt
       ) : (
         <div className="approval-act">
           <button className="btn primary tiny" onClick={() => d({ t: 'approve', id: a.id })}>
-            승인
+            {a.flag ? '괜찮아요, 만들기' : '승인'}
           </button>
           <button className="btn tiny" onClick={() => setRejecting(true)}>
             돌려보내기

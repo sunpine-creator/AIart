@@ -190,15 +190,6 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   const genRef = db.collection('generations').doc();
   const base = { classId, no, sceneId, kind, img, promptKo, editText: kind === 'edit' ? editText : null, res: spec.res, sec: spec.sec, hue: hueOf(genRef.id), parentId: parentId ?? null, createdAt: FieldValue.serverTimestamp() };
 
-  const block = async (category: string, reason: string, suggestion: string, layer: string) => {
-    await Promise.all([
-      genRef.set({ ...base, status: 'blocked', rejectReason: `${reason}|${suggestion}`, promptEn: null }),
-      log({ classId, no, kind: kindLabel, textKo: checkText, verdict: 'blocked', category, action: '차단', layer }),
-      db.doc(`classes/${classId}/students/${no}`).update({ status: 'blocked', blockedAt: FieldValue.serverTimestamp() }),
-    ]);
-    return { genId: genRef.id, blocked: true, category, reason, suggestion };
-  };
-
   // 장면 확정: 학생이 고른 결과를 그대로 장면으로 쓴다. 새로 만들지 않으므로 비용·크레딧이 없다.
   if (kind === 'final') {
     await genRef.set({
@@ -210,10 +201,12 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     return { genId: genRef.id, blocked: false };
   }
 
-  // 1단계: 규칙 검사
+  // 안전 검사: 걸려도 막지 않고 '선생님 확인(flagged)'으로 보낸다. 선생님이 괜찮다고 하면 만든다.
+  type Flag = { category: string; reason: string; suggestion: string; layer: string };
+  let flag: Flag | null = null;
   {
     const r = moderateRules(checkText);
-    if (!r.pass) return block(r.category!, r.reason!, r.suggestion!, 'rule');
+    if (!r.pass) flag = { category: r.category!, reason: r.reason!, suggestion: r.suggestion!, layer: 'rule' };
   }
   // 2단계: Gemini 맥락 검사 + 번역 (가짜 모드에서는 TEXT_CHECK=on 일 때만)
   let promptEn = parent?.promptEn ?? '';
@@ -223,12 +216,13 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   {
     if (useAi) {
       const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
-      if (!c.safe) return block(c.category ?? '기타', c.reasonKo ?? '안전하지 않은 표현이 있어요.', c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', 'ai');
-      if (kind === 'edit') { editEn = c.english; promptEn = `${parent!.promptEn} Change: ${c.english}`; } else {
-        // 모든 장면에 같은 주인공·배경·그림 스타일을 붙여 장면끼리 이어지게 한다
+      if (!c.safe && !flag) flag = { category: c.category ?? '기타', reason: c.reasonKo ?? '확인이 필요한 표현이 있어요.', suggestion: c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', layer: 'ai' };
+      const english = c.english || checkText;
+      if (kind === 'edit') { editEn = english; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
+        // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
         const cast = await castPrefix(classId, no);
-        if (cast.blocked) return block(cast.blocked.category, cast.blocked.reason, cast.blocked.suggestion, 'ai');
-        promptEn = `${cast.text}Scene: ${c.english} ${cast.style}`;
+        if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
+        promptEn = `${cast.text}Scene: ${english} ${cast.style}`;
         refPath = cast.cardPath ?? null;
       }
     } else {
@@ -237,20 +231,24 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   }
 
   // 승인 모드: 선생님이 승인할 때 크레딧이 줄어든다(반려하면 줄지 않음). 승인 없이 바로 만들 때는 지금 줄어든다.
-  const needApproval = !!cls.approval;
-  const status = needApproval ? 'awaiting_approval' : 'queued';
+  const needApproval = !!cls.approval || !!flag;
+  const status = flag ? 'flagged' : needApproval ? 'awaiting_approval' : 'queued';
   const studentRef = db.doc(`classes/${classId}/students/${no}`);
   const sceneGens = db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId);
   await db.runTransaction(async (tx) => {
     const [st, prev] = await Promise.all([tx.get(studentRef), tx.get(sceneGens)]);
-    const live = prev.docs.map((d) => d.data()).filter((x) => ['awaiting_approval', 'queued', 'running', 'succeeded'].includes(x.status));
-    if (live.some((x) => ['awaiting_approval', 'queued', 'running'].includes(x.status))) throw new HttpsError('already-exists', '이 장면은 이미 만드는 중이에요. 결과가 나올 때까지 기다려 주세요.');
+    const live = prev.docs.map((d) => d.data()).filter((x) => ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(x.status));
+    if (live.some((x) => ['flagged', 'awaiting_approval', 'queued', 'running'].includes(x.status))) throw new HttpsError('already-exists', '이 장면은 이미 만드는 중이에요. 결과가 나올 때까지 기다려 주세요.');
     if (kind === 'draft' && live.some((x) => x.kind === 'draft')) throw new HttpsError('already-exists', '초안은 장면마다 한 번만 만들 수 있어요. 결과를 판단한 뒤 "고쳐서 다시 만들기"를 써 주세요.');
     const credits = st.data()?.credits ?? 0;
     if (credits < spec.credits) throw new HttpsError('resource-exhausted', '크레딧이 부족해요. 선생님께 말씀드려요.');
     tx.update(studentRef, { ...(needApproval ? {} : { credits: credits - spec.credits }), status: needApproval ? 'waiting' : 'making' });
-    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null, refPath });
+    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, flag: flag ?? null, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null, refPath });
   });
+  if (flag) {
+    await log({ classId, no, kind: kindLabel, textKo: checkText, textEn: editEn ?? promptEn, verdict: 'blocked', category: flag.category, action: '선생님 확인 대기', layer: flag.layer });
+    return { genId: genRef.id, blocked: false, flagged: true, category: flag.category, reason: flag.reason, suggestion: flag.suggestion };
+  }
   await log({ classId, no, kind: kindLabel, textKo: checkText, textEn: editEn ?? promptEn, verdict: 'pass', action: needApproval ? '승인 대기' : '대기열', layer: useAi ? 'ai' : 'rule' });
   if (!needApproval) await enqueue(genRef.id);
   return { genId: genRef.id, blocked: false };
@@ -344,24 +342,25 @@ export const reviewGeneration = onCall(async (req) => {
   const g = (await ref.get()).data();
   if (!g) throw new HttpsError('not-found', '요청을 찾을 수 없어요.');
   await ownedClass(uid, g.classId);
-  if (g.status !== 'awaiting_approval') return { ok: true };
+  if (!['awaiting_approval', 'flagged'].includes(g.status)) return { ok: true };
+  const wasFlagged = g.status === 'flagged';
   const studentRef = db.doc(`classes/${g.classId}/students/${g.no}`);
   if (approve) {
     await db.runTransaction(async (tx) => {
       const [cur, st] = await Promise.all([tx.get(ref), tx.get(studentRef)]);
-      if (cur.data()?.status !== 'awaiting_approval') throw new HttpsError('failed-precondition', '이미 처리된 요청이에요.');
+      if (!['awaiting_approval', 'flagged'].includes(cur.data()?.status)) throw new HttpsError('failed-precondition', '이미 처리된 요청이에요.');
       const need = cur.data()?.charged === false ? Number(cur.data()?.credits ?? 0) : 0;
       const credits = st.data()?.credits ?? 0;
       if (credits < need) throw new HttpsError('resource-exhausted', `${g.no}번 학생의 크레딧이 부족해요. 크레딧을 늘려 주거나 돌려보내 주세요.`);
       tx.update(studentRef, { ...(need ? { credits: credits - need } : {}), status: 'making' });
       tx.update(ref, { status: 'queued', reviewedBy: uid, charged: true });
     });
-    await log({ classId: g.classId, no: g.no, kind: '교사 승인', textKo: g.editText ?? g.promptKo, textEn: g.promptEn, verdict: 'pass', action: '승인' });
+    await log({ classId: g.classId, no: g.no, kind: wasFlagged ? '안전 검사 확인' : '교사 승인', textKo: g.editText ?? g.promptKo, textEn: g.promptEn, verdict: 'pass', action: wasFlagged ? `선생님이 괜찮다고 함 (${g.flag?.category ?? ''})` : '승인' });
     await enqueue(genId);
   } else {
     await ref.update({ status: 'rejected', rejectReason: reason || '선생님이 다시 생각해 보라고 했어요', reviewedBy: uid });
     await studentRef.update({ ...(g.charged === false ? {} : { credits: FieldValue.increment(g.credits ?? 0) }), status: 'idle' });
-    await log({ classId: g.classId, no: g.no, kind: '교사 반려', textKo: g.editText ?? g.promptKo, verdict: 'pass', action: `반려: ${reason}` });
+    await log({ classId: g.classId, no: g.no, kind: wasFlagged ? '안전 검사 확인' : '교사 반려', textKo: g.editText ?? g.promptKo, verdict: 'pass', action: `반려: ${reason}` });
   }
   return { ok: true };
 });

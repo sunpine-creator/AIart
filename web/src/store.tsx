@@ -20,7 +20,7 @@ export const CLASS_SIZE = 30;
 export type Band = 'elementary' | 'middle';
 export type Stage = 1 | 2 | 3 | 4 | 5 | 6;
 export type Res = '360p' | '720p';
-export type GenStatus = 'awaiting_approval' | 'queued' | 'running' | 'succeeded' | 'blocked' | 'rejected';
+export type GenStatus = 'flagged' | 'awaiting_approval' | 'queued' | 'running' | 'succeeded' | 'blocked' | 'rejected';
 export type Fit = 'yes' | 'partial' | 'no';
 // 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
 export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type'; x?: number; y?: number /* 마우스로 옮긴 위치: 화면 가로·세로 비율(0~1), 글자 덩어리의 가운데 */ };
@@ -36,7 +36,7 @@ export type Log = { id: string; at: number; who: number; kind: string; textKo: s
 export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
-export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string };
+export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string } };
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
 
 // 학생 작업(프로젝트 문서)에 저장되는 칸
@@ -59,7 +59,7 @@ export type State = {
   prmSort: Record<string, PromptPart | undefined>;
   prmThink: string;
   prmSortDone: boolean;
-  cast: { look: string; place: string; style: string; cardUrl?: string; cardLook?: string; tries?: number };
+  cast: { look: string; place: string; style: string; cardUrl?: string; cardLook?: string; cardStyle?: string; tries?: number };
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
@@ -162,6 +162,7 @@ const tsMs = (v: any) => (v?.toMillis ? v.toMillis() : typeof v === 'number' ? v
 export function toGen(id: string, x: any): Gen {
   let status = x.status as string;
   let rejectReason = x.rejectReason ?? undefined;
+  if (status === 'flagged') rejectReason = `${x.flag?.reason ?? ''}|${x.flag?.suggestion ?? ''}`;
   if (status === 'failed') {
     status = 'rejected';
     rejectReason = '만드는 중에 문제가 생겼어요. 크레딧을 돌려받았어요. 다시 해 보세요.';
@@ -296,7 +297,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const unsubs = [
       onSnapshot(doc(db, 'classes', c), (d) => setCls({ id: d.id, ...d.data() }), onErr('반 정보')),
       onSnapshot(collection(db, 'classes', c, 'students'), (q) => setStudents(q.docs.map((d) => d.data()).sort((a, b) => a.no - b.no)), onErr('학생 명단')),
-      onSnapshot(query(collection(db, 'generations'), where('classId', '==', c), where('status', '==', 'awaiting_approval'), orderBy('createdAt', 'asc')), (q) =>
+      onSnapshot(query(collection(db, 'generations'), where('classId', '==', c), where('status', 'in', ['awaiting_approval', 'flagged']), orderBy('createdAt', 'asc')), (q) =>
         setPending(q.docs.map((d) => ({ id: d.id, ...d.data() }))),
       onErr('승인 대기')),
       onSnapshot(query(collection(db, 'promptLogs'), where('classId', '==', c), orderBy('at', 'desc'), limit(500)), (q) =>
@@ -385,7 +386,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       prmSort: p.prmSort ?? {},
       prmThink: p.prmThink ?? '',
       prmSortDone: !!p.prmSortDone,
-      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책', cardUrl: p.cast?.cardUrl, cardLook: p.cast?.cardLook, tries: p.cast?.tries ?? 0 },
+      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책', cardUrl: p.cast?.cardUrl, cardLook: p.cast?.cardLook, cardStyle: p.cast?.cardStyle, tries: p.cast?.tries ?? 0 },
       flow: p.flow ?? {},
       editNote: p.editNote ?? '',
       reflect: p.reflect ?? '',
@@ -413,7 +414,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       submitted: !!p.submitted,
       spent: Math.round(usage * 100) / 100,
       others: students.map((x) => ({ no: x.no, nick: x.nick || '', stage: x.stage, credits: x.credits, status: x.status, quiz: x.quiz ?? undefined })),
-      approvals: pending.map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '' })),
+      approvals: pending.map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '', flag: g.status === 'flagged' ? { category: g.flag?.category ?? '안전 검사', reason: g.flag?.reason ?? '' } : undefined })),
       selectedStudent: local.selectedStudent,
       peers: peers.map((p) => ({ ...p, nick: nickByNo(p.no) })),
       lastExport: p.lastExport,
@@ -463,7 +464,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setLocal((l) => ({ ...l, sending: [...l.sending, a.sceneId] }));
         api
           .requestGeneration({ kind: a.kind, sceneId: a.sceneId, builder: sc?.builder, editText: a.editText, parentId: a.parentId, sec: sc?.genSec ?? 3 })
-          .then((r) => r.blocked && toast('안전 검사에서 멈췄어요. 크레딧은 그대로예요.'))
+          .then((r) => (r.flagged ? toast('안전 검사에서 확인이 필요해서 선생님께 보냈어요. 선생님이 괜찮다고 하면 만들어져요.') : r.blocked && toast('안전 검사에서 멈췄어요. 크레딧은 그대로예요.')))
           .catch((e) => toast(errText(e)))
           .finally(() => setLocal((l) => ({ ...l, sending: l.sending.filter((x) => x !== a.sceneId) })));
         return;
