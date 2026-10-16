@@ -762,7 +762,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       let file: string | undefined;
       if (v.kind === 'mine' && v.path) file = await fetchFile(String(v.path), `voice_${vn}`);
       else if (v.kind === 'ai' && isAiVoice(v.voice) && String(v.text ?? '').trim() && useAi) file = await speak(String(v.text).slice(0, 120), v.voice, pjoin(dir, `tts_${vn}.wav`)).catch(() => undefined);
-      if (file) voices.push({ a: at, file });
+      if (file) voices.push({ a: at, file, dur: Math.max(0, num(v.dur)) || undefined });
     }
 
     const out = await applyTimeline(baseFile, base, cuts, caps, voices, dir);

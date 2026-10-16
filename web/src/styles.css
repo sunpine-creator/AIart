@@ -824,3 +824,15 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 /* 지운 구간 빗금은 장면 줄에만(아래 자막·목소리 막대를 가리지 않게) */
 .tl-cut { top: 28px; bottom: auto; height: 52px; align-items: flex-end; }
 .tl-cut span { margin: 0 0 3px; }
+
+/* 편집할 것 고르기(장면·자막·목소리) */
+.tool-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tool-tab { display: grid; gap: 2px; text-align: left; padding: 10px 14px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; }
+.tool-tab .tiny { color: var(--muted); }
+.tool-tab.on { border-color: var(--human); background: var(--human-tint); }
+.tl-row.dim { opacity: 0.45; }
+.tl-row.dim .tl-bar, .tl-row.dim .tl-clip, .tl-row.dim .tl-cutpin { cursor: default; }
+.tl-labels span.on { color: var(--human); font-weight: 700; }
+.tl-cutpin { position: absolute; top: 50%; z-index: 3; transform: translate(-50%, -50%); width: 22px; height: 22px; border-radius: 999px; background: var(--critical); color: #fff; font-size: 0.75rem; display: grid; place-items: center; cursor: pointer; box-shadow: 0 0 0 2px var(--surface); }
+.tl-cutpin.on { box-shadow: 0 0 0 3px var(--human); }
+@media (max-width: 640px) { .tool-tabs { grid-template-columns: 1fr; } }

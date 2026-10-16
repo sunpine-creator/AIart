@@ -237,7 +237,7 @@ export async function joinXfade(segs: string[], durs: number[], dir: string): Pr
 
 export type Range = { a: number; b: number };
 export type TlCapIn = { a: number; b: number; pngs: string[]; anim: 'none' | 'fade' | 'slide' | 'type' };
-export type TlVoiceIn = { a: number; file: string };
+export type TlVoiceIn = { a: number; file: string; dur?: number };
 
 // 지운 구간을 정리한다(겹치면 합치고, 바탕 영상 길이 안으로)
 export function mergeCuts(cuts: Range[], total: number): Range[] {
@@ -338,7 +338,8 @@ export async function applyTimeline(
     if (at >= dur - 0.1) continue;
     args.push('-i', v.file);
     const ms = Math.round(at * 1000);
-    f.push(`[${idx}:a]aresample=48000,aformat=channel_layouts=stereo,adelay=${ms}|${ms}[m${idx}]`);
+    const trim = v.dur && v.dur > 0.2 ? `atrim=0:${v.dur.toFixed(2)},afade=t=out:st=${Math.max(0, v.dur - 0.15).toFixed(2)}:d=0.15,` : '';
+    f.push(`[${idx}:a]aresample=48000,aformat=channel_layouts=stereo,${trim}adelay=${ms}|${ms}[m${idx}]`);
     mix.push(`[m${idx}]`);
     idx++;
   }
