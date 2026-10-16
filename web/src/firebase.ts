@@ -101,6 +101,7 @@ export const api = {
     { blocked: boolean; reason?: string; cast?: { look: string }; scenes: { line: string; who: string; when: string; where: string; what: string; how: string; why: string }[] }
   >('draftScenes', 60_000),
   storyWorld: call<{ refresh?: boolean }, { place?: string; weather?: string; time?: string; light?: string; camera?: string; empty?: boolean }>('storyWorld', 60_000),
+  teacherResetScene: call<{ classId: string; no: number; sceneId: string; mode: 'unfinal' | 'redo' }, { ok: boolean; count: number }>('teacherResetScene'),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number }>('makeCharacter', 300_000),
   renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),

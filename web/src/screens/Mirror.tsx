@@ -3,7 +3,7 @@
 // ② 노트북 화면 공유: 교사가 요청하고 학생이 허락하면 노트북 화면 전체를 영상으로 본다.
 import React, { useEffect, useRef, useState } from 'react';
 import { collection, doc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
-import { db } from '../firebase';
+import { api, db, errText } from '../firebase';
 import { Gen, Scene, Upload, toGen, useStore } from '../store';
 import { GenMedia, StoredVideo } from '../MediaFrame';
 import { STAGES } from './Student';
@@ -50,7 +50,7 @@ function StudentMirror({ no, name, stage }: { no: number; name: string; stage: n
     const u1 = onSnapshot(doc(db, 'projects', `${classId}_${no}`), (x) => setP(x.data() ?? {}), () => setP({}));
     const u2 = onSnapshot(
       query(collection(db, 'generations'), where('classId', '==', classId), where('no', '==', no), orderBy('createdAt', 'asc')),
-      (q) => setGens(q.docs.map((x) => toGen(x.id, x.data()))),
+      (q) => setGens(q.docs.filter((x) => x.data().status !== 'retired').map((x) => toGen(x.id, x.data()))),
       () => setGens([]),
     );
     return () => (u1(), u2());
@@ -136,9 +136,12 @@ function StudentMirror({ no, name, stage }: { no: number; name: string; stage: n
                 const b = sc.builder ?? ({} as any);
                 return (
                   <li key={sc.id} className="mirror-scene">
-                    <strong>
-                      #{i + 1} {sc.line}
-                    </strong>
+                    <div className="mirror-scene-head">
+                      <strong>
+                        #{i + 1} {sc.line}
+                      </strong>
+                      <SceneReset classId={classId} no={no} sceneId={sc.id} idx={i + 1} hasFinal={gs.some((g) => g.kind === 'final' && g.status === 'succeeded')} hasAny={gs.length > 0} busy={gs.some((g) => ['flagged', 'awaiting_approval', 'queued', 'running'].includes(g.status))} />
+                    </div>
                     <p className="tiny">
                       {b.mode === 'free'
                         ? `직접 쓰기: ${b.free || '—'}`
@@ -222,6 +225,46 @@ function StudentMirror({ no, name, stage }: { no: number; name: string; stage: n
         </div>
       )}
     </section>
+  );
+}
+
+// 교사: 학생이 확정한 장면 되돌리기
+function SceneReset({ classId, no, sceneId, idx, hasFinal, hasAny, busy }: { classId: string; no: number; sceneId: string; idx: number; hasFinal: boolean; hasAny: boolean; busy: boolean }) {
+  const { d } = useStore();
+  const [ask, setAsk] = useState<null | 'unfinal' | 'redo'>(null);
+  const [working, setWorking] = useState(false);
+  if (!hasAny) return null;
+  const go = (mode: 'unfinal' | 'redo') => {
+    setWorking(true);
+    api
+      .teacherResetScene({ classId, no, sceneId, mode })
+      .then(() => d({ t: 'toast', msg: mode === 'redo' ? `${no}번 학생 장면 #${idx}을 처음부터 다시 만들 수 있게 했어요.` : `${no}번 학생 장면 #${idx}의 확정을 풀었어요.` }))
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => (setWorking(false), setAsk(null)));
+  };
+  if (ask)
+    return (
+      <span className="reset-ask">
+        <span className="tiny">{ask === 'redo' ? '이 장면의 결과를 모두 치우고 초안부터 다시 만들게 할까요? (새로 만들면 크레딧이 다시 들어요)' : '확정을 풀어서 학생이 다시 고르거나 고칠 수 있게 할까요?'}</span>
+        <button className="btn tiny primary" disabled={working} onClick={() => go(ask)}>
+          {working ? '하는 중…' : '네'}
+        </button>
+        <button className="btn tiny" disabled={working} onClick={() => setAsk(null)}>
+          아니요
+        </button>
+      </span>
+    );
+  return (
+    <span className="reset-btns">
+      {hasFinal && (
+        <button className="btn tiny" disabled={busy} onClick={() => setAsk('unfinal')} title="학생이 확정한 것을 풀어요">
+          ↩ 확정 풀기
+        </button>
+      )}
+      <button className="btn tiny" disabled={busy} onClick={() => setAsk('redo')} title="이 장면을 초안부터 다시 만들게 해요">
+        ⟲ 처음부터 다시
+      </button>
+    </span>
   );
 }
 

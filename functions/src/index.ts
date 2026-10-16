@@ -179,7 +179,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   }
   if (kind === 'edit') {
     // 차단·반려·실패한 수정은 횟수에 넣지 않는다
-    const edits = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId).where('kind', '==', 'edit').get()).docs.filter((d) => !['blocked', 'rejected', 'failed'].includes(d.data().status)).length;
+    const edits = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId).where('kind', '==', 'edit').get()).docs.filter((d) => !['blocked', 'rejected', 'failed', 'retired'].includes(d.data().status)).length;
     if (edits >= MAX_EDITS) throw new HttpsError('failed-precondition', `이 장면은 ${MAX_EDITS}번까지만 고칠 수 있어요.`);
   }
 
@@ -404,6 +404,39 @@ export const reviewGeneration = onCall(async (req) => {
     await log({ classId: g.classId, no: g.no, kind: wasFlagged ? '안전 검사 확인' : '교사 반려', textKo: g.editText ?? g.promptKo, verdict: 'pass', action: `반려: ${reason}` });
   }
   return { ok: true };
+});
+
+// ───────── 교사: 학생이 확정한 장면 되돌리기 ─────────
+// unfinal: 확정만 풀어서 학생이 이미 만든 결과 중에서 다시 고르거나 고치게 한다
+// redo: 그 장면의 결과를 모두 치워서 초안부터 다시 만들게 한다(새로 만들 때 크레딧이 다시 든다)
+export const teacherResetScene = onCall(async (req) => {
+  const uid = await requireTeacher(req);
+  const classId = String(req.data?.classId ?? '');
+  const no = Number(req.data?.no);
+  const sceneId = String(req.data?.sceneId ?? '').slice(0, 60);
+  const mode = req.data?.mode === 'redo' ? 'redo' : 'unfinal';
+  await ownedClass(uid, classId);
+  if (!sceneId || !Number.isInteger(no)) throw new HttpsError('invalid-argument', '요청이 올바르지 않아요.');
+  const snap = await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId).get();
+  const docs = snap.docs.map((d) => ({ ref: d.ref, ...(d.data() as any) }));
+  if (docs.some((g) => ['flagged', 'awaiting_approval', 'queued', 'running'].includes(g.status))) throw new HttpsError('failed-precondition', '이 장면은 지금 만드는 중이에요. 끝난 뒤에 다시 해 주세요.');
+  const targets = mode === 'redo' ? docs.filter((g) => g.status !== 'retired') : docs.filter((g) => g.kind === 'final' && g.status !== 'retired');
+  const batch = db.batch();
+  targets.forEach((g) => batch.update(g.ref, { status: 'retired', retiredBy: uid, retiredAt: FieldValue.serverTimestamp(), retiredMode: mode }));
+  const projRef = db.doc(`projects/${classId}_${no}`);
+  const p = (await projRef.get()).data();
+  if (p?.scenes) {
+    const ids = new Set(targets.map((g) => g.ref.id));
+    const scenes = (p.scenes as any[]).map((sc) => {
+      if (sc.id !== sceneId) return sc;
+      const { selectedGenId, ...rest } = sc;
+      return selectedGenId && (ids.has(selectedGenId) || mode === 'redo') ? rest : sc;
+    });
+    batch.update(projRef, { scenes });
+  }
+  await batch.commit();
+  await log({ classId, no, kind: '교사 되돌리기', textKo: `장면 ${((p?.scenes ?? []) as any[]).findIndex((x) => x.id === sceneId) + 1}`, verdict: 'pass', action: mode === 'redo' ? '처음부터 다시 만들기 허락' : '확정 풀기' });
+  return { ok: true, count: targets.length };
 });
 
 // ───────── 교사: 학생 이름 고치기·지우기 (함수 이름은 예전 그대로 resetPin) ─────────

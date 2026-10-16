@@ -845,3 +845,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 /* 승인 목록: 몇 번 장면인지 */
 .appr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .appr-scene { font-weight: 700; color: var(--human); background: var(--human-tint); border-radius: 999px; padding: 1px 10px; font-size: 0.85rem; }
+
+/* 교사: 장면 되돌리기 */
+.mirror-scene-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
+.reset-btns, .reset-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.reset-ask { background: var(--warn-tint); border-radius: 8px; padding: 4px 8px; }

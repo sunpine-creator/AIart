@@ -271,7 +271,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setProject(d.data());
       }, onErr('내 작업')),
       onSnapshot(query(collection(db, 'generations'), where('classId', '==', classId), where('no', '==', no), orderBy('createdAt', 'asc')), (q) =>
-        setGens(q.docs.map((x) => toGen(x.id, x.data()))),
+        setGens(q.docs.filter((x) => x.data().status !== 'retired').map((x) => toGen(x.id, x.data()))),
       onErr('내 생성 기록')),
       onSnapshot(query(collection(db, 'projects'), where('classId', '==', classId), where('submitted', '==', true), limit(30)), (q) =>
         setPeers(q.docs.map((x) => ({ no: x.data().no, nick: '', exportPath: x.data().lastExport?.path, exportUrl: x.data().lastExport?.url })).filter((p) => p.no !== no)),
@@ -324,6 +324,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const scenes: Scene[] = project.scenes ?? [];
     let changed = false;
     const next = scenes.map((sc) => {
+      // 선생님이 되돌린 결과를 가리키고 있으면 비운다
+      if (sc.selectedGenId && gens.length && !gens.some((g) => g.id === sc.selectedGenId)) {
+        changed = true;
+        const { selectedGenId, ...rest } = sc;
+        return rest as Scene;
+      }
       const f = finals.filter((g) => g.sceneId === sc.id).pop();
       if (f && sc.selectedGenId !== f.id) {
         changed = true;
