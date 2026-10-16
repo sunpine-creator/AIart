@@ -331,7 +331,7 @@ export const storyWorld = onCall({ timeoutSeconds: 60 }, async (req) => {
 });
 
 // 학생: 주인공 카드 만들기 (주인공 기준 그림 1장, 3번까지)
-export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {
+export const makeCharacter = onCall({ timeoutSeconds: 300 }, async (req) => {
   const { classId, no } = requireStudent(req);
   const look = String(req.data?.look ?? '').trim().slice(0, 120);
   const style = styleOf(req.data?.style);
@@ -354,7 +354,7 @@ export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {
       '1:1',
     ).catch((e) => {
       logger.error('주인공 카드 실패', { err: String(e?.message ?? e) });
-      throw new HttpsError('unavailable', e instanceof SafetyBlockedError ? 'AI가 이 주인공은 그릴 수 없대요. 설명을 바꿔 보세요.' : '주인공 카드를 만들지 못했어요. 잠시 뒤 다시 해 보세요.');
+      throw new HttpsError('unavailable', e instanceof SafetyBlockedError ? 'AI가 이 주인공은 그릴 수 없대요. 설명을 바꿔 보세요.' : `주인공 카드를 만들지 못했어요. 잠시 뒤 다시 해 보세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 70)})`);
     });
     const token = randomUUID();
     path = `classes/${classId}/${no}/cast/${Date.now()}.png`;

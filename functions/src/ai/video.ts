@@ -164,36 +164,53 @@ export const omniProvider: VideoProvider = {
 };
 
 // ───────── 그림 한 장 그리기 (주인공 카드, 장면 첫 그림) ─────────
-export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9'): Promise<{ bytes: Buffer; mimeType: string }> {
+// 그림 모델은 이름이 바뀌거나 지원이 끝날 수 있어서, 설정한 모델이 안 되면 다음 모델로 넘어간다.
+// 같은 모델에서 그림 없이 끝나면(가끔 생김) 한 번 더 시도한다.
+const IMAGE_MODELS = () => [...new Set([CONFIG.imageModel(), 'gemini-3.1-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-2.5-flash-image'])];
+let goodImageModel: string | undefined;
+
+async function drawOnce(model: string, parts: any[], aspectRatio: string): Promise<{ bytes: Buffer; mimeType: string }> {
   const res: any = await genai().models.generateContent({
-    model: CONFIG.imageModel(),
+    model,
     contents: [{ role: 'user', parts }],
-    config: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio } } as any,
+    config: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio } } as any,
   });
   const part = res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
   if (!part) {
     const why = res.promptFeedback?.blockReason ?? res.candidates?.[0]?.finishReason ?? 'no image';
     if (/SAFETY|BLOCK|PROHIBITED/i.test(String(why))) throw new SafetyBlockedError(String(why));
-    throw new Error(`그림 생성 실패: ${why}`);
+    throw new Error(`NO_IMAGE ${why}`);
   }
   return { bytes: Buffer.from(part.inlineData.data, 'base64'), mimeType: part.inlineData.mimeType ?? 'image/png' };
+}
+
+export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9'): Promise<{ bytes: Buffer; mimeType: string }> {
+  const models = goodImageModel ? [goodImageModel, ...IMAGE_MODELS().filter((m) => m !== goodImageModel)] : IMAGE_MODELS();
+  let last: unknown;
+  for (const model of models) {
+    for (let k = 0; k < 2; k++) {
+      try {
+        const r = await drawOnce(model, parts, aspectRatio);
+        goodImageModel = model;
+        return r;
+      } catch (e: any) {
+        if (e instanceof SafetyBlockedError) throw e;
+        last = e;
+        const msg = String(e?.message ?? e);
+        logger.warn('그림 그리기 실패', { model, try: k + 1, err: msg.slice(0, 300) });
+        // 모델이 없거나 지원이 끝났으면 다음 모델로, 그림만 안 나왔으면 같은 모델로 한 번 더
+        if (!/NO_IMAGE|RESOURCE_EXHAUSTED|429|503|UNAVAILABLE|DEADLINE/i.test(msg)) break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last));
 }
 
 // ───────── 중등 이미지 모드 ─────────
 export const imageProvider: VideoProvider = {
   async generate(job) {
-    const res: any = await genai().models.generateContent({
-      model: CONFIG.imageModel(),
-      contents: [{ role: 'user', parts: [{ text: job.editEn ? `${job.promptEn}\nChange: ${job.editEn}` : job.promptEn }] }],
-      config: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: '16:9' } } as any,
-    });
-    const part = res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-    if (!part) {
-      const why = res.promptFeedback?.blockReason ?? res.candidates?.[0]?.finishReason ?? 'no image';
-      if (/SAFETY|BLOCK|PROHIBITED/i.test(String(why))) throw new SafetyBlockedError(String(why));
-      throw new Error(`이미지 생성 실패: ${why}`);
-    }
-    return { bytes: Buffer.from(part.inlineData.data, 'base64'), mimeType: part.inlineData.mimeType ?? 'image/png' };
+    return drawImage([{ text: job.editEn ? `${job.promptEn}\nChange: ${job.editEn}` : job.promptEn }], '16:9');
   },
 };
 
