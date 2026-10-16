@@ -26,7 +26,7 @@ export type Fit = 'yes' | 'partial' | 'no';
 // 자막 꾸미기 (중등 편집). 서버 render.ts 의 CapStyle 과 같은 모양
 export type CapStyle = { kind?: 'sub' | 'bubble'; size?: 'S' | 'M' | 'L'; color?: string; pos?: 'top' | 'mid' | 'bottom'; box?: boolean; anim?: 'none' | 'fade' | 'slide' | 'type'; x?: number; y?: number /* 마우스로 옮긴 위치: 화면 가로·세로 비율(0~1), 글자 덩어리의 가운데 */ };
 export type Builder = { who: string; what: string; where: string; how: string; when?: string; why?: string; extra?: string; mode?: 'fields' | 'free'; free?: string };
-export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle; fill?: 'freeze' | 'slow' | 'loop'; genSec?: number };
+export type Scene = { id: string; line: string; builder: Builder; selectedGenId?: string; edits: number; dur: number; caption: string; voice: string; voicePath?: string; voiceUrl?: string; mood?: string; part?: string; intent?: string; skip?: boolean; start?: number; capStyle?: CapStyle; fill?: 'freeze' | 'slow' | 'loop'; genSec?: number; mute?: boolean /* 편집: AI가 만든 소리 끄기 */ };
 export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;

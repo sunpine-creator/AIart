@@ -1705,6 +1705,8 @@ function S4() {
   }, [middleKeys, s.intro, s.outro, s.scenes, s.uploads, s.gens, s.topic]);
 
   const lay: LayE[] = useMemo(() => layout(items), [items]);
+  const layRef = React.useRef<LayE[]>([]);
+  layRef.current = lay;
   const B = r1(baseLen(items));
   const am = useMemo(() => atMap(lay), [lay]);
   const tl: Timeline = s.tl ?? emptyTl();
@@ -1747,9 +1749,10 @@ function S4() {
     d({ t: 'set', patch: { tl: next } });
   }, [!!s.tl, ready]);
 
-  // 재생 시계: 지운 구간은 건너뛴다
+  // 재생 시계: 지운 구간은 건너뛴다. 영상이 재생 중이면 그 영상의 시간을 따라간다(소리가 끊기거나 되풀이되지 않게)
   const tRef = React.useRef(t);
   tRef.current = t;
+  const vids = React.useRef(new Map<string, HTMLVideoElement>());
   useEffect(() => {
     if (!playing) return;
     let raf = 0;
@@ -1757,9 +1760,16 @@ function S4() {
     let acc = 0;
     let cur = tRef.current;
     const step = (now: number) => {
-      const dt = (now - last) / 1000;
+      const dt = Math.min(0.25, (now - last) / 1000);
       last = now;
-      cur = skipCut(cur + dt, cuts);
+      const L = layRef.current;
+      const e = L.reduce((x, y) => (y.at <= cur + 1e-6 ? y : x), L[0]);
+      const v = e ? vids.current.get(e.item.key) : undefined;
+      if (v && !v.paused && !v.seeking && v.readyState >= 2) {
+        const vt = e.at + v.currentTime;
+        cur = Math.abs(vt - cur) < 1 ? Math.max(cur, vt) : cur + dt;
+      } else cur += dt;
+      cur = skipCut(cur, cuts);
       if (cur >= B) {
         setPlaying(false);
         setT(0);
@@ -1790,7 +1800,7 @@ function S4() {
     if (!playing) return;
     for (const v of voicesAbs) {
       // 정한 길이가 지나면 멈춘다
-      if (t >= v.a + v.dur) audios.current.get(v.id)?.pause();
+      if (t >= v.a + v.dur && (v.kind === 'mine' || v.fixed)) audios.current.get(v.id)?.pause();
       if (started.current.has(v.id) || t < v.a || t >= v.a + v.dur) continue;
       started.current.add(v.id);
       const url = v.kind === 'mine' ? v.url : ttsCache.get(`${v.voice}|${v.text ?? ''}`);
@@ -1939,7 +1949,7 @@ function S4() {
       else nb = Math.min(F, Math.max(a0 + 0.3, b0 + dx));
       const aB = toB(na);
       // 목소리 길이 = 그만큼만 들려준다(뒤는 잘린다)
-      if (kind === 'voice') return updVoice(id, part === 'b' ? { dur: r1(nb - na) } : { ...anchorAt(aB, lay), dur: r1(nb - na) });
+      if (kind === 'voice') return updVoice(id, part === 'move' ? anchorAt(aB, lay) : part === 'b' ? { dur: r1(nb - na), fixed: true } : { ...anchorAt(aB, lay), dur: r1(nb - na), fixed: true });
       return updCap(id, { ...anchorAt(aB, lay), len: r1(toB(nb) - aB) });
     }
     if (g.mode === 'scrub' && !mode) setT(toB(x));
@@ -2003,7 +2013,7 @@ function S4() {
                 const near = Math.abs(i - lay.indexOf(curE)) <= 1;
                 return (
                   <div key={e.item.key} className="clip-layer" style={{ opacity: op, zIndex: on ? 2 : prevOn ? 1 : 0 }} aria-hidden={!on}>
-                    {near && <ClipView e={e} t={t} playing={playing && (on || prevOn)} active={on || prevOn} />}
+                    {near && <ClipView e={e} t={t} playing={playing && (on || prevOn)} active={on || prevOn} reg={(el) => (el ? vids.current.set(e.item.key, el) : vids.current.delete(e.item.key))} />}
                   </div>
                 );
               })}
@@ -2100,8 +2110,8 @@ function S4() {
                   </select>
                   {VOICE_TONE[selVoice.voice] && <p className="tiny voice-tone">{VOICE_TONE[selVoice.voice]}</p>}
                   <label htmlFor="v-text">읽어 줄 말</label>
-                  <input id="v-text" maxLength={60} value={selVoice.text ?? ''} onChange={(e) => updVoice(selVoice.id, { text: e.target.value, dur: ttsGuess(e.target.value) })} placeholder="AI 목소리가 읽어 줄 문장" />
-                  <TtsPreview voice={selVoice.voice} text={selVoice.text ?? ''} onDur={(dur) => selVoice.dur === ttsGuess(selVoice.text ?? '') && updVoice(selVoice.id, { dur })} />
+                  <input id="v-text" maxLength={60} value={selVoice.text ?? ''} onChange={(e) => updVoice(selVoice.id, { text: e.target.value, dur: ttsGuess(e.target.value), fixed: false })} placeholder="AI 목소리가 읽어 줄 문장" />
+                  <TtsPreview voice={selVoice.voice} text={selVoice.text ?? ''} onDur={(dur) => !selVoice.fixed && updVoice(selVoice.id, { dur: r1(dur + 0.2) })} />
                   <p className="tiny muted">AI 목소리는 정해진 목소리만 쓸 수 있어요. 내 목소리를 AI로 흉내 내지 않아요.</p>
                 </>
               ) : (
@@ -2110,8 +2120,13 @@ function S4() {
               <label htmlFor="v-len">
                 들리는 길이 <span className="mono">{r1(selVoice.dur)}초</span>
               </label>
-              <input id="v-len" type="range" min={0.5} max={15} step={0.1} value={Math.min(15, selVoice.dur)} onChange={(e) => updVoice(selVoice.id, { dur: r1(Number(e.target.value)) })} />
-              <p className="tiny muted">녹음이나 AI 목소리가 이 길이보다 길면 뒤가 잘려요. 타임라인의 목소리 막대 가운데를 끌면 옮겨지고, 양 끝을 끌면 길이가 바뀌어요.</p>
+              <input id="v-len" type="range" min={0.5} max={20} step={0.1} value={Math.min(20, selVoice.dur)} onChange={(e) => updVoice(selVoice.id, { dur: r1(Number(e.target.value)), fixed: true })} />
+              {selVoice.kind === 'ai' && selVoice.fixed && (
+                <button className="link tiny" onClick={() => updVoice(selVoice.id, { fixed: false, dur: ttsGuess(selVoice.text ?? '') })}>
+                  끝까지 다 들려주기(길이 자동)
+                </button>
+              )}
+              <p className="tiny muted">AI 목소리는 길이를 직접 바꾸지 않으면 끝까지 다 들려줘요. 길이를 바꾸면 그 길이까지만 들려요. 타임라인의 목소리 막대 가운데를 끌면 옮겨지고, 양 끝을 끌면 길이가 바뀌어요.</p>
               <button className="btn tiny" onClick={() => (setTl({ voices: tl.voices.filter((v) => v.id !== selVoice.id) }), setSel(null))}>
                 이 목소리 지우기
               </button>
@@ -2373,7 +2388,7 @@ function S4() {
 }
 
 // 미리보기 화면: 지금 시각의 조각(장면·올린 영상·제목 화면)을 보여 준다
-function ClipView({ e, t, playing, active }: { e: LayE; t: number; playing: boolean; active: boolean }) {
+function ClipView({ e, t, playing, active, reg }: { e: LayE; t: number; playing: boolean; active: boolean; reg?: (el: HTMLVideoElement | null) => void }) {
   const it = e.item;
   // 보이지 않는 조각(바로 다음 장면)은 첫 화면에 미리 맞춰 두어 바뀔 때 검은 화면이 없게 한다
   const local = active ? Math.max(0, Math.min(it.dur, t - e.at)) : t < e.at ? 0 : it.dur;
@@ -2391,7 +2406,8 @@ function ClipView({ e, t, playing, active }: { e: LayE; t: number; playing: bool
   useEffect(() => {
     const v = vref.current;
     if (!v) return;
-    if (!playing || Math.abs(v.currentTime - local) > 0.4) {
+    // 재생 중에는 시계가 영상을 따라가므로 크게 어긋날 때(지운 구간 건너뛰기 등)만 맞춘다
+    if (!playing || (!v.seeking && Math.abs(v.currentTime - local) > 1.2)) {
       try {
         v.currentTime = local;
       } catch {
@@ -2418,9 +2434,12 @@ function ClipView({ e, t, playing, active }: { e: LayE; t: number; playing: bool
       {g?.storagePath && it.kind === 'scene' && <KeyPoster g={g} />}
       {url ? (
         <video
-          ref={vref}
+          ref={(el) => {
+            vref.current = el;
+            reg?.(el);
+          }}
           src={url}
-          muted={!(it.kind === 'upload' && it.voice === '원래 소리')}
+          muted={!active || (it.kind === 'upload' ? it.voice !== '원래 소리' : !!it.scene?.mute)}
           playsInline
           preload="auto"
           onLoadedData={(ev) => {
@@ -2509,6 +2528,9 @@ function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; lab
       ) : (
         <>
           <p className="tiny muted">3단계에서 만든 영상 길이 그대로예요. 필요 없는 부분은 타임라인에서 구간을 골라 지워요.</p>
+          <label className="check">
+            <input type="checkbox" checked={!it.scene?.mute} onChange={(ev) => d({ t: 'scene', id: it.key, patch: { mute: !ev.target.checked } })} /> AI가 만든 소리(말·효과음) 쓰기
+          </label>
           <button className="btn tiny" onClick={() => (d({ t: 'scene', id: it.key, patch: { skip: true } }), onClose())}>
             이 장면 통째로 빼기
           </button>
@@ -2527,7 +2549,7 @@ function TtsPreview({ voice, text, onDur }: { voice: string; text: string; onDur
     const cached = ttsCache.get(key);
     const go = (url: string) => {
       const a = new Audio(url);
-      a.onloadedmetadata = () => Number.isFinite(a.duration) && a.duration > 0 && onDur(r1(Math.min(15, a.duration)));
+      a.onloadedmetadata = () => Number.isFinite(a.duration) && a.duration > 0 && onDur(r1(Math.min(20, a.duration)));
       return a.play();
     };
     if (cached) return void go(cached).catch(() => {});

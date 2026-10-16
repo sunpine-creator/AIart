@@ -8,7 +8,7 @@ export const XF = 0.5;
 export type Anchor = { k: string; o: number };
 export type TlCut = Anchor & { id: string; len: number };
 export type TlCap = Anchor & { id: string; len: number; text: string; style?: CapStyle };
-export type TlVoice = Anchor & { id: string; kind: 'ai' | 'mine'; voice: string; text?: string; path?: string; url?: string; dur: number };
+export type TlVoice = Anchor & { id: string; kind: 'ai' | 'mine'; voice: string; text?: string; path?: string; url?: string; dur: number; fixed?: boolean /* 학생이 길이를 직접 정함 */ };
 export type Timeline = { cuts: TlCut[]; caps: TlCap[]; voices: TlVoice[] };
 export const emptyTl = (): Timeline => ({ cuts: [], caps: [], voices: [] });
 
@@ -59,7 +59,7 @@ export function skipCut(t: number, cuts: { a: number; b: number }[]): number {
 export const cutTotal = (cuts: { a: number; b: number }[]) => cuts.reduce((a, c) => a + (c.b - c.a), 0);
 
 // AI 목소리 길이 어림(한 글자 0.2초쯤)
-export const ttsGuess = (text: string) => Math.max(1, Math.min(15, r1([...text.replace(/\s/g, '')].length * 0.2 + 0.6)));
+export const ttsGuess = (text: string) => Math.max(1.5, Math.min(20, r1([...text.replace(/\s/g, '')].length * 0.28 + 1)));
 
 // 조각 시작 시각표(key → at)
 export type AtMap = Record<string, { at: number; dur: number }>;

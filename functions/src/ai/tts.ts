@@ -15,7 +15,7 @@ export const voiceId = (v: string) => VOICES[v];
 export async function speak(text: string, voice: string, outPath: string): Promise<string | undefined> {
   const res: any = await genai().models.generateContent({
     model: env('TTS_MODEL', 'gemini-2.5-flash-preview-tts'),
-    contents: [{ role: 'user', parts: [{ text: `어린이에게 들려주듯 밝고 또박또박 읽어 줘: ${text}` }] }],
+    contents: [{ role: 'user', parts: [{ text: `자연스럽고 조금 빠른 보통 말 속도로, 밝고 또박또박 읽어 줘. 문장 사이를 길게 쉬지 마: ${text}` }] }],
     config: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICES[voice] } } },

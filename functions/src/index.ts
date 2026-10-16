@@ -223,13 +223,13 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
       const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
       if (!c.safe && !flag) flag = { category: c.category ?? '기타', reason: c.reasonKo ?? '확인이 필요한 표현이 있어요.', suggestion: c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', layer: 'ai' };
       const english = c.english || checkText;
-      if (kind === 'edit') { editEn = `${english} ${KO_TAIL}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
+      if (kind === 'edit') { editEn = `${english} ${KO_TAIL} ${speechFit(spec.sec)}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
         // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
         const cast = await castPrefix(classId, no);
         if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
         const world = await worldOf(classId, no).catch(() => undefined);
         const cont = world?.en ? `Story continuity (keep the same in every scene unless this scene's text clearly says otherwise): ${world.en} Keep a similar camera height and framing to the other scenes so the scenes connect smoothly. ` : '';
-        promptEn = `${cast.text}${cont}Scene: ${english} ${cast.style} ${KO_TAIL}`;
+        promptEn = `${cast.text}${cont}Scene: ${english} ${cast.style} ${KO_TAIL} ${speechFit(spec.sec)}`;
         refPath = cast.cardPath ?? null;
       }
     } else {
@@ -272,8 +272,10 @@ export const STYLE_EN: Record<string, string> = {
 };
 const styleOf = (v: unknown) => (String(v ?? '') in STYLE_EN ? String(v) : '그림책');
 const SAFE_TAIL = 'Safe for children, fictional people only.';
+// 영상 속 말이 영상 끝에서 잘리지 않게: 짧게, 조금 빠른 보통 속도로, 끝나기 전에 다 말하기
+const speechFit = (sec: number) => `TIMING: This clip is only ${sec} seconds long. Any spoken line must be short and must be completely finished at least half a second before the clip ends — speak at a natural, slightly brisk pace with no long pauses, and start speaking early in the clip.`;
 // 영상 속 말·글자는 모두 한국어로
-export const KO_TAIL = 'LANGUAGE: Everyone who speaks in this video speaks KOREAN (한국어) only — all dialogue, narration and voices are in natural Korean, never English. Any visible writing (signs, screens, books, labels) is in Korean Hangul, or there is no writing at all. Keep any Korean lines given in quotes exactly as written.';
+export const KO_TAIL = 'LANGUAGE: Everyone who speaks in this video speaks KOREAN (한국어) only — all dialogue, narration and voices are in natural spoken Korean, never English. Keep any Korean lines given in quotes exactly as written. NO SUBTITLES: do not add subtitles, captions, speech text, titles or any text overlay on the screen; the speech is heard only as audio. Avoid visible writing in the scene; if a sign or screen must show writing, keep it small and in Korean Hangul.';
 
 // 주인공 설명을 검사·번역한다(같은 설명이면 저장해 둔 번역을 다시 쓴다)
 async function lookEnOf(classId: string, no: number, look: string): Promise<{ en?: string; blocked?: { category: string; reason: string; suggestion: string } }> {
@@ -769,7 +771,8 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
           const real = g.img ? 0 : await probeDur(src);
           const srcLen = real > 0 ? real : g.sec ?? 3;
           const dur = g.img ? Math.max(1, Math.min(num(sc.dur) || 3, 10)) : Math.max(1, Math.round(srcLen * 10) / 10);
-          clips.push({ kind: g.img ? 'image' : 'video', dur, start: 0, srcLen, src, layers: fixedOf(ov.clips?.[sc.id]), grade: true });
+          // AI가 만든 소리(한국어 말·효과음)를 그대로 쓴다. 학생이 끄면 뺀다
+          clips.push({ kind: g.img ? 'image' : 'video', dur, start: 0, srcLen, src, keepAudio: !sc.mute, layers: fixedOf(ov.clips?.[sc.id]), grade: true });
         } else {
           clips.push({ kind: 'placeholder', dur: Math.max(1, Math.min(num(sc.dur) || 3, 10)), layers: fixedOf(ov.clips?.[sc.id]) });
         }
@@ -843,7 +846,9 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       let file: string | undefined;
       if (v.kind === 'mine' && v.path) file = await fetchFile(String(v.path), `voice_${vn}`);
       else if (v.kind === 'ai' && isAiVoice(v.voice) && String(v.text ?? '').trim() && useAi) file = await speak(String(v.text).slice(0, 120), v.voice, pjoin(dir, `tts_${vn}.wav`)).catch(() => undefined);
-      if (file) voices.push({ a: at, file, dur: Math.max(0, num(v.dur)) || undefined });
+      // 내 녹음은 정한 길이까지, AI 목소리는 학생이 길이를 직접 정했을 때만 자른다(아니면 끝까지 다 들려준다)
+      const cutTo = v.kind === 'mine' || v.fixed ? Math.max(0, num(v.dur)) || undefined : undefined;
+      if (file) voices.push({ a: at, file, dur: cutTo });
     }
 
     const out = await applyTimeline(baseFile, base, cuts, caps, voices, dir);
