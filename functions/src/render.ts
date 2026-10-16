@@ -333,13 +333,15 @@ export async function applyTimeline(
   const vOut = cur === '0:v' ? '0:v' : cur;
   if (vOut !== '0:v') f.push(`[${vOut}]format=yuv420p[vo]`);
   const mix: string[] = ['[0:a]'];
+  // 장면 소리(AI 말·효과음·원래 소리)는 그대로 두고 목소리를 위에 섞는다. 모두 들리게 normalize=0
   for (const v of voices.slice(0, 30)) {
     const at = mapTime(v.a, cuts);
     if (at >= dur - 0.1) continue;
     args.push('-i', v.file);
     const ms = Math.round(at * 1000);
     const trim = v.dur && v.dur > 0.2 ? `atrim=0:${v.dur.toFixed(2)},afade=t=out:st=${Math.max(0, v.dur - 0.15).toFixed(2)}:d=0.15,` : '';
-    f.push(`[${idx}:a]aresample=48000,aformat=channel_layouts=stereo,${trim}adelay=${ms}|${ms}[m${idx}]`);
+    // 넣은 목소리는 장면 소리보다 조금 크게(같이 들려도 말이 잘 들리게)
+    f.push(`[${idx}:a]aresample=48000,aformat=channel_layouts=stereo,${trim}volume=1.4,adelay=${ms}|${ms}[m${idx}]`);
     mix.push(`[m${idx}]`);
     idx++;
   }

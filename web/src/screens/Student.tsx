@@ -1662,6 +1662,7 @@ const tcf = (x: number) => {
 };
 const AI_VOICES = VOICES.filter((v) => v.startsWith('AI'));
 const ttsCache = new Map<string, string>(); // `${목소리}|${글}` → 들어 볼 소리
+const ttsPending = new Set<string>();
 
 type Sel = { t: 'clip' | 'cap' | 'voice' | 'cut'; id: string } | null;
 type Tool = 'scene' | 'cap' | 'voice';
@@ -1710,6 +1711,8 @@ function S4() {
   const B = r1(baseLen(items));
   const am = useMemo(() => atMap(lay), [lay]);
   const tl: Timeline = s.tl ?? emptyTl();
+  const tlRef = React.useRef(tl);
+  tlRef.current = tl;
   const setTl = (next: Partial<Timeline>) => d({ t: 'set', patch: { tl: { ...tl, ...next } } });
   const cutsAbs = tl.cuts.flatMap((c) => {
     const a = absAt(c, am);
@@ -1803,9 +1806,9 @@ function S4() {
       // 정한 길이가 지나면 멈춘다
       if (t >= v.a + v.dur && (v.kind === 'mine' || v.fixed)) audios.current.get(v.id)?.pause();
       if (started.current.has(v.id) || t < v.a || t >= v.a + v.dur) continue;
-      started.current.add(v.id);
       const url = v.kind === 'mine' ? v.url : ttsCache.get(`${v.voice}|${v.text ?? ''}`);
-      if (!url) continue;
+      if (!url) continue; // AI 목소리를 아직 만드는 중이면, 다 되는 대로 그 위치부터 들려준다
+      started.current.add(v.id);
       let a = audios.current.get(v.id);
       if (!a || a.src !== url) {
         a = new Audio(url);
@@ -1815,6 +1818,38 @@ function S4() {
       a.play().catch(() => {});
     }
   }, [t, playing]);
+
+  // AI 목소리는 미리 만들어 두어서 "들어 보기"를 안 눌러도 재생할 때 바로 들리게 한다
+  const [, setTtsTick] = useState(0);
+  const ttsKey = voicesAbs.filter((v) => v.kind === 'ai' && v.text?.trim()).map((v) => `${v.id}|${v.voice}|${v.text}`).join('\n');
+  useEffect(() => {
+    const todo = tl.voices.filter((v) => v.kind === 'ai' && v.text?.trim() && !ttsCache.has(`${v.voice}|${v.text}`) && !ttsPending.has(`${v.voice}|${v.text}`));
+    if (!todo.length) return;
+    const id = window.setTimeout(() => {
+      for (const v of todo) {
+        const key = `${v.voice}|${v.text}`;
+        ttsPending.add(key);
+        api
+          .previewVoice({ voice: v.voice, text: v.text! })
+          .then((r) => {
+            ttsCache.set(key, r.url);
+            setTtsTick((n) => n + 1);
+            // 실제 길이로 막대를 맞춘다(학생이 길이를 직접 정하지 않았을 때)
+            const a = new Audio(r.url);
+            a.onloadedmetadata = () => {
+              if (!Number.isFinite(a.duration) || a.duration <= 0) return;
+              const latest = tlRef.current;
+              const cur = latest.voices.find((x) => x.id === v.id);
+              if (cur && !cur.fixed && cur.text === v.text)
+                d({ t: 'set', patch: { tl: { ...latest, voices: latest.voices.map((x) => (x.id === v.id ? { ...x, dur: r1(Math.min(20, a.duration) + 0.2) } : x)) } } });
+            };
+          })
+          .catch(() => {})
+          .finally(() => ttsPending.delete(key));
+      }
+    }, playing ? 0 : 1500);
+    return () => window.clearTimeout(id);
+  }, [ttsKey, playing]);
 
   const curE = lay.reduce((e, x) => (x.at <= t + 1e-6 ? x : e), lay[0]);
   const seek = (x: number) => {
