@@ -55,3 +55,36 @@ export async function checkAndTranslate(textKo: string, kind: 'prompt' | 'edit')
     return { safe: false, category: '검사 오류', reasonKo: 'AI 검사가 잠시 안 돼서 선생님이 직접 확인해요.', suggestionKo: '선생님 확인을 기다려 주세요.', english: '' };
   }
 }
+
+// ───────── 이야기 공통 설정: 모든 장면이 한 편의 영화처럼 이어지게 ─────────
+// 학생이 매 장면 "같은 배경·날씨·밤낮·그림체로" 라고 쓰지 않아도, 이야기 전체를 보고 한 번 정해 모든 장면에 붙인다.
+export type World = { place: string; weather: string; time: string; light: string; camera: string; en: string };
+
+const WORLD_SYSTEM = `너는 초중고 학생이 만든 짧은 영상 이야기를 보고, 모든 장면이 한 편의 영화처럼 자연스럽게 이어지도록 "공통 설정"을 정하는 도우미다.
+- 학생이 쓴 내용(언제·어디서·장면 설명)에 나온 것을 가장 먼저 따른다. 없으면 이야기에 어울리게 정한다.
+- place: 주된 장소. 이야기 중에 장소가 바뀌면 "집 → 학교"처럼 순서대로.
+- weather: 날씨 하나(예: 비 오는 날). time: 때(아침/낮/저녁/밤 중, 이야기 순서대로 바뀌면 "아침 → 저녁").
+- light: 빛과 색감(예: 흐리고 차분한 파란빛). camera: 구도(예: 눈높이에서 인물 허리 위까지 보이는 비슷한 구도).
+- 각 항목은 초등학생이 읽을 짧은 한국어.
+- en: 영상 모델에 줄 영어 2~3문장. 모든 장면에서 같은 장소의 모습(건물·방·소품 배치), 같은 날씨, 같은 시간대의 빛, 같은 색감, 비슷한 카메라 높이와 구도를 유지하라고 쓴다. 장소나 때가 이야기 순서대로 바뀌면 그 순서를 쓴다.
+- 폭력·무서운 내용은 넣지 않는다. JSON만 출력한다.`;
+
+export async function makeWorld(storyKo: string): Promise<World> {
+  const res = await genai().models.generateContent({
+    model: CONFIG.textModel(),
+    contents: [{ role: 'user', parts: [{ text: storyKo.slice(0, 3000) }] }],
+    config: {
+      systemInstruction: WORLD_SYSTEM,
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: { place: { type: 'STRING' }, weather: { type: 'STRING' }, time: { type: 'STRING' }, light: { type: 'STRING' }, camera: { type: 'STRING' }, en: { type: 'STRING' } },
+        required: ['place', 'weather', 'time', 'light', 'camera', 'en'],
+      },
+    } as any,
+  });
+  const j = JSON.parse((res as any).text ?? '{}') as World;
+  if (!j.en) throw new Error('공통 설정을 만들지 못했어요');
+  return j;
+}

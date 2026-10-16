@@ -1066,6 +1066,54 @@ function CastPanel() {
 
 // ───────────── 초등: 활동지로 장면 초안 만들기 ─────────────
 // 활동지에 쓴 육하원칙·기분으로 장면 3~5개와 장면별 육하원칙 초안을 받는다. 학생이 고쳐서 쓴다.
+// 모든 장면에 자동으로 들어가는 공통 설정(장소·날씨·때·빛·구도). 학생이 매번 쓰지 않아도 된다.
+function WorldPanel() {
+  const { s, d } = useStore();
+  const [w, setW] = useState<{ place?: string; weather?: string; time?: string; light?: string; camera?: string; empty?: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = (refresh = false) => {
+    setBusy(true);
+    api
+      .storyWorld({ refresh })
+      .then(setW)
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => load(), [s.scenes.length]);
+  const rows: [string, string | undefined][] = [
+    ['장소', w?.place],
+    ['날씨', w?.weather],
+    ['때', w?.time],
+    ['빛·색감', w?.light],
+    ['구도', w?.camera],
+  ];
+  return (
+    <section className="panel world-panel">
+      <div className="panel-head">
+        <h3>② 모든 장면에 자동으로 맞춰지는 설정</h3>
+        <button className="btn tiny" disabled={busy} onClick={() => load(true)}>
+          {busy ? 'AI가 정하는 중…' : '↻ 다시 정하기'}
+        </button>
+      </div>
+      <p className="tiny muted">
+        AI가 내 이야기(활동지·장면)를 읽고 정했어요. 장면마다 따로 쓰지 않아도 모든 장면이 이 설정과 주인공 카드의 그림체로 만들어져서 한 편의 영상처럼 이어져요. 어떤 장면의 “언제·어디서”에 다르게 쓰면 그 장면은 내가 쓴 대로 만들어요.
+      </p>
+      {w?.empty ? (
+        <p className="tiny muted">활동지와 장면을 먼저 쓰면 여기에 설정이 나와요.</p>
+      ) : (
+        <dl className="world-grid">
+          {rows.map(([k, v]) => (
+            <React.Fragment key={k}>
+              <dt>{k}</dt>
+              <dd>{v || (busy ? '…' : '—')}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      )}
+    </section>
+  );
+}
+
 function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
   const { s, d } = useStore();
   const [busy, setBusy] = useState(false);
@@ -1137,6 +1185,7 @@ function S3() {
       <SheetSummary />
       {s.band === 'elementary' && <SceneDraftBox onPick={setSel} />}
       <CastPanel />
+      <WorldPanel />
       <div className="make">
         <aside className="scene-list" aria-label="장면 목록">
           {s.scenes.map((sc, i) => {
@@ -1242,10 +1291,11 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
           </div>
           <div className="field human-field">
             <label htmlFor={`b-extra-${scene.id}`}>더 넣고 싶은 내용 (자유롭게)</label>
+            <span className="tiny muted">배경·날씨·밤낮·그림체·주인공은 모든 장면에 자동으로 똑같이 맞춰져요. 이 장면에만 필요한 것만 써요.</span>
             <input
               id={`b-extra-${scene.id}`}
               maxLength={100}
-              placeholder={mid ? '예: 카메라가 천천히 다가가고, 창밖에 비가 내린다' : '예: 강아지도 옆에서 꼬리를 흔든다'}
+              placeholder={mid ? '예: 카메라가 천천히 다가간다' : '예: 강아지도 옆에서 꼬리를 흔든다'}
               value={b.extra ?? ''}
               onChange={(e) => d({ t: 'builder', id: scene.id, patch: { extra: e.target.value } })}
             />

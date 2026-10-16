@@ -7,10 +7,10 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 import { CallableRequest, HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
 import { logger } from 'firebase-functions';
-import { randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, pickSec, specFor } from './config';
 import { Builder, buildPromptKo, moderateRules } from './moderation';
-import { checkAndTranslate } from './ai/text';
+import { World, checkAndTranslate, makeWorld } from './ai/text';
 import { SafetyBlockedError, drawImage, provider } from './ai/video';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -222,7 +222,9 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
         // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
         const cast = await castPrefix(classId, no);
         if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
-        promptEn = `${cast.text}Scene: ${english} ${cast.style}`;
+        const world = await worldOf(classId, no).catch(() => undefined);
+        const cont = world?.en ? `Story continuity (keep the same in every scene unless this scene's text clearly says otherwise): ${world.en} Keep a similar camera height and framing to the other scenes so the scenes connect smoothly. ` : '';
+        promptEn = `${cast.text}${cont}Scene: ${english} ${cast.style}`;
         refPath = cast.cardPath ?? null;
       }
     } else {
@@ -292,9 +294,41 @@ async function castPrefix(classId: string, no: number): Promise<{ text: string; 
   if (!look) return { text: '', style };
   const l = await lookEnOf(classId, no, look);
   if (l.blocked) return { text: '', style, blocked: l.blocked };
-  const text = `Keep the SAME main character (same face, hair, body and clothes) in every scene of this story. Main character: ${l.en} "I", "me" or "나" in the scene means this main character. The background follows each scene. `;
+  const text = `Keep the SAME main character (same face, hair, body and clothes) in every scene of this story. Main character: ${l.en} "I", "me" or "나" in the scene means this main character. `;
   return { text, style, cardPath: card.cardPath ?? undefined };
 }
+
+// 이야기 공통 설정(장소·날씨·때·빛·구도). 이야기 내용이 바뀔 때만 새로 만들고 저장해 둔다.
+async function worldOf(classId: string, no: number, force = false): Promise<World | undefined> {
+  const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
+  const st = p.story ?? {};
+  const scenes: any[] = (p.scenes ?? []).filter((x: any) => !x.skip);
+  const lines = [
+    `주제: ${p.topic ?? ''}`,
+    `누가: ${st.who ?? ''} / 언제: ${st.when ?? ''} / 어디서: ${st.where ?? ''} / 무엇을: ${st.what ?? ''} / 어떻게: ${st.event ?? ''} / 왜: ${st.why ?? ''} / 기분: ${st.feeling ?? ''}`,
+    `주인공: ${p.cast?.look ?? ''}`,
+    `시나리오: ${p.scenario?.final || (p.scenario?.draft ?? []).join(' ')}`,
+    ...scenes.map((x, i) => `장면 ${i + 1}: ${x.line ?? ''} (언제: ${x.builder?.when ?? ''}, 어디서: ${x.builder?.where ?? ''})`),
+  ].join('\n');
+  if (!lines.replace(/[^가-힣a-zA-Z0-9]/g, '').length) return undefined;
+  const key = createHash('sha1').update(lines).digest('hex');
+  const ref = db.doc(`castCache/${classId}_${no}`);
+  const cur = (await ref.get()).data() ?? {};
+  if (!force && cur.worldKey === key && cur.world?.en) return cur.world as World;
+  const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
+  if (!useAi) return { place: st.where || '이야기 속 장소', weather: '맑음', time: st.when || '낮', light: '밝고 따뜻한 빛', camera: '눈높이의 비슷한 구도', en: '(mock) keep the same place, weather, time of day and camera framing.' };
+  if (!moderateRules(lines).pass) return cur.world as World | undefined;
+  const w = await makeWorld(lines).catch((e) => (logger.warn('공통 설정 실패', { err: String(e?.message ?? e) }), undefined));
+  if (w) await ref.set({ world: w, worldKey: key, worldAt: FieldValue.serverTimestamp() }, { merge: true });
+  return w ?? (cur.world as World | undefined);
+}
+
+// 학생: 모든 장면에 자동으로 들어가는 공통 설정 보기(다시 정하기)
+export const storyWorld = onCall({ timeoutSeconds: 60 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const w = await worldOf(classId, no, req.data?.refresh === true);
+  return w ? { place: w.place, weather: w.weather, time: w.time, light: w.light, camera: w.camera } : { empty: true };
+});
 
 // 학생: 주인공 카드 만들기 (주인공 기준 그림 1장, 3번까지)
 export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {

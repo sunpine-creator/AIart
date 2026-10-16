@@ -836,3 +836,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .tl-cutpin { position: absolute; top: 50%; z-index: 3; transform: translate(-50%, -50%); width: 22px; height: 22px; border-radius: 999px; background: var(--critical); color: #fff; font-size: 0.75rem; display: grid; place-items: center; cursor: pointer; box-shadow: 0 0 0 2px var(--surface); }
 .tl-cutpin.on { box-shadow: 0 0 0 3px var(--human); }
 @media (max-width: 640px) { .tool-tabs { grid-template-columns: 1fr; } }
+
+/* 모든 장면 공통 설정 */
+.world-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0 0; }
+.world-grid dt { color: var(--muted); font-size: 0.85rem; }
+.world-grid dd { margin: 0; font-weight: 600; }
