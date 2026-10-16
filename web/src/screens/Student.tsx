@@ -1767,7 +1767,8 @@ function S4() {
       const v = e ? vids.current.get(e.item.key) : undefined;
       if (v && !v.paused && !v.seeking && v.readyState >= 2) {
         const vt = e.at + v.currentTime;
-        cur = Math.abs(vt - cur) < 1 ? Math.max(cur, vt) : cur + dt;
+        // 영상과 거의 같으면 영상 시간을 따른다. 많이 어긋나면(건너뛰기 직후) 시계대로 가고 영상이 맞춰 온다
+        cur = Math.abs(vt - cur) < 0.3 ? vt : cur + dt;
       } else cur += dt;
       cur = skipCut(cur, cuts);
       if (cur >= B) {
@@ -2407,7 +2408,7 @@ function ClipView({ e, t, playing, active, reg }: { e: LayE; t: number; playing:
     const v = vref.current;
     if (!v) return;
     // 재생 중에는 시계가 영상을 따라가므로 크게 어긋날 때(지운 구간 건너뛰기 등)만 맞춘다
-    if (!playing || (!v.seeking && Math.abs(v.currentTime - local) > 1.2)) {
+    if (!playing || (!v.seeking && v.readyState >= 2 && Math.abs(v.currentTime - local) > 0.5)) {
       try {
         v.currentTime = local;
       } catch {
