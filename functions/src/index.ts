@@ -223,13 +223,13 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
       const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
       if (!c.safe && !flag) flag = { category: c.category ?? '기타', reason: c.reasonKo ?? '확인이 필요한 표현이 있어요.', suggestion: c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', layer: 'ai' };
       const english = c.english || checkText;
-      if (kind === 'edit') { editEn = english; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
+      if (kind === 'edit') { editEn = `${english} ${KO_TAIL}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
         // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
         const cast = await castPrefix(classId, no);
         if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
         const world = await worldOf(classId, no).catch(() => undefined);
         const cont = world?.en ? `Story continuity (keep the same in every scene unless this scene's text clearly says otherwise): ${world.en} Keep a similar camera height and framing to the other scenes so the scenes connect smoothly. ` : '';
-        promptEn = `${cast.text}${cont}Scene: ${english} ${cast.style}`;
+        promptEn = `${cast.text}${cont}Scene: ${english} ${cast.style} ${KO_TAIL}`;
         refPath = cast.cardPath ?? null;
       }
     } else {
@@ -272,6 +272,8 @@ export const STYLE_EN: Record<string, string> = {
 };
 const styleOf = (v: unknown) => (String(v ?? '') in STYLE_EN ? String(v) : '그림책');
 const SAFE_TAIL = 'Safe for children, fictional people only.';
+// 영상 속 말·글자는 모두 한국어로
+export const KO_TAIL = 'LANGUAGE: Everyone who speaks in this video speaks KOREAN (한국어) only — all dialogue, narration and voices are in natural Korean, never English. Any visible writing (signs, screens, books, labels) is in Korean Hangul, or there is no writing at all. Keep any Korean lines given in quotes exactly as written.';
 
 // 주인공 설명을 검사·번역한다(같은 설명이면 저장해 둔 번역을 다시 쓴다)
 async function lookEnOf(classId: string, no: number, look: string): Promise<{ en?: string; blocked?: { category: string; reason: string; suggestion: string } }> {
