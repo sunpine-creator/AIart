@@ -1471,7 +1471,7 @@ function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene
           <span className="mono muted">{time}</span>
         </div>
         {g.status === 'awaiting_approval' && <Progress text="선생님이 프롬프트를 확인하고 있어요" />}
-        {g.status === 'queued' && (g.attempt ? <Progress text={`AI 쪽에 문제가 있어 잠시 뒤 다시 만들어요 (${g.attempt}/3번째 재시도) · 크레딧은 실패하면 돌려받아요`} /> : <Progress text="대기열에서 차례를 기다려요 · 반 친구들 작업과 차례로 만들어요" />)}
+        {g.status === 'queued' && (g.attempt ? <Progress text={`반 친구들이 한꺼번에 만들고 있어서 AI가 바빠요. 잠시 뒤 자동으로 다시 만들어요 (${g.attempt}번째 다시 시도) · 그대로 기다리면 돼요`} /> : <Progress text="대기열에서 차례를 기다려요 · 반 친구들 작업과 차례로 만들어요" />)}
         {g.status === 'running' && <Progress text={`AI가 ${word === "영상" ? "영상을" : "이미지를"} 만드는 중이에요 · 1~3분쯤 걸려요`} running />}
       </li>
     );

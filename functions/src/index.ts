@@ -19,7 +19,7 @@ import { Clip, Layers, TlCapIn, TlVoiceIn, XF, applyTimeline, concatCopy, joinXf
 import { isAiVoice, speak, voiceId } from './ai/tts';
 
 initializeApp();
-setGlobalOptions({ region: REGION, maxInstances: 20 });
+setGlobalOptions({ region: REGION, maxInstances: 60 });
 const db = getFirestore();
 
 // ───────── 공통 ─────────
@@ -502,7 +502,8 @@ async function prevSceneFrame(classId: string, no: number, sceneId: string): Pro
 // ───────── 대기열 작업자: 실제 생성 ─────────
 export const runGeneration = onTaskDispatched(
   {
-    retryConfig: { maxAttempts: 3, minBackoffSeconds: 30 },
+    // 반 전체가 한꺼번에 만들 때 AI가 바쁘다고 하면 대기열에서 여러 번 다시 시도한다(실패해도 크레딧은 돌려준다)
+    retryConfig: { maxAttempts: 8, minBackoffSeconds: 30, maxBackoffSeconds: 180 },
     rateLimits: { maxConcurrentDispatches: CONFIG.maxConcurrent() },
     timeoutSeconds: 1800,
     memory: '1GiB',
@@ -572,7 +573,7 @@ export const runGeneration = onTaskDispatched(
     } catch (e: any) {
       logger.error('generation failed', { genId, err: String(e?.message ?? e) });
       if (e instanceof SafetyBlockedError) return fail('blocked', '모델 안전 정책에 걸림');
-      const last = (req.retryCount ?? 0) >= 2;
+      const last = (req.retryCount ?? 0) >= 7;
       if (last) return fail('failed', String(e?.message ?? '알 수 없는 오류'));
       await ref.update({ status: 'queued', attempt: (req.retryCount ?? 0) + 1, lastError: String(e?.message ?? e).slice(0, 300) });
       throw e; // 대기열이 잠시 뒤 다시 시도한다
@@ -699,7 +700,7 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
 
 // ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
 
-export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 15 }, async (req) => {
+export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 35 }, async (req) => {
   const { classId, no } = requireStudent(req);
   const pid = `${classId}_${no}`;
   const projRef = db.doc(`projects/${pid}`);
