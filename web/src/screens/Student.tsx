@@ -1008,15 +1008,21 @@ function CastPanel() {
   const tries = c.tries ?? 0;
   const lookChanged = hasCard && c.cardLook !== c.look;
   const styleChanged = hasCard && !!c.cardStyle && c.cardStyle !== c.style;
-  const changed = lookChanged || styleChanged;
+  const changed = (lookChanged || styleChanged) && c.cardStatus !== 'making';
+  const making = c.cardStatus === 'making';
+  // 다 그려지면 알려 준다
+  const prevStatus = React.useRef(c.cardStatus);
+  useEffect(() => {
+    if (prevStatus.current === 'making' && c.cardStatus === 'done') d({ t: 'toast', msg: '주인공 카드를 만들었어요. 모든 장면이 이 주인공과 그림체로 만들어져요.' });
+    prevStatus.current = c.cardStatus;
+  }, [c.cardStatus]);
   const make = () => {
     setBusy(true);
     api
       .makeCharacter({ look: c.look.trim(), style: c.style })
       .then((r) => {
         if (r.blocked) return d({ t: 'toast', msg: `${r.reason ?? '이 설명은 쓸 수 없어요.'} ${r.suggestion ?? ''}` });
-        set({ cardUrl: r.url || undefined, cardLook: c.look.trim(), cardStyle: c.style, tries: r.tries ?? tries + 1 });
-        d({ t: 'toast', msg: '주인공 카드를 만들었어요. 모든 장면이 이 주인공과 그림체로 만들어져요.' });
+        d({ t: 'toast', msg: 'AI가 주인공을 그리기 시작했어요. 반 친구들 것과 차례로 그려서 1~3분쯤 걸려요. 다 되면 여기에 저절로 나타나요.' });
       })
       .catch((e) => d({ t: 'toast', msg: errText(e) }))
       .finally(() => setBusy(false));
@@ -1046,15 +1052,17 @@ function CastPanel() {
           </div>
           {hasCard && <p className="tiny muted">장면은 주인공 카드의 그림체로 만들어져요. 그림체를 바꾸려면 다른 그림체를 고른 뒤 카드를 다시 만들어요.</p>}
           <div className="actions">
-            <button className="btn ai" disabled={busy || !c.look.trim() || tries >= 3 || s.cls.paused} onClick={make}>
-              {busy ? 'AI가 주인공을 그리는 중…' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
+            <button className="btn ai" disabled={busy || making || !c.look.trim() || tries >= 3 || s.cls.paused} onClick={make}>
+              {busy ? '보내는 중…' : making ? 'AI가 주인공을 그리는 중…' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
             </button>
+            {making && <span className="tiny hint">반 친구들 것과 차례로 그려요{c.cardRetry ? ` · AI가 바빠서 다시 그리는 중(${c.cardRetry}번째)` : ''}. 기다리는 동안 아래 장면 내용을 먼저 써도 돼요.</span>}
+            {c.cardStatus === 'failed' && c.cardError && <span className="tiny danger-text">{c.cardError}</span>}
             {changed && <span className="tiny hint">{styleChanged && !lookChanged ? '그림체를 바꿨어요.' : '주인공 설명을 바꿨어요.'} {tries >= 3 ? '카드를 더 만들 수 없어서 지금 카드의 그림체로 만들어져요.' : '“주인공 카드 다시 만들기”를 눌러야 장면에 반영돼요.'}</span>}
             {tries >= 3 && <span className="tiny muted">카드는 3번까지 만들 수 있어요.</span>}
           </div>
         </div>
         <div className="cast-card">
-          {hasCard ? <img src={c.cardUrl} alt="내 주인공 카드" /> : <span className="tiny muted">주인공 카드가 여기에 나와요</span>}
+          {hasCard ? <img src={c.cardUrl} alt="내 주인공 카드" style={making ? { opacity: 0.4 } : undefined} /> : <span className="tiny muted">{making ? 'AI가 그리는 중이에요…' : '주인공 카드가 여기에 나와요'}</span>}
         </div>
       </div>
       <p className="tiny muted">

@@ -340,7 +340,7 @@ export const storyWorld = onCall({ timeoutSeconds: 60 }, async (req) => {
 });
 
 // 학생: 주인공 카드 만들기 (주인공 기준 그림 1장, 3번까지)
-export const makeCharacter = onCall({ timeoutSeconds: 300 }, async (req) => {
+export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {
   const { classId, no } = requireStudent(req);
   const look = String(req.data?.look ?? '').trim().slice(0, 120);
   const style = styleOf(req.data?.style);
@@ -355,25 +355,62 @@ export const makeCharacter = onCall({ timeoutSeconds: 300 }, async (req) => {
     await log({ classId, no, kind: '주인공 카드', textKo: look, verdict: 'blocked', category: l.blocked.category, action: '차단', layer: 'ai' });
     return { blocked: true, reason: l.blocked.reason, suggestion: l.blocked.suggestion };
   }
-  let url = '';
-  let path: string | null = null;
-  if (CONFIG.videoProvider() === 'omni') {
-    const img = await drawImage(
-      [{ text: `Character reference sheet of ONE fictional main character: ${l.en} Full body, front view, friendly neutral pose, centered, plain light background, no text, no other people. ${STYLE_EN[style]} ${SAFE_TAIL}` }],
-      '1:1',
-    ).catch((e) => {
-      logger.error('주인공 카드 실패', { err: String(e?.message ?? e) });
-      throw new HttpsError('unavailable', e instanceof SafetyBlockedError ? 'AI가 이 주인공은 그릴 수 없대요. 설명을 바꿔 보세요.' : `주인공 카드를 만들지 못했어요. 잠시 뒤 다시 해 보세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 70)})`);
-    });
-    const token = randomUUID();
-    path = `classes/${classId}/${no}/cast/${Date.now()}.png`;
-    await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
-    url = mediaUrl(path, token);
-  }
-  await ref.set({ cardPath: path, cardUrl: url, cardLook: look, cardStyle: style, cardTries: (cur.cardTries ?? 0) + 1, cardAt: FieldValue.serverTimestamp() }, { merge: true });
-  await log({ classId, no, kind: '주인공 카드', textKo: `${look} (${style})`, textEn: l.en, verdict: 'pass', action: `카드 만들기 ${(cur.cardTries ?? 0) + 1}/3` });
-  return { blocked: false, url, tries: (cur.cardTries ?? 0) + 1 };
+  // 반 전체가 한꺼번에 눌러도 되도록 대기열에 넣고 바로 돌아간다. 다 그리면 학생 화면에 저절로 나타난다.
+  const projRef = db.doc(`projects/${classId}_${no}`);
+  if (cur.cardStatus === 'making' && Date.now() - (cur.cardReqAt ?? 0) < 10 * 60_000) return { blocked: false, queued: true };
+  await ref.set({ cardStatus: 'making', cardReqLook: look, cardReqStyle: style, cardReqEn: l.en, cardReqAt: Date.now() }, { merge: true });
+  await projRef.set({ card: { status: 'making', at: Date.now(), url: cur.cardUrl ?? null, look: cur.cardLook ?? null, style: cur.cardStyle ?? null, tries: cur.cardTries ?? 0 } }, { merge: true });
+  await getFunctions().taskQueue(`locations/${REGION}/functions/runCard`).enqueue({ classId, no }, { dispatchDeadlineSeconds: 600 });
+  return { blocked: false, queued: true };
 });
+
+// 대기열 작업자: 주인공 카드 그리기 (한 번에 몇 장씩만 그려서 AI가 바쁘다고 거절하지 않게)
+export const runCard = onTaskDispatched(
+  {
+    retryConfig: { maxAttempts: 6, minBackoffSeconds: 15, maxBackoffSeconds: 120 },
+    rateLimits: { maxConcurrentDispatches: 6 },
+    timeoutSeconds: 300,
+    memory: '512MiB',
+  },
+  async (req) => {
+    const { classId, no } = (req.data ?? {}) as { classId: string; no: number };
+    if (!classId || !Number.isInteger(no)) return;
+    const ref = db.doc(`castCache/${classId}_${no}`);
+    const projRef = db.doc(`projects/${classId}_${no}`);
+    const cur = (await ref.get()).data() ?? {};
+    if (cur.cardStatus !== 'making') return;
+    const look = String(cur.cardReqLook ?? '');
+    const style = styleOf(cur.cardReqStyle);
+    const tries = (cur.cardTries ?? 0) + 1;
+    try {
+      let url = '';
+      let path: string | null = null;
+      if (CONFIG.videoProvider() === 'omni') {
+        const img = await drawImage(
+          [{ text: `Character reference sheet of ONE fictional main character: ${cur.cardReqEn} Full body, front view, friendly neutral pose, centered, plain light background, no text, no other people. ${STYLE_EN[style]} ${SAFE_TAIL}` }],
+          '1:1',
+        );
+        const token = randomUUID();
+        path = `classes/${classId}/${no}/cast/${Date.now()}.png`;
+        await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
+        url = mediaUrl(path, token);
+      }
+      await ref.set({ cardStatus: 'done', cardPath: path, cardUrl: url, cardLook: look, cardStyle: style, cardTries: tries, cardAt: FieldValue.serverTimestamp() }, { merge: true });
+      await projRef.set({ card: { status: 'done', url, look, style, tries, at: Date.now() } }, { merge: true });
+      await log({ classId, no, kind: '주인공 카드', textKo: `${look} (${style})`, textEn: cur.cardReqEn, verdict: 'pass', action: `카드 만들기 ${tries}/3` });
+    } catch (e: any) {
+      const safety = e instanceof SafetyBlockedError;
+      const last = safety || (req.retryCount ?? 0) >= 5;
+      logger.warn('주인공 카드 실패', { classId, no, retry: req.retryCount, err: String(e?.message ?? e).slice(0, 300) });
+      if (!last) {
+        await projRef.set({ card: { status: 'making', retry: (req.retryCount ?? 0) + 1 } }, { merge: true });
+        throw e; // 대기열이 잠시 뒤 다시 그린다
+      }
+      await ref.set({ cardStatus: 'failed' }, { merge: true });
+      await projRef.set({ card: { status: 'failed', error: safety ? 'AI가 이 주인공은 그릴 수 없대요. 설명을 바꿔 보세요.' : '지금은 주인공 카드를 그리지 못했어요. 잠시 뒤 다시 눌러 주세요. (횟수는 줄지 않았어요)', at: Date.now() } }, { merge: true });
+    }
+  },
+);
 
 // ───────── 교사: 승인 / 돌려보내기 ─────────
 export const reviewGeneration = onCall(async (req) => {
