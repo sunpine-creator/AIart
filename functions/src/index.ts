@@ -540,7 +540,7 @@ async function prevSceneFrame(classId: string, no: number, sceneId: string): Pro
 export const runGeneration = onTaskDispatched(
   {
     // 반 전체가 한꺼번에 만들 때 AI가 바쁘다고 하면 대기열에서 여러 번 다시 시도한다(실패해도 크레딧은 돌려준다)
-    retryConfig: { maxAttempts: 8, minBackoffSeconds: 30, maxBackoffSeconds: 180 },
+    retryConfig: { maxAttempts: 8, minBackoffSeconds: 15, maxBackoffSeconds: 120 },
     rateLimits: { maxConcurrentDispatches: CONFIG.maxConcurrent() },
     timeoutSeconds: 1800,
     memory: '1GiB',

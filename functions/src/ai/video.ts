@@ -31,7 +31,7 @@ export const mockProvider: VideoProvider = {
 // ───────── Gemini Omni (Interactions API) ─────────
 // 공식 예제(GoogleCloudPlatform/generative-ai, gemini_omni_flash_video_gen.ipynb)의 구조를 따른다.
 // 필드 이름은 REST 와 같은 snake_case. SDK 버전이 바뀌면 이 파일만 고치면 된다.
-const POLL_MS = 10_000;
+const POLL_MS = 4_000; // 다 됐는지 자주 확인해서 끝나자마자 가져온다
 const TIMEOUT_MS = 25 * 60_000;
 
 async function waitDone(id: string): Promise<any> {
@@ -125,7 +125,11 @@ export const omniProvider: VideoProvider = {
           notes.push(`Image ${parts.length} is the LAST frame of the previous scene of the same story. This new frame must feel like the very next moment of one continuous film: same art style, same color palette and lighting mood, same character look, natural continuation of position and camera. If the scene below happens in a different place, keep the style and mood and change only the place.`);
         }
         parts.push({ text: `${notes.join(' ')} Draw ONE 16:9 frame of the scene below. No text.\n${job.promptEn}` });
-        const key = await drawImage(parts, '16:9');
+        // 첫 그림이 40초 안에 안 나오면(AI가 바쁠 때) 기다리지 않고 글만으로 바로 영상을 만든다
+        const key = await Promise.race([
+          drawImage(parts, '16:9', { quick: true }),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('keyframe timeout')), 40_000)),
+        ]);
         try {
           const r = await runOmniSec(
             {
@@ -184,11 +188,12 @@ async function drawOnce(model: string, parts: any[], aspectRatio: string): Promi
   return { bytes: Buffer.from(part.inlineData.data, 'base64'), mimeType: part.inlineData.mimeType ?? 'image/png' };
 }
 
-export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9'): Promise<{ bytes: Buffer; mimeType: string }> {
-  const models = goodImageModel ? [goodImageModel, ...IMAGE_MODELS().filter((m) => m !== goodImageModel)] : IMAGE_MODELS();
+export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9', opt: { quick?: boolean } = {}): Promise<{ bytes: Buffer; mimeType: string }> {
+  // quick: 한 번 성공한 모델만 한 번 시도(장면 첫 그림처럼 늦으면 안 되는 곳)
+  const models = goodImageModel ? (opt.quick ? [goodImageModel] : [goodImageModel, ...IMAGE_MODELS().filter((m) => m !== goodImageModel)]) : IMAGE_MODELS();
   let last: unknown;
   for (const model of models) {
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < (opt.quick ? 1 : 2); k++) {
       try {
         const r = await drawOnce(model, parts, aspectRatio);
         goodImageModel = model;

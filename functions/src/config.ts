@@ -13,7 +13,7 @@ export const CONFIG = {
   omniModel: () => env('OMNI_MODEL', 'gemini-omni-flash-preview'),
   textModel: () => env('TEXT_MODEL', 'gemini-2.5-flash'),
   imageModel: () => env('IMAGE_MODEL', 'gemini-2.5-flash-image'),
-  maxConcurrent: () => num('MAX_CONCURRENT', 5),
+  maxConcurrent: () => num('MAX_CONCURRENT', 15),
   price: () => ({ '360p': num('PRICE_360P', 0.03), '720p': num('PRICE_720P', 0.1), image: num('PRICE_IMAGE', 0.04) }),
 };
 
