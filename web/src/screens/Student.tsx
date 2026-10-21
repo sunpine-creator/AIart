@@ -2450,7 +2450,8 @@ function ClipView({ e, t, playing, active, reg }: { e: LayE; t: number; playing:
   const g = it.gen;
   const genUrl = useStorageUrl(g && !g.url && !g.mock ? g.storagePath : undefined);
   const isVideoGen = !!g && !g.mock && !!g.storagePath && !(g.img || (g.mimeType ?? '').startsWith('image/'));
-  const url = it.kind === 'upload' ? (it.upload!.playable ? it.upload!.url : '') : isVideoGen ? g!.url ?? genUrl : '';
+  const styledUrl = it.kind === 'upload' && it.upload!.useStyled ? it.upload!.styledUrl : undefined;
+  const url = it.kind === 'upload' ? styledUrl || (it.upload!.playable ? it.upload!.url : '') : isVideoGen ? g!.url ?? genUrl : '';
   useEffect(() => {
     const v = vref.current;
     if (!v) return;
@@ -2507,7 +2508,7 @@ function ClipView({ e, t, playing, active, reg }: { e: LayE; t: number; playing:
       ) : (
         <span className="no-preview">{it.kind === 'upload' ? '이 브라우저에서는 미리 볼 수 없는 형식이에요. 저장할 때 자동으로 바꿔서 넣어요.' : '불러오는 중…'}</span>
       )}
-      <span className={`frame-badge ${it.kind === 'upload' ? 'human-badge' : ''}`}>{it.kind === 'upload' ? '내가 올린 영상' : 'AI 생성'}</span>
+      <span className={`frame-badge ${it.kind === 'upload' && !styledUrl ? 'human-badge' : ''}`}>{it.kind === 'upload' ? (styledUrl ? '내 영상 · AI 그림체' : '내가 올린 영상') : 'AI 생성'}</span>
     </div>
   );
 }
@@ -2575,6 +2576,7 @@ function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; lab
           <label className="check">
             <input type="checkbox" checked={it.upload!.voice === '원래 소리'} onChange={(ev) => d({ t: 'set', patch: { uploads: s.uploads.map((u) => (u.id === it.key ? { ...u, voice: ev.target.checked ? '원래 소리' : '없음' } : u)) } })} /> 영상에 들어 있던 원래 소리 쓰기
           </label>
+          <RestyleBox u={it.upload!} />
           <button className="btn tiny" onClick={() => (d({ t: 'removeUpload', id: it.key }), onClose())}>
             이 영상 빼기
           </button>
@@ -2591,6 +2593,56 @@ function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; lab
         </>
       )}
     </>
+  );
+}
+
+// 내가 올린 영상을 주인공 카드(또는 고른) 그림체로 바꾸기
+function RestyleBox({ u }: { u: Upload }) {
+  const { s, d } = useStore();
+  const [sending, setSending] = useState(false);
+  const gens = s.gens.filter((g) => g.sceneId === `up:${u.id}`);
+  const last = gens[gens.length - 1];
+  const busy = !!last && ['awaiting_approval', 'queued', 'running'].includes(last.status);
+  const style = s.cast.cardStyle || s.cast.style || '그림책';
+  const cost = [3, 4, 5, 6, 8, 10].find((x) => x >= Math.ceil(Math.min(10, u.srcDur || 10) - 0.05)) ?? 10;
+  const go = () => {
+    setSending(true);
+    api
+      .restyleUpload({ uploadId: u.id })
+      .then(() => d({ t: 'toast', msg: s.cls.approval ? '선생님이 승인하면 그림체 바꾸기를 시작해요.' : `AI가 내 영상을 ${style} 그림체로 바꾸고 있어요. 1~3분쯤 걸려요.` }))
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setSending(false));
+  };
+  return (
+    <div className="restyle">
+      <strong className="tiny">🎨 AI 장면과 그림체 맞추기</strong>
+      {u.styledPath ? (
+        <>
+          <div className="pills">
+            <button className={`pill ${u.useStyled ? 'on' : ''}`} onClick={() => d({ t: 'set', patch: { uploads: s.uploads.map((x) => (x.id === u.id ? { ...x, useStyled: true } : x)) } })}>
+              AI 그림체로 쓰기
+            </button>
+            <button className={`pill ${!u.useStyled ? 'on' : ''}`} onClick={() => d({ t: 'set', patch: { uploads: s.uploads.map((x) => (x.id === u.id ? { ...x, useStyled: false } : x)) } })}>
+              원래 영상 쓰기
+            </button>
+          </div>
+          <p className="tiny muted">소리는 원래 영상의 소리를 그대로 써요.</p>
+        </>
+      ) : busy ? (
+        <Progress text={last.status === 'awaiting_approval' ? '선생님이 확인하고 있어요' : last.status === 'running' ? `AI가 ${style} 그림체로 바꾸는 중이에요 · 1~3분쯤 걸려요` : '차례를 기다리고 있어요'} running={last.status === 'running'} />
+      ) : (
+        <>
+          <p className="tiny muted">
+            내가 찍은 영상을 우리 장면과 같은 <strong>{style}</strong> 그림체로 다시 그려요. 움직임과 길이는 그대로예요. 사람은 실제 얼굴 대신 만화 캐릭터처럼 그려져요.
+          </p>
+          {last && ['blocked', 'rejected'].includes(last.status) && <p className="tiny danger-text">{last.status === 'blocked' ? 'AI가 이 영상은 바꿀 수 없대요(사람 얼굴이 크게 나오면 안 될 수 있어요). 크레딧은 돌려받았어요.' : `선생님이 돌려보냈어요: ${last.rejectReason ?? ''}`}</p>}
+          <button className="btn ai tiny" disabled={sending || !u.path || s.cls.paused || s.credits < cost} onClick={go}>
+            {sending ? '보내는 중…' : `${style} 그림체로 바꾸기 · ${cost}크레딧`}
+          </button>
+          {!u.path && <span className="tiny muted">영상이 다 올라가면 누를 수 있어요.</span>}
+        </>
+      )}
+    </div>
   );
 }
 

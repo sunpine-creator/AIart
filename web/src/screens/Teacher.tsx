@@ -808,8 +808,8 @@ function ApprovalItem({ a }: { a: { id: string; no: number; nick: string; prompt
           <strong>
             {a.no}번 {a.nick}
           </strong>
-          <span className="appr-scene">{a.sceneNo ? `장면 #${a.sceneNo}` : '장면'}</span>
-          <span className={`chip ${a.kind === 'edit' ? 'warn' : ''}`}>{a.kind === 'edit' ? '수정본' : '초안'}</span>
+          <span className="appr-scene">{a.kind === 'restyle' ? '내 영상' : a.sceneNo ? `장면 #${a.sceneNo}` : '장면'}</span>
+          <span className={`chip ${a.kind === 'edit' ? 'warn' : ''}`}>{a.kind === 'edit' ? '수정본' : a.kind === 'restyle' ? '내 영상 → 그림체 바꾸기' : '초안'}</span>
           {a.sec ? <span className="tiny muted mono">{a.sec}초</span> : null}
         </div>
         {a.sceneLine && <p className="tiny muted">장면 내용: {a.sceneLine}</p>}

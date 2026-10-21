@@ -34,7 +34,7 @@ export type Gen = {
   storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number; wasFinal?: boolean;
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
-export type Upload = { id: string; name: string; url: string; path?: string; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
+export type Upload = { id: string; name: string; url: string; path?: string; styledPath?: string; styledUrl?: string; styledGenId?: string; useStyled?: boolean; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string }; sceneNo?: number; sceneLine?: string; kind?: string; sec?: number; editText?: string };
@@ -546,7 +546,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             const keys = [...kept, ...[...new Set(all)].filter((k) => !kept.includes(k))];
             const clips = keys.map((k, i) => {
               const sc = scenes.find((x) => x.id === k);
-              if (!sc) return { key: k };
+              // 그림체를 AI로 바꾼 내 영상에도 "AI 생성" 표시를 넣는다
+              if (!sc) return { key: k, aiBadge: !!uploads.find((u) => u.id === k && u.useStyled && u.styledPath) };
               const g = gens.find((x) => x.id === sc.selectedGenId) ?? [...gens].reverse().find((x) => x.sceneId === sc.id && x.status === 'succeeded');
               const has = !!g?.storagePath;
               return { key: sc.id, aiBadge: has, placeholder: has ? undefined : sc.line || `장면 ${i + 1}` };

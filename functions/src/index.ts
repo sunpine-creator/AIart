@@ -15,7 +15,7 @@ import { SafetyBlockedError, drawImage, provider } from './ai/video';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
-import { Clip, Layers, TlCapIn, TlVoiceIn, XF, applyTimeline, concatCopy, joinXfade, lastFrame, mergeCuts, probeDur, renderSegment } from './render';
+import { Clip, Layers, TlCapIn, TlVoiceIn, XF, applyTimeline, concatCopy, joinXfade, lastFrame, mergeCuts, probeDur, renderSegment, toMp4 } from './render';
 import { isAiVoice, speak, voiceId } from './ai/tts';
 
 initializeApp();
@@ -259,6 +259,48 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   await log({ classId, no, kind: kindLabel, textKo: checkText, textEn: editEn ?? promptEn, verdict: 'pass', action: needApproval ? '승인 대기' : '대기열', layer: useAi ? 'ai' : 'rule' });
   if (!needApproval) await enqueue(genRef.id);
   return { genId: genRef.id, blocked: false };
+});
+
+// ───────── 학생: 내가 올린 영상을 고른 그림체로 바꾸기 ─────────
+export const restyleUpload = onCall({ timeoutSeconds: 60 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const uploadId = String(req.data?.uploadId ?? '').slice(0, 60);
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (!cls) throw new HttpsError('not-found', '반을 찾을 수 없어요.');
+  if (cls.paused) throw new HttpsError('failed-precondition', '선생님이 화면을 잠시 멈췄어요.');
+  const usage = (await db.doc(`usage/${classId}_${today()}`).get()).data();
+  if ((usage?.costUsd ?? 0) >= cls.budgetUsd) throw new HttpsError('resource-exhausted', '오늘 우리 반 예산을 다 썼어요. 선생님께 말씀드려요.');
+  const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
+  const u = ((p.uploads ?? []) as any[]).find((x) => x.id === uploadId);
+  if (!u) throw new HttpsError('not-found', '올린 영상을 찾을 수 없어요.');
+  if (!u.path) throw new HttpsError('failed-precondition', '영상이 아직 올라가는 중이에요. 잠시 뒤 다시 눌러 주세요.');
+  const dur = Math.max(1, Math.min(10, Number(u.srcDur) || 10));
+  const sec = [3, 4, 5, 6, 8, 10].find((x) => x >= Math.ceil(dur - 0.05)) ?? 10;
+  const spec = specFor('draft', false, sec);
+  const card = (await db.doc(`castCache/${classId}_${no}`).get()).data() ?? {};
+  const style = styleOf(card.cardPath ? card.cardStyle : p.cast?.style);
+  const lookEn = card.cardPath && card.lookEn ? ` If the main character appears, draw them like this character: ${card.lookEn}` : '';
+  const promptEn = `Restyle this entire video into the art style below. Keep exactly the same scene content, positions, motion, timing, camera movement and length — only change how it looks. ${STYLE_EN[style]} Draw any person as a friendly fictional character in this style, not as a realistic face.${lookEn} Keep the original sound and speech. Do not add subtitles, captions or any text. ${SAFE_TAIL}`;
+  const sceneId = `up:${uploadId}`;
+  const genRef = db.collection('generations').doc();
+  const needApproval = !!cls.approval;
+  const status = needApproval ? 'awaiting_approval' : 'queued';
+  const studentRef = db.doc(`classes/${classId}/students/${no}`);
+  const same = db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId);
+  await db.runTransaction(async (tx) => {
+    const [st, prev] = await Promise.all([tx.get(studentRef), tx.get(same)]);
+    if (prev.docs.some((d) => ['awaiting_approval', 'queued', 'running'].includes(d.data().status))) throw new HttpsError('already-exists', '이 영상은 이미 바꾸는 중이에요. 조금만 기다려 주세요.');
+    const credits = st.data()?.credits ?? 0;
+    if (credits < spec.credits) throw new HttpsError('resource-exhausted', '크레딧이 부족해요. 선생님께 말씀드려요.');
+    tx.update(studentRef, { ...(needApproval ? {} : { credits: credits - spec.credits }), status: needApproval ? 'waiting' : 'making' });
+    tx.set(genRef, {
+      classId, no, sceneId, uploadId, kind: 'restyle', img: false, promptKo: `내 영상(${String(u.name ?? '').slice(0, 40)})을 ${style} 그림체로 바꾸기`, sceneLine: `내 영상 → ${style} 그림체`, sceneNo: null,
+      promptEn, editText: null, res: spec.res, sec, hue: hueOf(genRef.id), parentId: null, srcPath: u.path, status, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  await log({ classId, no, kind: '내 영상 그림체 바꾸기', textKo: `${u.name ?? ''} → ${style}`, textEn: promptEn, verdict: 'pass', action: needApproval ? '승인 대기' : '대기열' });
+  if (!needApproval) await enqueue(genRef.id);
+  return { genId: genRef.id, credits: spec.credits };
 });
 
 // ───────── 장면끼리 이어지게: 주인공 카드 + 고정 그림체 ─────────
@@ -566,9 +608,23 @@ export const runGeneration = onTaskDispatched(
       // 앞 장면의 마지막 화면에서 이어 시작하게 한다(초안만)
       const prevFrame = g.kind === 'draft' && !g.editEn && CONFIG.videoProvider() === 'omni' ? await prevSceneFrame(g.classId, g.no, g.sceneId).catch(() => undefined) : undefined;
       if (prevFrame) await ref.update({ contFrom: prevFrame.genId }).catch(() => {});
+      // 내 영상 그림체 바꾸기: 올린 영상을 MP4로 바꿔서 보낸다
+      let srcVideo: Buffer | undefined;
+      if (g.kind === 'restyle' && g.srcPath) {
+        const tdir = mkdtempSync(pjoin(tmpdir(), 'restyle-'));
+        try {
+          const raw = pjoin(tdir, 'in');
+          await getStorage().bucket().file(g.srcPath).download({ destination: raw });
+          const out = await toMp4(raw, pjoin(tdir, 'in.mp4'), 10);
+          const { readFileSync } = await import('node:fs');
+          srcVideo = readFileSync(out);
+        } finally {
+          rmSync(tdir, { recursive: true, force: true });
+        }
+      }
       const result = await provider().generate({
         promptEn: g.promptEn, editEn: g.editEn ?? undefined, previousInteractionId: g.previousInteractionId ?? undefined,
-        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png,
+        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo,
       });
       if (result.keyframe) {
         const kp = `classes/${g.classId}/${g.no}/gens/${genId}_key.png`;
@@ -602,6 +658,15 @@ export const runGeneration = onTaskDispatched(
       }
       await ref.update({ ...(realSec ? { sec: realSec } : {}), status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
       await studentRef.update({ status: 'idle' });
+      // 내 영상 그림체 바꾸기: 편집에서 바뀐 영상을 쓰도록 올린 영상에 표시한다
+      if (g.kind === 'restyle' && g.uploadId && storagePath) {
+        const projRef = db.doc(`projects/${g.classId}_${g.no}`);
+        await db.runTransaction(async (tx) => {
+          const pd = (await tx.get(projRef)).data();
+          if (!pd?.uploads) return;
+          tx.update(projRef, { uploads: (pd.uploads as any[]).map((x) => (x.id === g.uploadId ? { ...x, styledPath: storagePath, styledUrl: url, styledGenId: genId, useStyled: true } : x)) });
+        });
+      }
       const cost = result.mock ? 0 : g.costUsd ?? 0;
       await db.doc(`usage/${g.classId}_${today()}`).set(
         { classId: g.classId, costUsd: FieldValue.increment(cost), videoSec: FieldValue.increment(g.img ? 0 : g.sec), count: FieldValue.increment(1), updatedAt: Timestamp.now() },
@@ -819,8 +884,9 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       }
       const u = uploads.find((x) => x.id === k);
       const usrc = u?.path ? await fetchFile(u.path, `up_${i}`) : undefined;
+      const styled = u?.useStyled && u?.styledPath ? await fetchFile(u.styledPath, `upst_${i}`) : undefined;
       if (u && usrc) {
-        clips.push({ kind: 'video', dur: uploadDur(u), start: 0, src: usrc, keepAudio: u.voice === '원래 소리', layers: fixedOf(ov.clips?.[u.id]) });
+        clips.push({ kind: 'video', dur: uploadDur(u), start: 0, src: styled ?? usrc, audioSrc: styled ? usrc : undefined, keepAudio: u.voice === '원래 소리', grade: !!styled, layers: fixedOf(ov.clips?.[u.id]) });
         ckeys.push(u.id);
       }
     }

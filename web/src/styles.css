@@ -855,3 +855,6 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .work-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .scene-del-btn, .scene-del, .scene-del-note { margin-left: auto; }
 .scene-del { display: inline-flex; align-items: center; gap: 6px; background: var(--critical-tint); border-radius: 8px; padding: 4px 8px; }
+
+/* 내 영상 그림체 바꾸기 */
+.restyle { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--ai-tint); margin: 8px 0; }

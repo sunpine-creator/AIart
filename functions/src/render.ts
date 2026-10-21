@@ -21,6 +21,7 @@ export type Clip = {
   grade?: boolean; // AI 장면: 모든 장면에 같은 색 보정을 입혀 분위기를 맞춘다
   src?: string; // 영상·이미지 파일 경로
   keepAudio?: boolean; // 올린 영상의 원래 소리 쓰기
+  audioSrc?: string; // 소리는 이 파일에서(그림체로 바꾼 내 영상: 화면은 바꾼 것, 소리는 원래 영상)
   voice?: string; // 녹음·AI 목소리 파일 경로
   layers?: Layers;
 };
@@ -78,6 +79,16 @@ export function wrap(text: string, max = 22): string {
   }
   if (cur) lines.push(cur);
   return lines.slice(0, 3).join('\n');
+}
+
+// 올린 영상을 AI에 보내기 좋게 MP4(H.264, 720p, 최대 maxSec 초)로 바꾼다
+export async function toMp4(src: string, out: string, maxSec = 10): Promise<string> {
+  await run(bin('ffmpeg'), [
+    '-y', '-hide_banner', '-loglevel', 'error', '-i', src, '-t', String(maxSec),
+    '-vf', `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24`,
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-ac', '2', '-movflags', '+faststart', out,
+  ]);
+  return out;
 }
 
 // 영상의 마지막 화면을 PNG 로 꺼낸다 (다음 장면을 이 화면에서 이어 시작하게)
@@ -161,6 +172,9 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
   const ai = idx;
   if (c.voice) {
     args.push('-i', c.voice);
+    filters.push(`[${ai}:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur}[a]`);
+  } else if (c.kind === 'video' && c.audioSrc && c.keepAudio && (await hasAudio(c.audioSrc))) {
+    args.push('-i', c.audioSrc);
     filters.push(`[${ai}:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur}[a]`);
   } else if (c.kind === 'video' && c.src && c.keepAudio && (await hasAudio(c.src))) {
     filters.push(`[0:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur}[a]`);

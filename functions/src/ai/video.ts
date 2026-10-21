@@ -11,6 +11,7 @@ export type VideoJob = {
   img: boolean; // 중등 이미지 모드
   refImage?: Buffer; // 주인공 카드(기준 그림)
   prevFrame?: Buffer; // 앞 장면의 마지막 화면(이어지게)
+  srcVideo?: Buffer; // 그림체를 바꿀 학생 영상(mp4, 10초 이하)
 };
 export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number; keyframe?: Buffer; usedRef?: boolean };
 
@@ -74,7 +75,8 @@ async function runOmni(req: Record<string, any>, sec: number, res: string) {
   const created = await ai.interactions.create({
     model: CONFIG.omniModel(),
     background: true,
-    response_format: { type: 'video', delivery: 'inline', aspect_ratio: '16:9', duration: `${sec}s`, resolution: res },
+    // sec=0 이면 길이를 정하지 않는다(올린 영상 고치기: 원래 길이 그대로)
+    response_format: { type: 'video', delivery: 'inline', aspect_ratio: '16:9', ...(sec ? { duration: `${sec}s` } : {}), resolution: res },
     ...req,
   });
   const it = created.status === 'completed' ? created : await waitDone(created.id);
@@ -109,6 +111,17 @@ async function runOmniSec(req: Record<string, any>, sec: number, res: string): P
 export const omniProvider: VideoProvider = {
   async generate(job) {
     if (job.img) return imageProvider.generate(job);
+    if (job.srcVideo) {
+      // 학생이 올린 영상을 고른 그림체로 다시 그린다(움직임·구도·길이는 그대로)
+      const input = [{ type: 'user_input', content: [{ type: 'video', data: job.srcVideo.toString('base64'), mime_type: 'video/mp4' }, { type: 'text', text: job.promptEn }] }];
+      try {
+        return { ...(await runOmni({ input, generation_config: { video_config: { task: 'edit' } } }, 0, job.res)), sec: job.sec };
+      } catch (e: any) {
+        if (e instanceof SafetyBlockedError) throw e;
+        logger.warn('Omni: 내 영상 그림체 바꾸기 첫 시도 실패, 길이를 정해 다시', { err: String(e?.message ?? e).slice(0, 300) });
+        return runOmniSec({ input, generation_config: { video_config: { task: 'edit' } } }, job.sec, job.res);
+      }
+    }
     const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
     if (!job.editEn && (job.refImage || job.prevFrame)) {
       // ① 주인공 카드를 보고 이 장면의 첫 그림(같은 주인공·같은 그림체)을 그린다
