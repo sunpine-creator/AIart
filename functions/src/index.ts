@@ -253,13 +253,13 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
       const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
       if (!c.safe && !flag) flag = { category: c.category ?? '기타', reason: c.reasonKo ?? '확인이 필요한 표현이 있어요.', suggestion: c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', layer: 'ai' };
       const english = c.english || checkText;
-      if (kind === 'edit') { editEn = `${english} ${KO_TAIL} ${speechFit(spec.sec)}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
+      if (kind === 'edit') { editEn = `${NO_TEXT_HEAD}${english} ${KO_TAIL} ${speechFit(spec.sec)}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
         // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
         const cast = await castPrefix(classId, no);
         if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
         const world = await worldOf(classId, no).catch(() => undefined);
         const cont = world?.en ? `Story continuity (keep the same in every scene unless this scene's text clearly says otherwise): ${world.en} Keep a similar camera height and framing to the other scenes so the scenes connect smoothly. ` : '';
-        promptEn = `${cast.text}${cont}Scene: ${english} ${cast.style} ${KO_TAIL} ${speechFit(spec.sec)}`;
+        promptEn = `${NO_TEXT_HEAD}${cast.text}${cont}Scene: ${english} ${cast.style} ${KO_TAIL} ${speechFit(spec.sec)} ${NO_TEXT_HEAD}`;
         refPath = cast.cardPath ?? null;
       }
     } else {
@@ -346,6 +346,8 @@ const styleOf = (v: unknown) => (String(v ?? '') in STYLE_EN ? String(v) : '그�
 const SAFE_TAIL = 'Safe for children, fictional people only.';
 // 영상 속 말이 영상 끝에서 잘리지 않게: 짧게, 조금 빠른 보통 속도로, 끝나기 전에 다 말하기
 const speechFit = (sec: number) => `TIMING: This clip is only ${sec} seconds long. Any spoken line must be short and must be completely finished at least half a second before the clip ends — speak at a natural, slightly brisk pace with no long pauses, and start speaking early in the clip.`;
+// 자막·글자 절대 넣지 않기(잘못된 자막이 생겨도 학생이 고칠 수 없어서). 프롬프트 앞뒤에 같이 붙인다
+const NO_TEXT_HEAD = 'IMPORTANT — NO ON-SCREEN TEXT: this video must contain no subtitles, no captions, no written dialogue, no titles, no speech bubbles and no text overlays of any kind. ';
 // 영상 속 말·글자는 모두 한국어로
 export const KO_TAIL = 'LANGUAGE: Everyone who speaks in this video speaks KOREAN (한국어) only — all dialogue, narration and voices are in natural spoken Korean, never English. Keep any Korean lines given in quotes exactly as written. NO SUBTITLES: do not add subtitles, captions, speech text, titles or any text overlay on the screen; the speech is heard only as audio. Avoid visible writing in the scene; if a sign or screen must show writing, keep it small and in Korean Hangul.';
 
@@ -931,7 +933,8 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     {
       let acc = 0;
       clips.forEach((c, k) => {
-        const at = k === 0 ? 0 : acc - XF;
+        // 장면을 끝까지 다 보여 준다(겹쳐서 잘라 먹지 않음). 다음 장면은 앞 장면 끝 화면 위로 서서히 나타난다
+        const at = acc;
         acc = at + c.dur;
         atOf[ckeys[k]] = { at, dur: c.dur };
       });
@@ -941,7 +944,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       return m ? m.at + Math.max(0, Math.min(num(x.o), m.dur)) : undefined;
     };
 
-    const base = clips.reduce((a, c) => a + c.dur, 0) - XF * (clips.length - 1);
+    const base = clips.reduce((a, c) => a + c.dur, 0);
     const cuts = mergeCuts(
       (tl.cuts ?? []).slice(0, 40).flatMap((c) => {
         const a = absAt(c);
@@ -955,10 +958,12 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
 
     // 조각을 만들고 디졸브로 잇는다. 이을 수 없으면(오래된 ffmpeg) 그냥 붙인다.
     const segs: string[] = [];
-    for (let k = 0; k < clips.length; k++) segs.push(await renderSegment(clips[k], k, dir));
+    // 마지막이 아닌 조각은 끝 화면을 XF초 더 붙여 두고, 그 위로 다음 조각이 서서히 나타나게 잇는다
+    const padded = clips.map((c, k) => (k < clips.length - 1 ? c.dur + XF : c.dur));
+    for (let k = 0; k < clips.length; k++) segs.push(await renderSegment({ ...clips[k], dur: padded[k] }, k, dir));
     let baseFile: string;
     try {
-      baseFile = await joinXfade(segs, clips.map((c) => c.dur), dir);
+      baseFile = await joinXfade(segs, padded, dir);
     } catch (e: any) {
       logger.warn('render: 디졸브 잇기 실패, 그냥 붙입니다', { err: String(e?.message ?? e).slice(0, 300) });
       const list = pjoin(dir, 'list.txt');

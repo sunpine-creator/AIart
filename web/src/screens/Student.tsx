@@ -2055,12 +2055,13 @@ function S4() {
                 const next = lay[i + 1];
                 const on = e === curE;
                 // 다음 장면이 시작되는 겹침 구간에서는 서서히 바뀐다(저장한 영상과 같게)
-                const prevOn = !!next && next === curE && t < e.end;
-                const op = on ? (i > 0 && t < lay[i - 1].end ? Math.min(1, Math.max(0, (t - e.at) / XF)) : 1) : prevOn ? 1 : 0;
+                // 다음 장면이 시작된 뒤 XF초 동안은 앞 장면의 끝 화면을 밑에 깔고 서서히 바뀐다
+                const prevOn = !!next && next === curE && t < next.at + XF;
+                const op = on ? (i > 0 && t < e.at + XF ? Math.min(1, Math.max(0, (t - e.at) / XF)) : 1) : prevOn ? 1 : 0;
                 const near = Math.abs(i - lay.indexOf(curE)) <= 1;
                 return (
                   <div key={e.item.key} className="clip-layer" style={{ opacity: op, zIndex: on ? 2 : prevOn ? 1 : 0 }} aria-hidden={!on}>
-                    {near && <ClipView e={e} t={t} playing={playing && (on || prevOn)} active={on || prevOn} reg={(el) => (el ? vids.current.set(e.item.key, el) : vids.current.delete(e.item.key))} />}
+                    {near && <ClipView e={e} t={t} playing={playing && on} active={on || prevOn} reg={(el) => (el ? vids.current.set(e.item.key, el) : vids.current.delete(e.item.key))} />}
                   </div>
                 );
               })}
@@ -2446,7 +2447,7 @@ function S4() {
 function ClipView({ e, t, playing, active, reg }: { e: LayE; t: number; playing: boolean; active: boolean; reg?: (el: HTMLVideoElement | null) => void }) {
   const it = e.item;
   // 보이지 않는 조각(바로 다음 장면)은 첫 화면에 미리 맞춰 두어 바뀔 때 검은 화면이 없게 한다
-  const local = active ? Math.max(0, Math.min(it.dur, t - e.at)) : t < e.at ? 0 : it.dur;
+  const local = active ? Math.max(0, Math.min(it.dur - 0.05, t - e.at)) : t < e.at ? 0 : Math.max(0, it.dur - 0.05);
   const vref = React.useRef<HTMLVideoElement | null>(null);
   const g = it.gen;
   const genUrl = useStorageUrl(g && !g.url && !g.mock ? g.storagePath : undefined);

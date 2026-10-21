@@ -150,7 +150,7 @@ export const omniProvider: VideoProvider = {
           parts.push({ inlineData: { mimeType: 'image/png', data: job.prevFrame.toString('base64') } });
           notes.push(`Image ${parts.length} is the LAST frame of the previous scene of the same story. This new frame must feel like the very next moment of one continuous film: same art style, same color palette and lighting mood, same character look, natural continuation of position and camera. If the scene below happens in a different place, keep the style and mood and change only the place.`);
         }
-        parts.push({ text: `${notes.join(' ')} Draw ONE 16:9 frame of the scene below. No text.\n${job.promptEn}` });
+        parts.push({ text: `${notes.join(' ')} Draw ONE 16:9 frame of the scene below. ABSOLUTELY NO TEXT in the picture: no letters, no words, no captions, no subtitles, no speech bubbles, no signs with writing. Spoken lines in the description are sound only — never write them on the picture.\n${job.promptEn}` });
         // 첫 그림이 40초 안에 안 나오면(AI가 바쁠 때) 기다리지 않고 글만으로 바로 영상을 만든다
         const key = await Promise.race([
           drawImage(parts, '16:9', { quick: true }),

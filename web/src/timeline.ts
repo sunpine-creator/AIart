@@ -16,15 +16,16 @@ export const tid = (p: string) => `${p}${Date.now().toString(36)}${Math.floor(Ma
 export const r1 = (x: number) => Math.round(x * 10) / 10;
 
 // 각 조각이 바탕 영상에서 시작하는 시각
+// 장면은 끝까지 다 보여 주고 이어 붙인다. 다음 장면 처음 XF초 동안 앞 장면의 끝 화면 위로 서서히 나타난다
 export function layout<T extends { dur: number }>(items: T[]): { item: T; at: number; end: number }[] {
   let acc = 0;
-  return items.map((it, i) => {
-    const at = i === 0 ? 0 : acc - XF;
+  return items.map((it) => {
+    const at = acc;
     acc = at + it.dur;
     return { item: it, at, end: at + it.dur };
   });
 }
-export const baseLen = (items: { dur: number }[]) => Math.max(0, items.reduce((a, b) => a + b.dur, 0) - XF * Math.max(0, items.length - 1));
+export const baseLen = (items: { dur: number }[]) => Math.max(0, items.reduce((a, b) => a + b.dur, 0));
 
 export function mergeCuts(cuts: { a: number; b: number }[], total: number): { a: number; b: number }[] {
   const xs = cuts
