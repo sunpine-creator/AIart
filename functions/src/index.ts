@@ -751,11 +751,11 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   const scenes: any[] = p.scenes ?? [];
   const uploads: any[] = p.uploads ?? [];
   const all = [...scenes.filter((s) => !s.skip).map((s) => s.id), ...uploads.map((u) => u.id)];
-  const kept = (p.order ?? []).filter((k: string) => all.includes(k));
-  const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
+  const kept = [...new Set<string>((p.order ?? []).filter((k: string) => all.includes(k)))];
+  const keys = [...kept, ...[...new Set(all)].filter((k) => !kept.includes(k))];
   const gens = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
   const genOf = (sc: any) => gens.find((x) => x.id === sc.selectedGenId) ?? gens.filter((x) => x.sceneId === sc.id && x.status === 'succeeded').pop();
-  const uploadDur = (u: any) => Math.max(1, Math.min(Math.floor(Number(u.srcDur) || Number(u.dur) || 5), limit));
+  const uploadDur = (u: any) => Math.max(1, Math.min(Math.floor(Number(u.srcDur) || Number(u.dur) || 5), 10)); // 내 영상은 10초까지
   const tl = (p.tl ?? {}) as { cuts?: any[]; caps?: any[]; voices?: any[] };
   const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
@@ -850,7 +850,8 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       base,
     );
     const finalDur = base - cuts.reduce((a, c) => a + (c.b - c.a), 0);
-    if (finalDur > limit + 0.5) throw new HttpsError('failed-precondition', `영상이 ${limit}초를 넘었어요(지금 ${Math.round(finalDur)}초). 필요 없는 구간을 지우거나 장면을 빼 주세요.`);
+    // 정한 길이(초등 30초·중등 60초)를 넘어도 저장은 한다(학생 화면에 경고를 보여 준다). 너무 긴 것만 막는다.
+    if (finalDur > limit * 3) throw new HttpsError('failed-precondition', `영상이 너무 길어요(지금 ${Math.round(finalDur)}초). 필요 없는 구간을 지우거나 장면을 빼 주세요.`);
 
     // 조각을 만들고 디졸브로 잇는다. 이을 수 없으면(오래된 ffmpeg) 그냥 붙인다.
     const segs: string[] = [];

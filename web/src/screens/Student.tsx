@@ -1647,6 +1647,7 @@ function VoicePreview({ voice, caption }: { voice: string; caption: string }) {
   );
 }
 const MAX_UPLOAD_MB = 100;
+const MAX_UPLOAD_SEC = 10; // 내 영상은 10초까지만
 
 type Item = {
   key: string;
@@ -1691,8 +1692,9 @@ function S4() {
 
   // 조각 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (뺀 장면은 넣지 않는다)
   const middleKeys = useMemo(() => {
-    const all = [...s.scenes.filter((x) => !x.skip).map((x) => x.id), ...s.uploads.map((u) => u.id)];
-    const kept = s.order.filter((k) => all.includes(k));
+    // 같은 것이 두 번 들어가지 않게 한 번씩만
+    const all = [...new Set([...s.scenes.filter((x) => !x.skip).map((x) => x.id), ...s.uploads.map((u) => u.id)])];
+    const kept = [...new Set(s.order.filter((k) => all.includes(k)))];
     return [...kept, ...all.filter((k) => !kept.includes(k))];
   }, [s.order, s.scenes, s.uploads]);
 
@@ -2384,17 +2386,25 @@ function S4() {
         )}
         <UploadBox
           onAdd={(u, file) => {
-            d({ t: 'set', patch: { order: [...middleKeys, u.id] } });
+            // 순서에 넣는 건 upload 가 한 번만 한다(두 번 넣으면 같은 영상이 두 개로 보였다)
+            d({ t: 'set', patch: { order: middleKeys } });
             d({ t: 'upload', file, meta: u });
             d({ t: 'log', entry: { kind: '영상 업로드', textKo: `${u.name} (${Math.round(u.srcDur)}초)`, action: '타임라인에 추가' } });
             setTool('scene');
             setSel({ t: 'clip', id: u.id });
           }}
         />
-        {over && <p className="danger-text">영상이 {limit}초를 넘었어요. 필요 없는 구간을 지우거나 장면을 빼야 저장할 수 있어요.</p>}
+        {over && (
+          <div className="notice warn" role="alert">
+            <strong>
+              ⚠ 영상이 {limit}초를 넘었어요 (지금 {F}초, {r1(F - limit)}초 넘음)
+            </strong>
+            <span>{s.band === 'elementary' ? '초등' : '중·고등'} 영상은 {limit}초까지예요. 🎬 장면에서 필요 없는 구간을 지우거나 장면을 빼서 길이를 줄여 주세요.</span>
+          </div>
+        )}
         {missing > 0 && <p className="muted">아직 만든 영상이 없는 장면이 {missing}개 있어요. 3단계에서 장면을 만들어 주세요.</p>}
         <div className="actions">
-          <button className="btn primary" disabled={over || s.rendering} onClick={() => (setPlaying(false), d({ t: 'render' }))}>
+          <button className="btn primary" disabled={s.rendering} onClick={() => (setPlaying(false), d({ t: 'render' }))}>
             {s.rendering ? '영상을 합치는 중… (1~2분쯤 걸려요)' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}
           </button>
           <span className="tiny muted">한 편의 MP4로 합쳐요. 끝 화면에 “AI 생성 콘텐츠 포함” 표시가 자동으로 들어가요.</span>
@@ -2825,6 +2835,11 @@ function UploadBox({ onAdd }: { onAdd: (u: Upload, file: File) => void }) {
     v.preload = 'metadata';
     v.onloadedmetadata = () => {
       const srcDur = isFinite(v.duration) ? v.duration : 5;
+      if (srcDur > MAX_UPLOAD_SEC + 0.3) {
+        URL.revokeObjectURL(url);
+        setBusy(false);
+        return setErr(`${MAX_UPLOAD_SEC}초까지의 영상만 올릴 수 있어요. 이 영상은 ${Math.round(srcDur)}초예요. 휴대폰이나 컴퓨터에서 ${MAX_UPLOAD_SEC}초 이하로 잘라서 올려 주세요.`);
+      }
       onAdd({ id: `u${Date.now()}`, name: file.name, url, srcDur, dur: Math.max(1, Math.min(5, Math.floor(srcDur) || 1)), caption: '', voice: '원래 소리', playable: true }, file);
       setBusy(false);
       setOwn(false);
@@ -2832,7 +2847,7 @@ function UploadBox({ onAdd }: { onAdd: (u: Upload, file: File) => void }) {
     };
     // 이 브라우저가 재생하지 못하는 형식(예: 아이폰 HEVC)이어도 올리기는 받는다. 실제 서비스에서는 서버가 MP4로 바꾼다.
     v.onerror = () => {
-      onAdd({ id: `u${Date.now()}`, name: file.name, url, srcDur: 10, dur: 5, caption: '', voice: '원래 소리', playable: false }, file);
+      onAdd({ id: `u${Date.now()}`, name: file.name, url, srcDur: MAX_UPLOAD_SEC, dur: MAX_UPLOAD_SEC, caption: '', voice: '원래 소리', playable: false }, file);
       setBusy(false);
       setOwn(false);
       setFaces(false);
@@ -2865,7 +2880,7 @@ function UploadBox({ onAdd }: { onAdd: (u: Upload, file: File) => void }) {
           }}
         />
         <span className="upload-btn">{busy ? '영상을 읽는 중…' : ready ? '영상 파일 고르기' : '위 두 가지를 확인하면 올릴 수 있어요'}</span>
-        <span className="tiny muted">mp4·mov·webm · {MAX_UPLOAD_MB}MB 이하</span>
+        <span className="tiny muted">mp4·mov·webm · {MAX_UPLOAD_SEC}초까지 · {MAX_UPLOAD_MB}MB 이하</span>
       </label>
       {err && <p className="danger-text">{err}</p>}
     </div>

@@ -415,7 +415,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       intro: p.intro ?? base.intro,
       outro: p.outro ?? base.outro,
       bgm: p.bgm ?? '없음',
-      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, dur: Math.max(1, Math.min(Math.floor(u.srcDur || u.dur), band === 'elementary' ? 30 : 60)), url: u.url || u.dl || uploadUrls[u.id] || '' })),
+      uploads: ((p.uploads ?? []) as Upload[]).map((u) => ({ ...u, dur: Math.max(1, Math.min(Math.floor(u.srcDur || u.dur), 10)), url: u.url || u.dl || uploadUrls[u.id] || '' })),
       order: p.order ?? [],
       checklist: p.checklist ?? {},
       aiNote: p.aiNote ?? '',
@@ -495,7 +495,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const ext = a.file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
         const path = `classes/${claims.classId}/${claims.no}/uploads/${a.meta.id}.${ext}`;
         setUploadUrls((m) => ({ ...m, [a.meta.id]: a.meta.url }));
-        patchProject({ uploads: [...(projectRef.current?.uploads ?? []), { ...a.meta, path }], order: [...(projectRef.current?.order ?? []), a.meta.id] });
+        patchProject({
+          uploads: [...((projectRef.current?.uploads ?? []) as Upload[]).filter((u) => u.id !== a.meta.id), { ...a.meta, path }],
+          order: [...((projectRef.current?.order ?? []) as string[]).filter((k) => k !== a.meta.id), a.meta.id],
+        });
         toast('영상을 올리는 중이에요…');
         putFile('upload', a.meta.id, a.file, ext, path)
           .then((r) => {
@@ -539,8 +542,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             const scenes = ((p.scenes ?? []) as Scene[]).filter((x) => !x.skip);
             const uploads = (p.uploads ?? []) as Upload[];
             const all = [...scenes.map((x) => x.id), ...uploads.map((u) => u.id)];
-            const kept = ((p.order ?? []) as string[]).filter((k) => all.includes(k));
-            const keys = [...kept, ...all.filter((k) => !kept.includes(k))];
+            const kept = [...new Set(((p.order ?? []) as string[]).filter((k) => all.includes(k)))];
+            const keys = [...kept, ...[...new Set(all)].filter((k) => !kept.includes(k))];
             const clips = keys.map((k, i) => {
               const sc = scenes.find((x) => x.id === k);
               if (!sc) return { key: k };
