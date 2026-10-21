@@ -82,11 +82,12 @@ export function wrap(text: string, max = 22): string {
 }
 
 // 올린 영상을 AI에 보내기 좋게 MP4(H.264, 720p, 최대 maxSec 초)로 바꾼다
+// 그림체만 바꿀 거라 작게(480p, 소리 없음) 만들어 보내면 AI가 더 빨리 받는다. 소리는 편집에서 원래 영상 것을 쓴다.
 export async function toMp4(src: string, out: string, maxSec = 10): Promise<string> {
   await run(bin('ffmpeg'), [
     '-y', '-hide_banner', '-loglevel', 'error', '-i', src, '-t', String(maxSec),
-    '-vf', `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24`,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-ac', '2', '-movflags', '+faststart', out,
+    '-vf', 'scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-pix_fmt', 'yuv420p', '-an', '-movflags', '+faststart', out,
   ]);
   return out;
 }

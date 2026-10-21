@@ -1479,6 +1479,7 @@ function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene
           <span className="mono muted">{time}</span>
         </div>
         {g.status === 'awaiting_approval' && <Progress text="선생님이 프롬프트를 확인하고 있어요" />}
+        {g.status === 'queued' && !g.attempt && <StuckKick g={g} />}
         {g.status === 'queued' && (g.attempt ? <Progress text={`반 친구들이 한꺼번에 만들고 있어서 AI가 바빠요. 잠시 뒤 자동으로 다시 만들어요 (${g.attempt}번째 다시 시도) · 그대로 기다리면 돼요`} /> : <Progress text="대기열에서 차례를 기다려요 · 반 친구들 작업과 차례로 만들어요" />)}
         {g.status === 'running' && <Progress text={`AI가 ${word === "영상" ? "영상을" : "이미지를"} 만드는 중이에요 · 1~3분쯤 걸려요`} running />}
       </li>
@@ -2629,13 +2630,26 @@ function RestyleBox({ u }: { u: Upload }) {
           <p className="tiny muted">소리는 원래 영상의 소리를 그대로 써요.</p>
         </>
       ) : busy ? (
-        <Progress text={last.status === 'awaiting_approval' ? '선생님이 확인하고 있어요' : last.status === 'running' ? `AI가 ${style} 그림체로 바꾸는 중이에요 · 1~3분쯤 걸려요` : '차례를 기다리고 있어요'} running={last.status === 'running'} />
-      ) : (
+        <Progress
+          text={
+            last.status === 'awaiting_approval'
+              ? '선생님이 확인하고 있어요'
+              : last.status === 'running'
+                ? `AI가 ${style} 그림체로 바꾸는 중이에요 · 보통 2~5분 걸려요. 기다리는 동안 다른 편집을 해도 돼요`
+                : last.attempt
+                  ? `AI가 바빠서 잠시 뒤 다시 해요 (${last.attempt}번째)`
+                  : '차례를 기다리고 있어요'
+          }
+          running={last.status === 'running'}
+        />
+      ) : null}
+      {busy && last.status === 'queued' && <StuckKick g={last} />}
+      {u.styledPath || busy ? null : (
         <>
           <p className="tiny muted">
             내가 찍은 영상을 우리 장면과 같은 <strong>{style}</strong> 그림체로 다시 그려요. 움직임과 길이는 그대로예요. 사람은 실제 얼굴 대신 만화 캐릭터처럼 그려져요.
           </p>
-          {last && ['blocked', 'rejected'].includes(last.status) && <p className="tiny danger-text">{last.status === 'blocked' ? 'AI가 이 영상은 바꿀 수 없대요(사람 얼굴이 크게 나오면 안 될 수 있어요). 크레딧은 돌려받았어요.' : `선생님이 돌려보냈어요: ${last.rejectReason ?? ''}`}</p>}
+          {last && ['blocked', 'rejected'].includes(last.status) && <p className="tiny danger-text">{last.status === 'blocked' ? 'AI가 이 영상은 바꿀 수 없대요(사람 얼굴이 크게 나오면 안 될 수 있어요). 크레딧은 돌려받았어요.' : (last.rejectReason ?? '이번에는 바꾸지 못했어요. 크레딧은 돌려받았어요.')}</p>}
           <button className="btn ai tiny" disabled={sending || !u.path || s.cls.paused || s.credits < cost} onClick={go}>
             {sending ? '보내는 중…' : `${style} 그림체로 바꾸기 · ${cost}크레딧`}
           </button>
@@ -2643,6 +2657,34 @@ function RestyleBox({ u }: { u: Upload }) {
         </>
       )}
     </div>
+  );
+}
+
+// 오래 "차례를 기다리는 중"이면 다시 대기열에 넣는 버튼(대기열에서 빠져 버린 경우 대비)
+function StuckKick({ g }: { g: Gen }) {
+  const { d } = useStore();
+  const [now, setNow] = useState(Date.now());
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (now - g.at < 3 * 60_000) return null;
+  return (
+    <button
+      className="btn tiny"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        api
+          .kickGeneration({ genId: g.id })
+          .then((r) => d({ t: 'toast', msg: r.kicked ? '다시 차례에 넣었어요. 조금만 기다려 주세요.' : r.wait ? '방금 넣었어요. 1~2분만 더 기다려 주세요.' : '이미 만들기 시작했어요.' }))
+          .catch((e) => d({ t: 'toast', msg: errText(e) }))
+          .finally(() => setBusy(false));
+      }}
+    >
+      {busy ? '다시 넣는 중…' : '⟳ 너무 오래 기다리면 다시 차례에 넣기'}
+    </button>
   );
 }
 

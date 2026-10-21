@@ -65,8 +65,38 @@ function log(e: { classId: string; no: number; kind: string; textKo: string; tex
 }
 async function enqueue(genId: string) {
   const q = getFunctions().taskQueue(`locations/${REGION}/functions/runGeneration`);
-  await q.enqueue({ genId }, { dispatchDeadlineSeconds: 1800 });
+  try {
+    await q.enqueue({ genId }, { dispatchDeadlineSeconds: 1800 });
+  } catch (e: any) {
+    // 대기열에 못 넣으면 "차례 기다리는 중"으로 영영 남지 않게 실패로 끝내고 크레딧을 돌려준다
+    logger.error('enqueue failed', { genId, err: String(e?.message ?? e) });
+    const ref = db.doc(`generations/${genId}`);
+    const g = (await ref.get()).data();
+    if (g && g.status === 'queued') {
+      await ref.update({ status: 'failed', error: `대기열 오류: ${String(e?.message ?? e).slice(0, 120)}` });
+      await db.doc(`classes/${g.classId}/students/${g.no}`).update({ ...(g.charged === false ? {} : { credits: FieldValue.increment(g.credits ?? 0) }), status: 'idle' });
+    }
+    throw new HttpsError('unavailable', '지금 대기열에 넣지 못했어요. 크레딧은 돌려받았어요. 잠시 뒤 다시 해 주세요.');
+  }
 }
+
+// 학생·교사: 오래 "차례를 기다리는 중"인 요청을 다시 대기열에 넣는다(대기열에서 빠져 버린 경우 대비)
+export const kickGeneration = onCall(async (req) => {
+  const genId = String(req.data?.genId ?? '');
+  const ref = db.doc(`generations/${genId}`);
+  const g = (await ref.get()).data();
+  if (!g) throw new HttpsError('not-found', '요청을 찾을 수 없어요.');
+  const tok = req.auth?.token as any;
+  const isOwner = tok?.classId === g.classId && Number(tok?.no) === g.no;
+  if (!isOwner) await ownedClass(await requireTeacher(req), g.classId);
+  if (g.status !== 'queued') return { ok: true, status: g.status };
+  const since = Math.max(g.createdAt?.toMillis?.() ?? 0, g.kickedAt ?? 0, g.approvedAt ?? 0);
+  if (Date.now() - since < 2 * 60_000) return { ok: true, wait: true };
+  await ref.update({ kickedAt: Date.now() });
+  await enqueue(genId);
+  logger.info('kickGeneration', { genId });
+  return { ok: true, kicked: true };
+});
 
 // ───────── 교사: 반 만들기 ─────────
 export const createClass = onCall(async (req) => {
@@ -475,7 +505,7 @@ export const reviewGeneration = onCall(async (req) => {
       const credits = st.data()?.credits ?? 0;
       if (credits < need) throw new HttpsError('resource-exhausted', `${g.no}번 학생의 크레딧이 부족해요. 크레딧을 늘려 주거나 돌려보내 주세요.`);
       tx.update(studentRef, { ...(need ? { credits: credits - need } : {}), status: 'making' });
-      tx.update(ref, { status: 'queued', reviewedBy: uid, charged: true });
+      tx.update(ref, { status: 'queued', reviewedBy: uid, charged: true, approvedAt: Date.now() });
     });
     await log({ classId: g.classId, no: g.no, kind: wasFlagged ? '안전 검사 확인' : '교사 승인', textKo: g.editText ?? g.promptKo, textEn: g.promptEn, verdict: 'pass', action: wasFlagged ? `선생님이 괜찮다고 함 (${g.flag?.category ?? ''})` : '승인' });
     await enqueue(genId);
@@ -675,6 +705,10 @@ export const runGeneration = onTaskDispatched(
     } catch (e: any) {
       logger.error('generation failed', { genId, err: String(e?.message ?? e) });
       if (e instanceof SafetyBlockedError) return fail('blocked', '모델 안전 정책에 걸림');
+      // 요청 자체가 잘못된 오류(400·404·403 등)는 다시 해도 똑같으니 바로 끝내고 크레딧을 돌려준다(오래 기다리지 않게)
+      const em = String(e?.message ?? e);
+      const permanent = /\b(400|403|404)\b|INVALID_ARGUMENT|NOT_FOUND|PERMISSION_DENIED|FAILED_PRECONDITION|not supported|unsupported/i.test(em) && !/429|RESOURCE_EXHAUSTED/i.test(em);
+      if (permanent) return fail('failed', em.slice(0, 200));
       const last = (req.retryCount ?? 0) >= 7;
       if (last) return fail('failed', String(e?.message ?? '알 수 없는 오류'));
       await ref.update({ status: 'queued', attempt: (req.retryCount ?? 0) + 1, lastError: String(e?.message ?? e).slice(0, 300) });
@@ -802,7 +836,7 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
 
 // ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
 
-export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 35 }, async (req) => {
+export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 50 }, async (req) => {
   const { classId, no } = requireStudent(req);
   const pid = `${classId}_${no}`;
   const projRef = db.doc(`projects/${pid}`);

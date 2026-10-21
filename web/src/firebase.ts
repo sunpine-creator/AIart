@@ -103,6 +103,7 @@ export const api = {
   storyWorld: call<{ refresh?: boolean }, { place?: string; weather?: string; time?: string; light?: string; camera?: string; empty?: boolean }>('storyWorld', 60_000),
   teacherResetScene: call<{ classId: string; no: number; sceneId: string; mode: 'unfinal' | 'redo' }, { ok: boolean; count: number }>('teacherResetScene'),
   restyleUpload: call<{ uploadId: string }, { genId: string; credits: number }>('restyleUpload'),
+  kickGeneration: call<{ genId: string }, { ok: boolean; kicked?: boolean; wait?: boolean; status?: string }>('kickGeneration'),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number; queued?: boolean }>('makeCharacter', 120_000),
   renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),

@@ -72,13 +72,25 @@ async function download(uri: string): Promise<Buffer> {
 // 한 번 만들기: 요청 → 끝날 때까지 기다리기 → 영상 꺼내기
 async function runOmni(req: Record<string, any>, sec: number, res: string) {
   const ai: any = genai();
-  const created = await ai.interactions.create({
-    model: CONFIG.omniModel(),
-    background: true,
-    // sec=0 이면 길이를 정하지 않는다(올린 영상 고치기: 원래 길이 그대로)
-    response_format: { type: 'video', delivery: 'inline', aspect_ratio: '16:9', ...(sec ? { duration: `${sec}s` } : {}), resolution: res },
-    ...req,
-  });
+  // 고치기(edit)는 원래 영상의 화면 비율·길이를 그대로 쓰므로 비율·길이를 보내면 안 된다(400 오류)
+  const isEdit = req?.generation_config?.video_config?.task === 'edit' || !!req?.previous_interaction_id;
+  const fmt: Record<string, any> = { type: 'video', delivery: 'inline', resolution: res };
+  if (!isEdit) {
+    fmt.aspect_ratio = '16:9';
+    if (sec) fmt.duration = `${sec}s`;
+  }
+  let created: any;
+  try {
+    created = await ai.interactions.create({ model: CONFIG.omniModel(), background: true, response_format: fmt, ...req });
+  } catch (e: any) {
+    // "~ cannot be set in response format" 이면 그 칸을 빼고 한 번 더
+    const m = /(aspect ratio|duration|resolution)[^.]*cannot be set/i.exec(String(e?.message ?? e));
+    if (!m) throw e;
+    const key = m[1].toLowerCase().startsWith('aspect') ? 'aspect_ratio' : m[1].toLowerCase();
+    delete fmt[key];
+    logger.warn('Omni: response_format 에서 빼고 다시', { key });
+    created = await ai.interactions.create({ model: CONFIG.omniModel(), background: true, response_format: fmt, ...req });
+  }
   const it = created.status === 'completed' ? created : await waitDone(created.id);
   if (it.status !== 'completed') {
     const reason = JSON.stringify(it.error ?? it.status);
@@ -118,8 +130,9 @@ export const omniProvider: VideoProvider = {
         return { ...(await runOmni({ input, generation_config: { video_config: { task: 'edit' } } }, 0, job.res)), sec: job.sec };
       } catch (e: any) {
         if (e instanceof SafetyBlockedError) throw e;
-        logger.warn('Omni: 내 영상 그림체 바꾸기 첫 시도 실패, 길이를 정해 다시', { err: String(e?.message ?? e).slice(0, 300) });
-        return runOmniSec({ input, generation_config: { video_config: { task: 'edit' } } }, job.sec, job.res);
+        const msg = String(e?.message ?? e);
+        logger.warn('Omni: 내 영상 그림체 바꾸기 실패', { err: msg.slice(0, 300) });
+        throw e;
       }
     }
     const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
