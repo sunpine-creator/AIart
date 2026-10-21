@@ -104,6 +104,7 @@ export const api = {
   teacherResetScene: call<{ classId: string; no: number; sceneId: string; mode: 'unfinal' | 'redo' }, { ok: boolean; count: number }>('teacherResetScene'),
   restyleUpload: call<{ uploadId: string }, { genId: string; credits: number }>('restyleUpload'),
   kickGeneration: call<{ genId: string }, { ok: boolean; kicked?: boolean; wait?: boolean; status?: string }>('kickGeneration'),
+  setClassEnded: call<{ classId: string; ended: boolean }, { ok: boolean; approved: number; bonus?: number }>('setClassEnded', 120_000),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number; queued?: boolean }>('makeCharacter', 120_000),
   renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 540_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),

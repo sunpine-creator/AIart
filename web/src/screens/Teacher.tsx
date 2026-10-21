@@ -151,7 +151,9 @@ function ClassList() {
           <div className="class-grid">
             {list.map((c) => (
               <button key={c.id} className="class-card" onClick={() => d({ t: 'openClass', classId: c.id })}>
-                <strong>{c.title}</strong>
+                <strong>
+                  {c.title} {c.ended && <span className="chip good">수업 끝남 · 자동</span>}
+                </strong>
                 <span className="muted">{c.band === 'elementary' ? '초등 버전' : '중·고등 버전'} · {c.size}명 · 열린 단계 {c.open}</span>
                 <span className="mono strong">반 코드 {c.code}</span>
               </button>
@@ -629,7 +631,9 @@ function Dashboard() {
     <div className="teacher">
       <header className="t-head">
         <div>
-          <h1 className="t-title">{s.cls.title} · {s.band === 'elementary' ? '초등 버전' : '중·고등 버전'}</h1>
+          <h1 className="t-title">
+            {s.cls.title} · {s.band === 'elementary' ? '초등 버전' : '중·고등 버전'} {s.cls.ended && <span className="chip good">수업 끝남 · 자동 생성</span>}
+          </h1>
           <div className="muted">
             반 코드 <span className="mono strong">{s.cls.code}</span> · 학생 {roster.length}명 · 프로젝트 「AI로 달라진 나의 일상」 ·{' '}
             <SchoolEdit />
@@ -651,6 +655,7 @@ function Dashboard() {
           <button className="btn" onClick={() => setAskDelete(!askDelete)}>
             반 삭제
           </button>
+          <EndClassButton />
           <button className={`btn ${s.cls.paused ? 'danger' : ''}`} onClick={() => d({ t: 'cls', patch: { paused: !s.cls.paused } })}>
             {s.cls.paused ? '화면 다시 열기' : '모든 화면 멈추기'}
           </button>
@@ -795,6 +800,46 @@ function FlagAlert() {
         ))}
       </ul>
     </section>
+  );
+}
+
+// 수업 끝내기: 교사 승인 없이 학생이 집에서도 쓸 수 있게(안전 검사는 그대로)
+function EndClassButton() {
+  const { s, d } = useStore();
+  const [ask, setAsk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const go = (ended: boolean) => {
+    setBusy(true);
+    api
+      .setClassEnded({ classId: s.classId, ended })
+      .then((r) => d({ t: 'toast', msg: ended ? `수업을 끝냈어요. 이제 학생들이 승인 없이 바로 만들 수 있어요.${r.bonus ? ` 학생 크레딧을 ${r.bonus}(처음의 2배)로 채웠어요.` : ''}${r.approved ? ` 기다리던 요청 ${r.approved}개도 바로 만들기 시작했어요.` : ''}` : '다시 수업 모드로 바꿨어요. 이제 선생님이 승인해야 만들어져요.' }))
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => (setBusy(false), setAsk(false)));
+  };
+  if (s.cls.ended)
+    return (
+      <button className="btn" disabled={busy} onClick={() => go(false)}>
+        {busy ? '바꾸는 중…' : '↩ 다시 수업 모드로'}
+      </button>
+    );
+  if (ask)
+    return (
+      <span className="end-ask">
+        <span className="tiny">
+          수업을 끝낼까요? 앞으로는 <strong>선생님 승인 없이</strong> 바로 만들어져요. 안전 검사는 그대로 하고, 걸리면 자동으로 막아요. 학생 크레딧은 처음 받은 양의 2배로 채워져요(한 번만). 하루 예산 제한은 그대로예요.
+        </span>
+        <button className="btn tiny primary" disabled={busy} onClick={() => go(true)}>
+          {busy ? '바꾸는 중…' : '네, 수업 끝내기'}
+        </button>
+        <button className="btn tiny" disabled={busy} onClick={() => setAsk(false)}>
+          아니요
+        </button>
+      </span>
+    );
+  return (
+    <button className="btn" onClick={() => setAsk(true)}>
+      🏁 수업 끝내기
+    </button>
   );
 }
 

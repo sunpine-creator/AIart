@@ -38,7 +38,7 @@ export type Upload = { id: string; name: string; url: string; path?: string; sty
 export type ExportInfo = { path: string; url?: string; at: number; dur: number };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string }; sceneNo?: number; sceneLine?: string; kind?: string; sec?: number; editText?: string };
-export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number };
+export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number; ended?: boolean };
 
 // 학생 작업(프로젝트 문서)에 저장되는 칸
 const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmSortDone', 'prmThink', 'cast', 'flow', 'editNote', 'reflect', 'tl'] as const;
@@ -52,7 +52,7 @@ export type State = {
   joined: boolean;
   me: { no: number; nick: string };
   classId: string;
-  cls: { title: string; school?: string; code: string; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number };
+  cls: { title: string; school?: string; code: string; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; ended?: boolean };
   tab: Stage;
   credits: number;
   sortCards: Record<string, 'ai' | 'human' | undefined>;
@@ -287,7 +287,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setClasses(
         q.docs.map((d) => {
           const x = d.data();
-          return { id: d.id, title: x.title, school: x.school ?? '', code: x.code, band: x.band, open: x.open, paused: x.paused, approval: x.approval, videoInMiddle: x.videoInMiddle, budget: x.budgetUsd, size: x.size };
+          return { id: d.id, title: x.title, school: x.school ?? '', code: x.code, band: x.band, open: x.open, paused: x.paused, approval: x.approval, videoInMiddle: x.videoInMiddle, budget: x.budgetUsd, size: x.size, ended: !!x.ended };
         }),
       ),
     onErr('내 반 목록'));
@@ -385,7 +385,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 교사는 지금 고른 반(local.classId)만 본다. 목록으로 돌아가면 빈 값이 된다
       classId: role === 'teacher' ? local.classId : cls?.id ?? local.classId,
       cls: cls
-        ? { title: cls.title, school: cls.school ?? '', code: cls.code, open: cls.open, paused: cls.paused, approval: cls.approval, videoInMiddle: cls.videoInMiddle, budget: cls.budgetUsd }
+        ? { title: cls.title, school: cls.school ?? '', code: cls.code, open: cls.open, paused: cls.paused, approval: cls.approval, videoInMiddle: cls.videoInMiddle, budget: cls.budgetUsd, ended: !!cls.ended }
         : base.cls,
       tab: local.tab,
       credits: student?.credits ?? 0,

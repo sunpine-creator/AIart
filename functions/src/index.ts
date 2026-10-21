@@ -121,7 +121,7 @@ export const createClass = onCall(async (req) => {
   const batch = db.batch();
   batch.set(classRef, {
     teacherUid: uid, title: String(title).slice(0, 40), school: String(school ?? '').trim().slice(0, 40), grade: String(grade ?? '').slice(0, 10), klass: String(klass ?? '').slice(0, 10), band, code, size: n,
-    open: 1, paused: false, approval: true, videoInMiddle: true,
+    open: 1, paused: false, approval: true, videoInMiddle: true, creditsPerStudent: credits,
     budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 150 : 250),
     createdAt: FieldValue.serverTimestamp(),
   });
@@ -268,6 +268,12 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   }
 
   // 승인 모드: 선생님이 승인할 때 크레딧이 줄어든다(반려하면 줄지 않음). 승인 없이 바로 만들 때는 지금 줄어든다.
+  // 수업이 끝난 반(자동 모드): 확인해 줄 선생님이 없으니 안전 검사에 걸리면 바로 막고 고쳐 쓰게 한다
+  if (flag && cls.ended) {
+    await genRef.set({ ...base, status: 'blocked', rejectReason: `${flag.reason}|${flag.suggestion}`, promptEn: null, flag });
+    await log({ classId, no, kind: kindLabel, textKo: checkText, verdict: 'blocked', category: flag.category, action: '차단(수업 끝난 반 · 자동)', layer: flag.layer });
+    return { genId: genRef.id, blocked: true, category: flag.category, reason: flag.reason, suggestion: flag.suggestion };
+  }
   const needApproval = !!cls.approval || !!flag;
   const status = flag ? 'flagged' : needApproval ? 'awaiting_approval' : 'queued';
   const studentRef = db.doc(`classes/${classId}/students/${no}`);
@@ -517,6 +523,59 @@ export const reviewGeneration = onCall(async (req) => {
     await log({ classId: g.classId, no: g.no, kind: wasFlagged ? '안전 검사 확인' : '교사 반려', textKo: g.editText ?? g.promptKo, verdict: 'pass', action: `반려: ${reason}` });
   }
   return { ok: true };
+});
+
+// ───────── 교사: 수업 끝내기(자동 모드) / 다시 수업 모드 ─────────
+// 끝내면: 교사 승인 없이 바로 만들고(안전 검사는 그대로, 걸리면 자동 차단), 모든 단계를 열고, 멈춤을 푼다.
+// 기다리던 승인 요청은 크레딧이 있으면 바로 승인해 만든다.
+export const setClassEnded = onCall({ timeoutSeconds: 120 }, async (req) => {
+  const uid = await requireTeacher(req);
+  const classId = String(req.data?.classId ?? '');
+  const ended = req.data?.ended === true;
+  await ownedClass(uid, classId);
+  const clsRef = db.doc(`classes/${classId}`);
+  const cls = (await clsRef.get()).data() ?? {};
+  await clsRef.update(ended ? { ended: true, endedAt: Date.now(), approval: false, open: 6, paused: false } : { ended: false, approval: true });
+  let approved = 0;
+  let bonus = 0;
+  // 수업이 끝나면 크레딧을 처음 받은 양의 2배로 채워 준다(반마다 한 번만). 이미 그보다 많으면 그대로
+  if (ended && !cls.endBonusGiven) {
+    const base = Number(cls.creditsPerStudent) || (cls.band === 'elementary' ? 60 : 100);
+    bonus = base * 2;
+    const studs = await clsRef.collection('students').get();
+    const batch = db.batch();
+    studs.docs.forEach((d) => {
+      const cur = Number(d.data().credits ?? 0);
+      if (cur < bonus) batch.update(d.ref, { credits: bonus });
+    });
+    batch.update(clsRef, { endBonusGiven: true });
+    await batch.commit();
+  }
+  if (ended) {
+    const waiting = await db.collection('generations').where('classId', '==', classId).where('status', '==', 'awaiting_approval').get();
+    for (const d of waiting.docs) {
+      const g = d.data();
+      const studentRef = db.doc(`classes/${classId}/students/${g.no}`);
+      const ok = await db
+        .runTransaction(async (tx) => {
+          const [cur, st] = await Promise.all([tx.get(d.ref), tx.get(studentRef)]);
+          if (cur.data()?.status !== 'awaiting_approval') return false;
+          const need = cur.data()?.charged === false ? Number(cur.data()?.credits ?? 0) : 0;
+          const credits = st.data()?.credits ?? 0;
+          if (credits < need) return false;
+          tx.update(studentRef, { ...(need ? { credits: credits - need } : {}), status: 'making' });
+          tx.update(d.ref, { status: 'queued', reviewedBy: uid, charged: true, approvedAt: Date.now(), autoApproved: true });
+          return true;
+        })
+        .catch(() => false);
+      if (ok) {
+        approved++;
+        await enqueue(d.id).catch(() => {});
+      }
+    }
+  }
+  await log({ classId, no: 0, kind: ended ? '수업 끝내기' : '다시 수업 모드', textKo: ended ? '교사 승인 없이 자동 생성으로 바꿈' : '교사 승인 모드로 돌아옴', verdict: 'pass', action: ended ? `기다리던 요청 ${approved}개 자동 승인${bonus ? ` · 학생 크레딧 ${bonus}로 채움` : ''}` : '' });
+  return { ok: true, approved, bonus };
 });
 
 // ───────── 교사: 학생이 확정한 장면 되돌리기 ─────────
