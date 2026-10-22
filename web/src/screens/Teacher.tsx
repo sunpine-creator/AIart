@@ -614,8 +614,38 @@ function QuizSummary() {
   );
 }
 
+// 학생 한 명이 쓸 수 있는 금액(원): 전체 한도 + 수업이 끝난 반의 하루 한도
+function SpendLimits() {
+  const { s, d } = useStore();
+  const [max, setMax] = useState(String(s.cls.studentMaxKrw ?? 30000));
+  const [day, setDay] = useState(String(s.cls.studentDailyCredits ?? 30));
+  useEffect(() => (setMax(String(s.cls.studentMaxKrw ?? 30000)), setDay(String(s.cls.studentDailyCredits ?? 30))), [s.cls.studentMaxKrw, s.cls.studentDailyCredits]);
+  const save = () => d({ t: 'cls', patch: { studentMaxKrw: Number(max) || 30000, studentDailyCredits: Number(day) || 30 } });
+  return (
+    <div className="t-block spend-limits">
+      <span className="t-label">학생 1명 한도</span>
+      <label className="tiny">
+        최대 <input type="number" min={0} step={1000} value={max} onChange={(e) => setMax(e.target.value)} onBlur={save} /> 원까지
+      </label>
+      <label className="tiny">
+        수업 끝난 뒤 하루 <input type="number" min={0} step={5} value={day} onChange={(e) => setDay(e.target.value)} onBlur={save} /> 크레딧
+      </label>
+      <span className="tiny muted">최대 금액은 늘 적용돼요(1크레딧 ≈ 145원). 하루 크레딧은 🏁 수업을 끝낸 뒤(학생이 혼자 쓸 때)부터 적용돼요. 수업 중에는 장면마다 영상 2번(초안 + 고치기 1번)까지예요.</span>
+    </div>
+  );
+}
+
 function Dashboard() {
   const { s, d } = useStore();
+  // 학생별 쓴 금액(원)
+  const [spend, setSpend] = useState<Record<string, { totalKrw: number; todayKrw: number }>>({});
+  useEffect(() => {
+    if (!s.classId) return;
+    const load = () => api.classSpend({ classId: s.classId }).then((r) => setSpend(r.by)).catch(() => {});
+    load();
+    const id = window.setInterval(load, 60_000);
+    return () => window.clearInterval(id);
+  }, [s.classId]);
   const [showPins, setShowPins] = useState(false);
   const [showWorks, setShowWorks] = useState(false);
   const [showScreens, setShowScreens] = useState(false);
@@ -696,6 +726,7 @@ function Dashboard() {
             학생 모두 +10크레딧 (영상 10초)
           </button>
         </div>
+        <SpendLimits />
       </section>
 
       <div className="t-grid">
@@ -713,6 +744,7 @@ function Dashboard() {
                 <span className="seat-nick">{r.nick || '(미입장)'}</span>
                 <span className="seat-stage">{r.stage}단계</span>
                 <span className="seat-cr mono">{r.credits}</span>
+                {spend[r.no] && <span className="seat-won tiny mono" title={`전체 약 ${spend[r.no].totalKrw.toLocaleString('ko-KR')}원 · 오늘 약 ${spend[r.no].todayKrw.toLocaleString('ko-KR')}원`}>₩{spend[r.no].totalKrw.toLocaleString('ko-KR')}</span>}
                 {r.quiz && <span className="seat-quiz mono">퀴즈 {r.quiz.right}/{r.quiz.total}</span>}
               </button>
             ))}

@@ -1308,7 +1308,9 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const lastGood = [...gens].reverse().find((g) => g.status === 'succeeded' && g.kind !== 'final');
   const final = gens.find((g) => g.kind === 'final' && g.status === 'succeeded');
   // 이미 보낸 초안(승인 대기·대기열·만드는 중·완성)이 있으면 새 초안은 못 만든다. 차단·반려·실패면 다시 할 수 있다.
-  const hasDraft = gens.some((g) => g.kind === 'draft' && ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+  // 수업 중에는 장면마다 초안 1번(+고치기 1번). 수업이 끝난 반은 하루 크레딧 안에서 몇 번이든 새로 만들 수 있다
+  const hasDraft = !s.cls.ended && gens.some((g) => g.kind === 'draft' && ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+  const anyDraft = gens.some((g) => g.kind === 'draft' && g.status === 'succeeded');
   const sending = s.sending.includes(scene.id);
   return (
     <section className="work">
@@ -1409,12 +1411,12 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
             disabled={!ko || busy || sending || s.cls.paused || s.credits < draftCost}
             onClick={() => d({ t: 'request', sceneId: scene.id, kind: 'draft' })}
           >
-            {sending ? '보내는 중…' : `${word} 초안 만들기`}
+            {sending ? '보내는 중…' : anyDraft ? `${word} 새로 만들기` : `${word} 초안 만들기`}
           </button>
           <span className="cost mono">
             {img ? '이미지 1장' : `${DRAFT.res} · ${genSec}초`} · {draftCost}크레딧{s.cls.approval ? ' (선생님이 승인하면 줄어요)' : ''}
           </span>
-          <span className="tiny muted">초안은 장면마다 한 번만 만들 수 있어요. 빈칸을 꼼꼼히 채운 뒤 눌러요.</span>
+          <span className="tiny muted">{s.cls.ended ? '수업이 끝나서 하루 30크레딧 안에서 자유롭게 만들 수 있어요.' : '수업 중에는 장면마다 영상 2번(초안 1번 + 고치기 1번)까지 만들 수 있어요. 빈칸을 꼼꼼히 채운 뒤 눌러요.'}</span>
           {!s.cast.cardUrl && <span className="tiny hint">주인공 카드를 먼저 만들면 장면끼리 같은 주인공·그림체로 이어져요.</span>}
         </div>
       )}
@@ -1585,7 +1587,7 @@ function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene
               )}
               {isLatestGood && judged && (
                 <div className="next-choice">
-                  {g.judgement!.fit !== 'yes' && scene.edits < MAX_EDITS && (
+                  {g.judgement!.fit !== 'yes' && (scene.edits < MAX_EDITS || s.cls.ended) && (
                     <div className="edit-row">
                       <input
                         id={`edit-${g.id}`}
@@ -1602,11 +1604,11 @@ function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene
                           setEdit('');
                         }}
                       >
-                        고쳐서 다시 만들기 (한 번만 할 수 있어요)
+                        {s.cls.ended ? '고쳐서 다시 만들기' : '고쳐서 다시 만들기 (한 번만 할 수 있어요)'}
                       </button>
                     </div>
                   )}
-                  {g.judgement!.fit !== 'yes' && scene.edits >= MAX_EDITS && (
+                  {g.judgement!.fit !== 'yes' && scene.edits >= MAX_EDITS && !s.cls.ended && (
                     <p className="tiny muted">고치기 기회를 다 썼어요. 이 결과로 정하고, 편집 단계에서 자막·목소리·내 영상으로 보완해 봐요.</p>
                   )}
                   {(g.judgement!.fit !== 'no' || scene.edits >= MAX_EDITS || gensOfScene(s.gens, scene.id).length > 1) && (

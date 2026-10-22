@@ -63,6 +63,65 @@ async function ownedClass(uid: string, classId: string) {
 function log(e: { classId: string; no: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string; layer?: string }) {
   return db.collection('promptLogs').add({ ...e, at: FieldValue.serverTimestamp() });
 }
+// ───────── 학생 한 명이 쓸 수 있는 돈 ─────────
+// 반 설정: studentMaxKrw(한 사람 전체, 기본 3만 원), studentDailyCredits(수업이 끝난 반의 하루 한도, 기본 30크레딧)
+const KRW_PER_USD = () => Number(process.env.KRW_PER_USD) || 1450;
+const dayOf = (ms: number) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10).replace(/-/g, '');
+async function studentSpend(classId: string, no: number): Promise<{ totalUsd: number; todayUsd: number; todayCredits: number }> {
+  const gs = await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get();
+  const day = today();
+  let totalUsd = 0;
+  let todayUsd = 0;
+  let todayCredits = 0;
+  for (const d of gs.docs) {
+    const g = d.data();
+    // 만들어졌거나(되돌린 것 포함) 만드는 중·기다리는 중인 것만 센다. 실패·차단·돌려보냄은 돈이 안 든다
+    const counted = ['succeeded', 'queued', 'running', 'awaiting_approval', 'flagged'].includes(g.status) || (g.status === 'retired' && !!g.doneAt);
+    if (!counted) continue;
+    const c = Number(g.costUsd) || 0;
+    totalUsd += c;
+    if (dayOf(g.createdAt?.toMillis?.() ?? Date.now()) === day) {
+      todayUsd += c;
+      todayCredits += Number(g.credits) || 0;
+    }
+  }
+  return { totalUsd, todayUsd, todayCredits };
+}
+async function checkSpend(classId: string, no: number, cls: any, addUsd: number, addCredits: number) {
+  if (!addUsd && !addCredits) return;
+  const rate = KRW_PER_USD();
+  const maxKrw = Number(cls.studentMaxKrw) || 30000;
+  const dailyCredits = Number(cls.studentDailyCredits) || 30;
+  const { totalUsd, todayCredits } = await studentSpend(classId, no);
+  const won = (usd: number) => Math.round(usd * rate).toLocaleString('ko-KR');
+  if ((totalUsd + addUsd) * rate > maxKrw)
+    throw new HttpsError('resource-exhausted', `한 사람이 쓸 수 있는 금액(${maxKrw.toLocaleString('ko-KR')}원)을 넘어서 더 만들 수 없어요. 지금까지 약 ${won(totalUsd)}원을 썼어요. 선생님께 말씀드려요.`);
+  if (cls.ended && todayCredits + addCredits > dailyCredits)
+    throw new HttpsError('resource-exhausted', `수업이 끝난 뒤에는 하루에 ${dailyCredits}크레딧까지 쓸 수 있어요. 오늘은 ${todayCredits}크레딧을 썼어요. 내일 다시 만들어요.`);
+}
+
+// 교사: 우리 반 학생별 쓴 금액(원)
+export const classSpend = onCall(async (req) => {
+  const uid = await requireTeacher(req);
+  const classId = String(req.data?.classId ?? '');
+  await ownedClass(uid, classId);
+  const gs = await db.collection('generations').where('classId', '==', classId).get();
+  const day = today();
+  const rate = KRW_PER_USD();
+  const by: Record<number, { totalKrw: number; todayKrw: number }> = {};
+  for (const d of gs.docs) {
+    const g = d.data();
+    const counted = ['succeeded', 'queued', 'running', 'awaiting_approval', 'flagged'].includes(g.status) || (g.status === 'retired' && !!g.doneAt);
+    if (!counted) continue;
+    const c = (Number(g.costUsd) || 0) * rate;
+    const b = (by[g.no] ??= { totalKrw: 0, todayKrw: 0 });
+    b.totalKrw += c;
+    if (dayOf(g.createdAt?.toMillis?.() ?? Date.now()) === day) b.todayKrw += c;
+  }
+  Object.values(by).forEach((b) => ((b.totalKrw = Math.round(b.totalKrw)), (b.todayKrw = Math.round(b.todayKrw))));
+  return { by, rate };
+});
+
 async function enqueue(genId: string) {
   const q = getFunctions().taskQueue(`locations/${REGION}/functions/runGeneration`);
   try {
@@ -207,7 +266,8 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     if (!parent || parent.classId !== classId || parent.no !== no || parent.status !== 'succeeded') throw new HttpsError('failed-precondition', '고칠 원본을 찾을 수 없어요.');
     if (!parent.judgement) throw new HttpsError('failed-precondition', '먼저 결과가 의도와 맞는지 판단을 저장해 주세요.');
   }
-  if (kind === 'edit') {
+  // 수업 중: 장면마다 영상은 2번까지(초안 1번 + 고치기 1번). 수업이 끝난 반은 하루 크레딧 안에서 자유롭게
+  if (kind === 'edit' && !cls.ended) {
     // 차단·반려·실패한 수정은 횟수에 넣지 않는다
     const edits = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId).where('kind', '==', 'edit').get()).docs.filter((d) => !['blocked', 'rejected', 'failed', 'retired'].includes(d.data().status)).length;
     if (edits >= MAX_EDITS) throw new HttpsError('failed-precondition', `이 장면은 ${MAX_EDITS}번까지만 고칠 수 있어요.`);
@@ -227,6 +287,9 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   const sceneNo = sceneIdx >= 0 ? sceneIdx + 1 : null;
   const sceneLine = sceneIdx >= 0 ? String(projScenes[sceneIdx].line ?? '').slice(0, 80) : '';
   const base = { classId, no, sceneId, sceneNo, sceneLine, kind, img, aspect, promptKo, editText: kind === 'edit' ? editText : null, res: spec.res, sec: spec.sec, hue: hueOf(genRef.id), parentId: parentId ?? null, createdAt: FieldValue.serverTimestamp() };
+
+  // 한 사람 금액 한도(전체 3만 원 · 수업 끝난 반은 하루 한도)
+  if (kind !== 'final') await checkSpend(classId, no, cls, spec.costUsd, spec.credits);
 
   // 장면 확정: 학생이 고른 결과를 그대로 장면으로 쓴다. 새로 만들지 않으므로 비용·크레딧이 없다.
   if (kind === 'final') {
@@ -285,7 +348,8 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
     const [st, prev] = await Promise.all([tx.get(studentRef), tx.get(sceneGens)]);
     const live = prev.docs.map((d) => d.data()).filter((x) => ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(x.status));
     if (live.some((x) => ['flagged', 'awaiting_approval', 'queued', 'running'].includes(x.status))) throw new HttpsError('already-exists', '이 장면은 이미 만드는 중이에요. 결과가 나올 때까지 기다려 주세요.');
-    if (kind === 'draft' && live.some((x) => x.kind === 'draft')) throw new HttpsError('already-exists', '초안은 장면마다 한 번만 만들 수 있어요. 결과를 판단한 뒤 "고쳐서 다시 만들기"를 써 주세요.');
+    if (!cls.ended && kind === 'draft' && live.some((x) => x.kind === 'draft')) throw new HttpsError('already-exists', '수업 중에는 장면마다 영상을 2번(초안 1번 + 고치기 1번)까지 만들 수 있어요. 결과를 판단한 뒤 "고쳐서 다시 만들기"를 써 주세요.');
+    if (!cls.ended && live.filter((x) => x.kind === 'draft' || x.kind === 'edit').length >= 2) throw new HttpsError('already-exists', '수업 중에는 장면마다 영상을 2번까지만 만들 수 있어요. 만든 영상 중 하나로 장면을 정해 주세요.');
     const credits = st.data()?.credits ?? 0;
     if (credits < spec.credits) throw new HttpsError('resource-exhausted', '크레딧이 부족해요. 선생님께 말씀드려요.');
     tx.update(studentRef, { ...(needApproval ? {} : { credits: credits - spec.credits }), status: needApproval ? 'waiting' : 'making' });
@@ -320,6 +384,7 @@ export const restyleUpload = onCall({ timeoutSeconds: 60 }, async (req) => {
   const style = styleOf(card.cardPath ? card.cardStyle : p.cast?.style);
   const lookEn = card.cardPath && card.lookEn ? ` If the main character appears, draw them like this character: ${card.lookEn}` : '';
   const promptEn = `Restyle this entire video into the art style below. Keep exactly the same scene content, positions, motion, timing, camera movement and length — only change how it looks. ${STYLE_EN[style]} Draw any person as a friendly fictional character in this style, not as a realistic face.${lookEn} Keep the original sound and speech. Do not add subtitles, captions or any text. ${SAFE_TAIL}`;
+  await checkSpend(classId, no, cls, spec.costUsd, spec.credits);
   const sceneId = `up:${uploadId}`;
   const genRef = db.collection('generations').doc();
   const needApproval = !!cls.approval;

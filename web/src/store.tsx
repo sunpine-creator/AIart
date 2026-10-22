@@ -52,7 +52,7 @@ export type State = {
   joined: boolean;
   me: { no: number; nick: string };
   classId: string;
-  cls: { title: string; school?: string; code: string; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; ended?: boolean };
+  cls: { title: string; school?: string; code: string; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; ended?: boolean; studentMaxKrw?: number; studentDailyCredits?: number };
   tab: Stage;
   credits: number;
   sortCards: Record<string, 'ai' | 'human' | undefined>;
@@ -386,7 +386,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 교사는 지금 고른 반(local.classId)만 본다. 목록으로 돌아가면 빈 값이 된다
       classId: role === 'teacher' ? local.classId : cls?.id ?? local.classId,
       cls: cls
-        ? { title: cls.title, school: cls.school ?? '', code: cls.code, open: cls.open, paused: cls.paused, approval: cls.approval, videoInMiddle: cls.videoInMiddle, budget: cls.budgetUsd, ended: !!cls.ended }
+        ? { title: cls.title, school: cls.school ?? '', code: cls.code, open: cls.open, paused: cls.paused, approval: cls.approval, videoInMiddle: cls.videoInMiddle, budget: cls.budgetUsd, ended: !!cls.ended, studentMaxKrw: cls.studentMaxKrw ?? 30000, studentDailyCredits: cls.studentDailyCredits ?? 30 }
         : base.cls,
       tab: local.tab,
       credits: student?.credits ?? 0,
@@ -461,6 +461,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           ...(a.patch.videoInMiddle !== undefined && { videoInMiddle: a.patch.videoInMiddle }),
           ...(a.patch.budget !== undefined && { budgetUsd: a.patch.budget }),
           ...(a.patch.school !== undefined && { school: String(a.patch.school).slice(0, 40) }),
+          ...(a.patch.studentMaxKrw !== undefined && { studentMaxKrw: Math.max(0, Math.round(Number(a.patch.studentMaxKrw) || 0)) }),
+          ...(a.patch.studentDailyCredits !== undefined && { studentDailyCredits: Math.max(0, Math.round(Number(a.patch.studentDailyCredits) || 0)) }),
         }).catch((e) => toast(errText(e)));
         return;
       case 'scene':

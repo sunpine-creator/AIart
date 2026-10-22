@@ -878,3 +878,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .stage.vertical { width: min(100%, calc(min(72vh, 640px) * 9 / 16)); margin-inline: auto; }
 .clip-stack.vertical { aspect-ratio: 9 / 16; }
 .clip-layer .frame.vertical { height: 100%; width: 100%; }
+
+/* 학생 금액 한도 */
+.spend-limits { display: grid; gap: 6px; }
+.spend-limits input { width: 100px; margin: 0 4px; }
+.seat-won { color: var(--muted); }
