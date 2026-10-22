@@ -15,7 +15,7 @@ import { SafetyBlockedError, drawImage, provider } from './ai/video';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
-import { Clip, Layers, TlCapIn, TlVoiceIn, XF, applyTimeline, concatCopy, joinXfade, lastFrame, mergeCuts, probeDur, renderSegment, toMp4 } from './render';
+import { Clip, Layers, TlCapIn, TlVoiceIn, XF, applyTimeline, concatCopy, joinXfade, lastFrame, mergeCuts, probeDur, renderSegment, sizeOf, toMp4 } from './render';
 import { isAiVoice, speak, voiceId } from './ai/tts';
 
 initializeApp();
@@ -219,11 +219,14 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   const kindLabel = (img ? '이미지 ' : '영상 ') + (kind === 'draft' ? '초안' : kind === 'edit' ? '대화형 수정' : '장면 확정');
   const genRef = db.collection('generations').doc();
   // 선생님 승인 목록에서 몇 번 장면인지 알 수 있게 장면 번호·내용을 함께 저장한다
-  const projScenes: any[] = (await db.doc(`projects/${classId}_${no}`).get()).data()?.scenes ?? [];
+  const projData = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
+  const projScenes: any[] = projData.scenes ?? [];
+  // 가로(16:9) 또는 세로(9:16). 수정본은 원본과 같은 방향
+  const aspect: '16:9' | '9:16' = (kind !== 'draft' && parent?.aspect ? parent.aspect : projData.aspect) === '9:16' ? '9:16' : '16:9';
   const sceneIdx = projScenes.findIndex((x) => x.id === sceneId);
   const sceneNo = sceneIdx >= 0 ? sceneIdx + 1 : null;
   const sceneLine = sceneIdx >= 0 ? String(projScenes[sceneIdx].line ?? '').slice(0, 80) : '';
-  const base = { classId, no, sceneId, sceneNo, sceneLine, kind, img, promptKo, editText: kind === 'edit' ? editText : null, res: spec.res, sec: spec.sec, hue: hueOf(genRef.id), parentId: parentId ?? null, createdAt: FieldValue.serverTimestamp() };
+  const base = { classId, no, sceneId, sceneNo, sceneLine, kind, img, aspect, promptKo, editText: kind === 'edit' ? editText : null, res: spec.res, sec: spec.sec, hue: hueOf(genRef.id), parentId: parentId ?? null, createdAt: FieldValue.serverTimestamp() };
 
   // 장면 확정: 학생이 고른 결과를 그대로 장면으로 쓴다. 새로 만들지 않으므로 비용·크레딧이 없다.
   if (kind === 'final') {
@@ -330,7 +333,7 @@ export const restyleUpload = onCall({ timeoutSeconds: 60 }, async (req) => {
     if (credits < spec.credits) throw new HttpsError('resource-exhausted', '크레딧이 부족해요. 선생님께 말씀드려요.');
     tx.update(studentRef, { ...(needApproval ? {} : { credits: credits - spec.credits }), status: needApproval ? 'waiting' : 'making' });
     tx.set(genRef, {
-      classId, no, sceneId, uploadId, kind: 'restyle', img: false, promptKo: `내 영상(${String(u.name ?? '').slice(0, 40)})을 ${style} 그림체로 바꾸기`, sceneLine: `내 영상 → ${style} 그림체`, sceneNo: null,
+      classId, no, sceneId, uploadId, kind: 'restyle', img: false, aspect: p.aspect === '9:16' ? '9:16' : '16:9', promptKo: `내 영상(${String(u.name ?? '').slice(0, 40)})을 ${style} 그림체로 바꾸기`, sceneLine: `내 영상 → ${style} 그림체`, sceneNo: null,
       promptEn, editText: null, res: spec.res, sec, hue: hueOf(genRef.id), parentId: null, srcPath: u.path, status, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, createdAt: FieldValue.serverTimestamp(),
     });
   });
@@ -706,7 +709,7 @@ export const runGeneration = onTaskDispatched(
         try {
           const raw = pjoin(tdir, 'in');
           await getStorage().bucket().file(g.srcPath).download({ destination: raw });
-          const out = await toMp4(raw, pjoin(tdir, 'in.mp4'), 10);
+          const out = await toMp4(raw, pjoin(tdir, 'in.mp4'), 10, g.aspect);
           const { readFileSync } = await import('node:fs');
           srcVideo = readFileSync(out);
         } finally {
@@ -715,7 +718,7 @@ export const runGeneration = onTaskDispatched(
       }
       const result = await provider().generate({
         promptEn: g.promptEn, editEn: g.editEn ?? undefined, previousInteractionId: g.previousInteractionId ?? undefined,
-        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo,
+        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo, aspect: g.aspect === '9:16' ? '9:16' : '16:9',
       });
       if (result.keyframe) {
         const kp = `classes/${g.classId}/${g.no}/gens/${genId}_key.png`;
@@ -1019,7 +1022,8 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     const segs: string[] = [];
     // 마지막이 아닌 조각은 끝 화면을 XF초 더 붙여 두고, 그 위로 다음 조각이 서서히 나타나게 잇는다
     const padded = clips.map((c, k) => (k < clips.length - 1 ? c.dur + XF : c.dur));
-    for (let k = 0; k < clips.length; k++) segs.push(await renderSegment({ ...clips[k], dur: padded[k] }, k, dir));
+    const size = sizeOf(p.aspect);
+    for (let k = 0; k < clips.length; k++) segs.push(await renderSegment({ ...clips[k], dur: padded[k] }, k, dir, size));
     let baseFile: string;
     try {
       baseFile = await joinXfade(segs, padded, dir);
@@ -1059,7 +1063,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
     const token = randomUUID();
     await bucket.upload(out.file, { destination: path, contentType: 'video/mp4', metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
-    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: out.dur }, rendering: FieldValue.delete() });
+    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: out.dur, aspect: p.aspect === '9:16' ? '9:16' : '16:9' }, rendering: FieldValue.delete() });
     await log({ classId, no, kind: '완성 영상', textKo: `${out.dur}초 · 클립 ${clips.length}개 · 지운 구간 ${cuts.length}개 · 자막 ${caps.length}개 · 목소리 ${voices.length}개`, verdict: 'pass', action: '영상 저장' });
     return { path, missing: missingFiles.length };
   } catch (e: any) {

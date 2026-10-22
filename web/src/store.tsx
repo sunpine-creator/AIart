@@ -3,7 +3,7 @@ import { onAuthStateChanged, signInWithCustomToken, signOut, User } from 'fireba
 import { collection, doc, getDoc, increment, limit, onSnapshot, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref as sref, uploadBytes } from 'firebase/storage';
 import { api, auth, db, errText, storage } from './firebase';
-import { buildTimelineOverlays } from './overlays';
+import { buildTimelineOverlays, setOverlayAspect } from './overlays';
 import { Timeline } from './timeline';
 
 // ───────────── 설정값 (서버 functions/src/config.ts 와 같게 유지) ─────────────
@@ -31,17 +31,17 @@ export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
   judgement?: { fit: Fit; reason: string }; rejectReason?: string; parentId?: string; at: number;
-  storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number; wasFinal?: boolean;
+  storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number; wasFinal?: boolean; aspect?: '16:9' | '9:16';
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
 export type Upload = { id: string; name: string; url: string; path?: string; styledPath?: string; styledUrl?: string; styledGenId?: string; useStyled?: boolean; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
-export type ExportInfo = { path: string; url?: string; at: number; dur: number };
+export type ExportInfo = { path: string; url?: string; at: number; dur: number; aspect?: '16:9' | '9:16' };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string }; sceneNo?: number; sceneLine?: string; kind?: string; sec?: number; editText?: string };
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number; ended?: boolean };
 
 // 학생 작업(프로젝트 문서)에 저장되는 칸
-const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmSortDone', 'prmThink', 'cast', 'flow', 'editNote', 'reflect', 'tl'] as const;
+const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scenes', 'intro', 'outro', 'bgm', 'uploads', 'order', 'checklist', 'aiNote', 'self', 'peer', 'submitted', 'prmCmp', 'prmSort', 'prmSortDone', 'prmThink', 'cast', 'flow', 'editNote', 'reflect', 'tl', 'aspect'] as const;
 export type PromptPart = 'goal' | 'role' | 'content' | 'cond';
 type ProjectKey = (typeof PROJECT_KEYS)[number];
 
@@ -64,6 +64,7 @@ export type State = {
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
+  aspect: '16:9' | '9:16'; // 영상 방향: 가로 또는 세로(공모전 1080x1920)
   tl?: Timeline; // 하나의 타임라인 편집(지운 구간·자막·목소리). 없으면 예전 장면별 편집을 옮겨 온다
   topic: string;
   story: { who: string; when?: string; where: string; what: string; event: string; why?: string; feeling: string };
@@ -126,7 +127,7 @@ function emptyProject(band: Band) {
 const base: State = {
   role: 'loading', view: 'student', band: 'elementary', joined: false, me: { no: 0, nick: '' }, classId: '',
   cls: { title: '', code: '', open: 1, paused: false, approval: true, videoInMiddle: false, budget: 0 },
-  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
+  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
@@ -173,7 +174,7 @@ export function toGen(id: string, x: any): Gen {
     id, sceneId: x.sceneId, kind: x.kind, promptKo: x.promptKo ?? '', promptEn: x.promptEn ?? '', editText: x.editText ?? undefined,
     status: status as GenStatus, queuePos: 0, runLeft: 0, res: x.res, sec: x.sec, hue: x.hue ?? 200, img: !!x.img,
     judgement: x.judgement ?? undefined, rejectReason, parentId: x.parentId ?? undefined, at: tsMs(x.createdAt),
-    storagePath: x.storagePath ?? undefined, url: x.url ?? undefined, attempt: x.attempt ?? undefined, mimeType: x.mimeType ?? undefined, mock: !!x.mock, wasFinal: !!x.wasFinal,
+    storagePath: x.storagePath ?? undefined, url: x.url ?? undefined, attempt: x.attempt ?? undefined, mimeType: x.mimeType ?? undefined, mock: !!x.mock, wasFinal: !!x.wasFinal, aspect: x.aspect === '9:16' ? '9:16' : '16:9',
   };
 }
 
@@ -400,6 +401,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       editNote: p.editNote ?? '',
       reflect: p.reflect ?? '',
       tl: p.tl ?? undefined,
+      aspect: p.aspect === '9:16' ? '9:16' : '16:9',
       topic: p.topic ?? '',
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,
@@ -553,6 +555,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
               return { key: sc.id, aiBadge: has, placeholder: has ? undefined : sc.line || `장면 ${i + 1}` };
             });
             const tl = (p.tl ?? { caps: [] }) as Timeline;
+            setOverlayAspect(p.aspect);
             const overlays = await buildTimelineOverlays({
               intro: p.intro?.caption || p.topic || 'AI로 달라진 나의 일상',
               outro: p.outro?.caption || '',

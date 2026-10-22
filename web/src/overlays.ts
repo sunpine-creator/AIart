@@ -2,8 +2,14 @@
 // 서버는 이 그림을 영상 위에 겹치기만 한다. 크기·위치 규칙은 편집 미리보기와 같다.
 import type { CapStyle } from './store';
 
-const W = 1280;
-const H = 720;
+// 완성 영상 크기에 맞춰 그린다: 가로 1280x720, 세로 1080x1920(공모전·쇼츠 규격)
+let W = 1280;
+let H = 720;
+export function setOverlayAspect(aspect?: string) {
+  [W, H] = aspect === '9:16' ? [1080, 1920] : [1280, 720];
+}
+// 글자 크기는 화면 너비에 맞춰 줄이거나 늘린다(가로 1280 기준)
+const k = () => W / 1280;
 const FONT = `'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif`;
 const SIZE_PX = { S: 34, M: 46, L: 62 } as const;
 export const AI_NOTICE = '이 영상에는 AI 생성 콘텐츠가 포함되어 있어요';
@@ -42,18 +48,19 @@ function canvas() {
 
 function draw(ctx: CanvasRenderingContext2D, b: Block) {
   if (!b.lines.length) return;
-  ctx.font = `700 ${b.size}px ${FONT}`;
+  const size = Math.round(b.size * k());
+  ctx.font = `700 ${size}px ${FONT}`;
   ctx.textBaseline = 'top';
-  const gap = 10;
-  const lineH = Math.round(b.size * 1.2);
+  const gap = Math.round(10 * k());
+  const lineH = Math.round(size * 1.2);
   const widths = b.lines.map((l) => ctx.measureText(l).width);
   const tw = Math.max(...widths);
   const th = lineH * b.lines.length + gap * (b.lines.length - 1);
-  const pad = b.deco === 'bubble' ? 22 : 18;
+  const pad = Math.round((b.deco === 'bubble' ? 22 : 18) * k());
   const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
   let top =
-    typeof b.y === 'number' ? b.y : b.y === 'top' ? 60 : b.y === 'mid' ? (H - th) / 2 : b.y === 'title' ? (H - th) / 2 - 30 : H - th - 70;
-  let left = b.x === 'center' ? (W - tw) / 2 : b.x;
+    typeof b.y === 'number' ? b.y * k() : b.y === 'top' ? H * 0.083 : b.y === 'mid' ? (H - th) / 2 : b.y === 'title' ? (H - th) / 2 - 30 * k() : H - th - H * 0.097;
+  let left = b.x === 'center' ? (W - tw) / 2 : b.x * k();
   if (b.at) {
     left = clamp(b.at.x * W - tw / 2, pad, W - tw - pad);
     top = clamp(b.at.y * H - th / 2, pad, H - th - pad);
@@ -67,7 +74,7 @@ function draw(ctx: CanvasRenderingContext2D, b: Block) {
     const ly = top + i * (lineH + gap);
     if (b.deco === 'outline') {
       ctx.lineJoin = 'round';
-      ctx.lineWidth = Math.max(4, b.size / 8);
+      ctx.lineWidth = Math.max(4, size / 8);
       ctx.strokeStyle = 'rgba(0,0,0,0.85)';
       ctx.strokeText(l, lx, ly);
     }
@@ -136,7 +143,7 @@ export async function buildOverlays(items: OverlayItem[]): Promise<Record<string
       out.outro = {
         fixed: png([
           { lines: wrap(it.text, 16), size: 64, color: '#FFFFFF', x: 'center', y: 'title', deco: 'none' },
-          { lines: [AI_NOTICE], size: 30, color: '#FFFFFF', x: 'center', y: H - 120 - 36, deco: 'none' },
+          { lines: [AI_NOTICE], size: 30, color: '#FFFFFF', x: 'center', y: (H - H * 0.22) / k(), deco: 'none' },
         ]),
       };
     } else if ('kind' in it) {

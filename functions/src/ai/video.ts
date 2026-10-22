@@ -12,6 +12,7 @@ export type VideoJob = {
   refImage?: Buffer; // 주인공 카드(기준 그림)
   prevFrame?: Buffer; // 앞 장면의 마지막 화면(이어지게)
   srcVideo?: Buffer; // 그림체를 바꿀 학생 영상(mp4, 10초 이하)
+  aspect?: '16:9' | '9:16'; // 가로 또는 세로 영상
 };
 export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number; keyframe?: Buffer; usedRef?: boolean };
 
@@ -70,13 +71,13 @@ async function download(uri: string): Promise<Buffer> {
 }
 
 // 한 번 만들기: 요청 → 끝날 때까지 기다리기 → 영상 꺼내기
-async function runOmni(req: Record<string, any>, sec: number, res: string) {
+async function runOmni(req: Record<string, any>, sec: number, res: string, aspect: '16:9' | '9:16' = '16:9') {
   const ai: any = genai();
   // 고치기(edit)는 원래 영상의 화면 비율·길이를 그대로 쓰므로 비율·길이를 보내면 안 된다(400 오류)
   const isEdit = req?.generation_config?.video_config?.task === 'edit' || !!req?.previous_interaction_id;
   const fmt: Record<string, any> = { type: 'video', delivery: 'inline', resolution: res };
   if (!isEdit) {
-    fmt.aspect_ratio = '16:9';
+    fmt.aspect_ratio = aspect;
     if (sec) fmt.duration = `${sec}s`;
   }
   let created: any;
@@ -103,12 +104,12 @@ async function runOmni(req: Record<string, any>, sec: number, res: string) {
 }
 
 // 고른 길이를 모델이 받지 않으면(400) 더 짧은 길이로 다시 시도한다. 실제로 만든 길이를 돌려준다
-async function runOmniSec(req: Record<string, any>, sec: number, res: string): Promise<VideoResult> {
+async function runOmniSec(req: Record<string, any>, sec: number, res: string, aspect: '16:9' | '9:16' = '16:9'): Promise<VideoResult> {
   const tries = [sec, ...[8, 6, 5, 4, 3].filter((x) => x < sec)];
   let last: unknown;
   for (const s of tries) {
     try {
-      return { ...(await runOmni(req, s, res)), sec: s };
+      return { ...(await runOmni(req, s, res, aspect)), sec: s };
     } catch (e: any) {
       last = e;
       if (e instanceof SafetyBlockedError) throw e;
@@ -127,7 +128,7 @@ export const omniProvider: VideoProvider = {
       // 학생이 올린 영상을 고른 그림체로 다시 그린다(움직임·구도·길이는 그대로)
       const input = [{ type: 'user_input', content: [{ type: 'video', data: job.srcVideo.toString('base64'), mime_type: 'video/mp4' }, { type: 'text', text: job.promptEn }] }];
       try {
-        return { ...(await runOmni({ input, generation_config: { video_config: { task: 'edit' } } }, 0, job.res)), sec: job.sec };
+        return { ...(await runOmni({ input, generation_config: { video_config: { task: 'edit' } } }, 0, job.res, job.aspect)), sec: job.sec };
       } catch (e: any) {
         if (e instanceof SafetyBlockedError) throw e;
         const msg = String(e?.message ?? e);
@@ -150,10 +151,10 @@ export const omniProvider: VideoProvider = {
           parts.push({ inlineData: { mimeType: 'image/png', data: job.prevFrame.toString('base64') } });
           notes.push(`Image ${parts.length} is the LAST frame of the previous scene of the same story. This new frame must feel like the very next moment of one continuous film: same art style, same color palette and lighting mood, same character look, natural continuation of position and camera. If the scene below happens in a different place, keep the style and mood and change only the place.`);
         }
-        parts.push({ text: `${notes.join(' ')} Draw ONE 16:9 frame of the scene below. ABSOLUTELY NO TEXT in the picture: no letters, no words, no captions, no subtitles, no speech bubbles, no signs with writing. Spoken lines in the description are sound only — never write them on the picture.\n${job.promptEn}` });
+        parts.push({ text: `${notes.join(' ')} Draw ONE ${job.aspect === '9:16' ? 'vertical 9:16 (portrait)' : '16:9'} frame of the scene below. ABSOLUTELY NO TEXT in the picture: no letters, no words, no captions, no subtitles, no speech bubbles, no signs with writing. Spoken lines in the description are sound only — never write them on the picture.\n${job.promptEn}` });
         // 첫 그림이 40초 안에 안 나오면(AI가 바쁠 때) 기다리지 않고 글만으로 바로 영상을 만든다
         const key = await Promise.race([
-          drawImage(parts, '16:9', { quick: true }),
+          drawImage(parts, job.aspect ?? '16:9', { quick: true }),
           new Promise<never>((_, rej) => setTimeout(() => rej(new Error('keyframe timeout')), 40_000)),
         ]);
         try {
@@ -164,6 +165,7 @@ export const omniProvider: VideoProvider = {
             },
             job.sec,
             job.res,
+            job.aspect,
           );
           return { ...r, keyframe: key.bytes, usedRef: true };
         } catch (e) {
@@ -175,7 +177,7 @@ export const omniProvider: VideoProvider = {
         logger.warn('장면 첫 그림 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    if (!job.editEn) return runOmniSec(t2v, job.sec, job.res);
+    if (!job.editEn) return runOmniSec(t2v, job.sec, job.res, job.aspect);
     // 수정: ① 이전 결과를 이어서 고치기(previous_interaction_id) → 안 되면 ② 원래 프롬프트에 수정 지시를 합쳐 새로 만들기
     if (job.previousInteractionId) {
       try {
@@ -183,13 +185,14 @@ export const omniProvider: VideoProvider = {
           { input: job.editEn, previous_interaction_id: job.previousInteractionId, generation_config: { video_config: { task: 'edit' } } },
           job.sec,
           job.res,
+          job.aspect,
         );
       } catch (e) {
         if (e instanceof SafetyBlockedError) throw e;
         logger.warn('Omni 이어서 고치기 실패, 합친 프롬프트로 새로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    return runOmniSec({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res);
+    return runOmniSec({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res, job.aspect);
   },
 };
 
@@ -214,7 +217,7 @@ async function drawOnce(model: string, parts: any[], aspectRatio: string): Promi
   return { bytes: Buffer.from(part.inlineData.data, 'base64'), mimeType: part.inlineData.mimeType ?? 'image/png' };
 }
 
-export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9', opt: { quick?: boolean } = {}): Promise<{ bytes: Buffer; mimeType: string }> {
+export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9' | '9:16', opt: { quick?: boolean } = {}): Promise<{ bytes: Buffer; mimeType: string }> {
   // quick: 한 번 성공한 모델만 한 번 시도(장면 첫 그림처럼 늦으면 안 되는 곳)
   const models = goodImageModel ? (opt.quick ? [goodImageModel] : [goodImageModel, ...IMAGE_MODELS().filter((m) => m !== goodImageModel)]) : IMAGE_MODELS();
   let last: unknown;
@@ -241,7 +244,7 @@ export async function drawImage(parts: any[], aspectRatio: '1:1' | '16:9', opt: 
 // ───────── 중등 이미지 모드 ─────────
 export const imageProvider: VideoProvider = {
   async generate(job) {
-    return drawImage([{ text: job.editEn ? `${job.promptEn}\nChange: ${job.editEn}` : job.promptEn }], '16:9');
+    return drawImage([{ text: job.editEn ? `${job.promptEn}\nChange: ${job.editEn}` : job.promptEn }], job.aspect ?? '16:9');
   },
 };
 

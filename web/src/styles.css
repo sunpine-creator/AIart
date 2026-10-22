@@ -861,3 +861,20 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 
 /* 수업 끝내기 */
 .end-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 520px; background: var(--warn-tint); border-radius: 10px; padding: 6px 10px; }
+
+/* 영상 방향(가로·세로) */
+.aspect-choices { display: flex; flex-wrap: wrap; gap: 10px; }
+.aspect-card { display: grid; justify-items: center; gap: 4px; min-width: 150px; padding: 12px 16px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; }
+.aspect-card.on { border-color: var(--human); background: var(--human-tint); }
+.ar { display: block; border: 2px solid currentColor; border-radius: 4px; opacity: 0.7; }
+.ar-h { width: 48px; height: 27px; }
+.ar-v { width: 22px; height: 39px; }
+.aspect-panel.compact .aspect-card { min-width: 120px; padding: 8px 12px; }
+/* 세로 영상 미리보기 */
+.frame.vertical { aspect-ratio: 9 / 16; width: auto; max-width: 100%; margin-inline: auto; }
+.frame-md.vertical { height: min(60vh, 460px); }
+.frame-lg.vertical { height: min(72vh, 640px); }
+.frame-sm.vertical { height: 160px; }
+.stage.vertical { width: min(100%, calc(min(72vh, 640px) * 9 / 16)); margin-inline: auto; }
+.clip-stack.vertical { aspect-ratio: 9 / 16; }
+.clip-layer .frame.vertical { height: 100%; width: 100%; }

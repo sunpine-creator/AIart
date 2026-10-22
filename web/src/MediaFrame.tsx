@@ -47,7 +47,7 @@ export function GenMedia({
   autoPlay,
   start,
 }: {
-  g?: { hue: number; img: boolean; storagePath?: string; url?: string; mimeType?: string; mock?: boolean };
+  g?: { hue: number; img: boolean; storagePath?: string; url?: string; mimeType?: string; mock?: boolean; aspect?: string };
   label: string;
   caption?: string;
   badge?: string;
@@ -76,7 +76,7 @@ export function GenMedia({
     );
   const isImage = g.img || (g.mimeType ?? '').startsWith('image/');
   return (
-    <div className={`frame frame-${size} video-frame`} role="img" aria-label={`AI가 만든 장면: ${label}`}>
+    <div className={`frame frame-${size} video-frame ${g.aspect === '9:16' ? 'vertical' : ''}`} role="img" aria-label={`AI가 만든 장면: ${label}`}>
       {isImage ? (
         <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       ) : (
@@ -99,11 +99,11 @@ export function useStorageUrl(path?: string) {
   return url;
 }
 
-export function StoredVideo({ path, url: direct, label, size = 'md' }: { path: string; url?: string; label: string; size?: 'sm' | 'md' | 'lg' }) {
+export function StoredVideo({ path, url: direct, label, size = 'md', vertical }: { path: string; url?: string; label: string; size?: 'sm' | 'md' | 'lg'; vertical?: boolean }) {
   const fetched = useStorageUrl(direct ? undefined : path);
   const url = direct ?? fetched;
   return (
-    <div className={`frame frame-${size} video-frame`} aria-label={label}>
+    <div className={`frame frame-${size} video-frame ${vertical ? 'vertical' : ''}`} aria-label={label}>
       {url ? <video src={url} controls playsInline preload="metadata" /> : <span className="no-preview">불러오는 중…</span>}
     </div>
   );

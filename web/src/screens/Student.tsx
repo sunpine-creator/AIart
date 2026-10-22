@@ -999,6 +999,38 @@ function FlowCheck() {
 // ───────────── 모든 장면에 똑같이: 주인공·배경·그림 스타일 ─────────────
 // 장면마다 따로 만들면 주인공과 배경이 바뀌기 쉬워서, 여기 쓴 설정을 모든 장면 프롬프트에 함께 보낸다.
 const STYLES = ['그림책', '만화', '3D 애니메이션', '클레이', '수채화'];
+// 영상 방향: 가로(16:9) 또는 세로(9:16, 공모전·쇼츠 1080x1920). 새로 만드는 장면과 완성 영상이 이 방향으로 만들어진다
+function AspectPanel({ compact }: { compact?: boolean }) {
+  const { s, d } = useStore();
+  const other = s.gens.filter((g) => g.status === 'succeeded' && g.kind !== 'final' && !g.sceneId.startsWith('up:') && (g.aspect ?? '16:9') !== s.aspect).length;
+  const set = (aspect: '16:9' | '9:16') => d({ t: 'set', patch: { aspect } });
+  return (
+    <section className={`panel aspect-panel ${compact ? 'compact' : ''}`}>
+      <div className="panel-head">
+        <h3>{compact ? '영상 방향' : '영상 방향 고르기'}</h3>
+        <span className="tiny muted">새로 만드는 장면과 완성 영상이 이 방향으로 만들어져요</span>
+      </div>
+      <div className="aspect-choices" role="radiogroup" aria-label="영상 방향">
+        <button role="radio" aria-checked={s.aspect === '16:9'} className={`aspect-card ${s.aspect === '16:9' ? 'on' : ''}`} onClick={() => set('16:9')}>
+          <span className="ar ar-h" aria-hidden="true" />
+          <strong>가로 16:9</strong>
+          <span className="tiny muted">유튜브·발표 화면</span>
+        </button>
+        <button role="radio" aria-checked={s.aspect === '9:16'} className={`aspect-card ${s.aspect === '9:16' ? 'on' : ''}`} onClick={() => set('9:16')}>
+          <span className="ar ar-v" aria-hidden="true" />
+          <strong>세로 9:16</strong>
+          <span className="tiny muted">공모전·쇼츠 · 1080×1920</span>
+        </button>
+      </div>
+      {other > 0 && (
+        <p className="tiny hint">
+          이미 만든 장면 영상 {other}개는 {s.aspect === '9:16' ? '가로' : '세로'} 방향이에요. 완성 영상에서는 {s.aspect === '9:16' ? '위아래' : '양옆'}가 검게 채워져요. 같은 방향으로 맞추려면 선생님께 그 장면을 “처음부터 다시”로 풀어 달라고 해요.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function CastPanel() {
   const { s, d } = useStore();
   const c = s.cast;
@@ -1192,6 +1224,7 @@ function S3() {
       />
       <SheetSummary />
       {s.band === 'elementary' && <SceneDraftBox onPick={setSel} />}
+      <AspectPanel />
       <CastPanel />
       <WorldPanel />
       <div className="make">
@@ -2047,10 +2080,11 @@ function S4() {
   return (
     <div className="screen">
       <ScreenHead n={5} title="한 편의 영상으로 이어 붙여요" lead="장면·자막·목소리를 하나씩 골라서 편집해요. 지운 구간은 빠지고 앞뒤 장면이 바로 이어져요." />
+      <AspectPanel compact />
       <div className="editor">
         <div className="viewer">
-          <div className="stage">
-            <div className="clip-stack">
+          <div className={`stage ${s.aspect === '9:16' ? 'vertical' : ''}`}>
+            <div className={`clip-stack ${s.aspect === '9:16' ? 'vertical' : ''}`}>
               {lay.map((e, i) => {
                 const next = lay[i + 1];
                 const on = e === curE;
@@ -2419,7 +2453,7 @@ function S4() {
                 {new Date(s.lastExport.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} · {s.lastExport.dur}초
               </span>
             </div>
-            <StoredVideo path={s.lastExport.path} url={s.lastExport.url} label="내 완성 영상" />
+            <StoredVideo path={s.lastExport.path} url={s.lastExport.url} label="내 완성 영상" vertical={s.lastExport.aspect === '9:16'} />
             <p className="tiny muted">편집을 바꿨다면 “다시 저장하기”를 눌러야 완성 영상에 반영돼요.</p>
           </div>
         )}

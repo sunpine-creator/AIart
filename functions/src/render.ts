@@ -31,6 +31,9 @@ const GRADE = 'eq=contrast=1.04:saturation=0.92:gamma=1.02,colorbalance=rm=0.02:
 
 export const W = 1280;
 export const H = 720;
+// 완성 영상 크기: 가로 1280x720, 세로 1080x1920(공모전·쇼츠 규격)
+export type Size = { w: number; h: number };
+export const sizeOf = (aspect?: string): Size => (aspect === '9:16' ? { w: 1080, h: 1920 } : { w: W, h: H });
 const FPS = 30;
 export const AI_NOTICE = '이 영상에는 AI 생성 콘텐츠가 포함되어 있어요';
 
@@ -83,10 +86,12 @@ export function wrap(text: string, max = 22): string {
 
 // 올린 영상을 AI에 보내기 좋게 MP4(H.264, 720p, 최대 maxSec 초)로 바꾼다
 // 그림체만 바꿀 거라 작게(480p, 소리 없음) 만들어 보내면 AI가 더 빨리 받는다. 소리는 편집에서 원래 영상 것을 쓴다.
-export async function toMp4(src: string, out: string, maxSec = 10): Promise<string> {
+export async function toMp4(src: string, out: string, maxSec = 10, aspect: string = '16:9'): Promise<string> {
+  // 세로로 만들 때는 세로(480x854) 화면에 맞춰 보낸다(고치기는 보낸 영상의 비율을 그대로 쓴다)
+  const [w, h] = aspect === '9:16' ? [480, 854] : [854, 480];
   await run(bin('ffmpeg'), [
     '-y', '-hide_banner', '-loglevel', 'error', '-i', src, '-t', String(maxSec),
-    '-vf', 'scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24',
+    '-vf', `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-pix_fmt', 'yuv420p', '-an', '-movflags', '+faststart', out,
   ]);
   return out;
@@ -113,10 +118,10 @@ export async function probeDur(file: string): Promise<number> {
   }
 }
 
-export async function renderSegment(c: Clip, i: number, dir: string): Promise<string> {
+export async function renderSegment(c: Clip, i: number, dir: string, size: Size = { w: W, h: H }): Promise<string> {
   const out = join(dir, `seg_${String(i).padStart(2, '0')}.mp4`);
   const args: string[] = ['-y', '-hide_banner', '-loglevel', 'error'];
-  const fit = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${FPS}`;
+  const fit = `scale=${size.w}:${size.h}:force_original_aspect_ratio=decrease,pad=${size.w}:${size.h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${FPS}`;
   const d = String(c.dur);
   const filters: string[] = [];
 
@@ -134,7 +139,7 @@ export async function renderSegment(c: Clip, i: number, dir: string): Promise<st
     filters.push(`[0:v]${fit}${c.grade ? `,${GRADE}` : ''}[b0]`);
   } else {
     const bg = c.kind === 'outro' ? '0x7FA6F0' : c.kind === 'title' ? '0x26324F' : '0x2B3550';
-    args.push('-f', 'lavfi', '-t', d, '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}`);
+    args.push('-f', 'lavfi', '-t', d, '-i', `color=c=${bg}:s=${size.w}x${size.h}:r=${FPS}`);
     filters.push('[0:v]null[b0]');
   }
 
