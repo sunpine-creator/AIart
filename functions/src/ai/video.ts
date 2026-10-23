@@ -13,6 +13,7 @@ export type VideoJob = {
   prevFrame?: Buffer; // 앞 장면의 마지막 화면(이어지게)
   srcVideo?: Buffer; // 그림체를 바꿀 학생 영상(mp4, 10초 이하)
   aspect?: '16:9' | '9:16'; // 가로 또는 세로 영상
+  desub?: boolean; // 자막 글씨만 지우기(새로 만들지 않고 고치기만)
 };
 export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number; keyframe?: Buffer; usedRef?: boolean; method?: string };
 
@@ -124,6 +125,14 @@ async function runOmniSec(req: Record<string, any>, sec: number, res: string, as
 export const omniProvider: VideoProvider = {
   async generate(job) {
     if (job.img) return imageProvider.generate(job);
+    if (job.desub && job.previousInteractionId) {
+      try {
+        return { ...(await runOmni({ input: job.promptEn, previous_interaction_id: job.previousInteractionId, generation_config: { video_config: { task: 'edit' } } }, 0, job.res, job.aspect)), sec: job.sec, method: 'desub-continue' };
+      } catch (e) {
+        if (e instanceof SafetyBlockedError || !job.srcVideo) throw e;
+        logger.warn('Omni: 이어서 자막 지우기 실패, 영상을 넣어 다시', { err: String((e as any)?.message ?? e).slice(0, 300) });
+      }
+    }
     if (job.srcVideo) {
       // 학생이 올린 영상을 고른 그림체로 다시 그린다(움직임·구도·길이는 그대로)
       const input = [{ type: 'user_input', content: [{ type: 'video', data: job.srcVideo.toString('base64'), mime_type: 'video/mp4' }, { type: 'text', text: job.promptEn }] }];

@@ -1450,7 +1450,7 @@ function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene
   const [fit, setFit] = useState<Fit | undefined>(g.judgement?.fit);
   const [reason, setReason] = useState(g.judgement?.reason ?? '');
   const word = g.img ? '이미지' : '영상';
-  const label = g.kind === 'final' ? '확정한 장면' : g.kind === 'edit' ? '수정본' : '초안';
+  const label = g.kind === 'final' ? (g.desub ? '자막 지운 장면' : '확정한 장면') : g.kind === 'edit' ? '수정본' : '초안';
   const time = new Date(g.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   if (g.status === 'blocked') {
     const [why, tip] = (g.rejectReason ?? '|').split('|');
@@ -2570,6 +2570,45 @@ function KeyPoster({ g }: { g: Gen }) {
   return url ? <img className="key-poster" src={url} alt="" aria-hidden="true" /> : null;
 }
 
+// AI가 영상에 넣은 자막 글씨만 지우기(그림은 그대로)
+function DesubBox({ sceneId, gen }: { sceneId: string; gen?: Gen }) {
+  const { s, d } = useStore();
+  const [sending, setSending] = useState(false);
+  const mine = s.gens.filter((g) => g.sceneId === sceneId && g.desub);
+  const last = mine[mine.length - 1];
+  const busy = !!last && ['queued', 'running'].includes(last.status);
+  const cleaned = !!gen?.desub;
+  const cost = [3, 4, 5, 6, 8, 10].find((x) => x >= Math.ceil((gen?.sec ?? 3) - 0.05)) ?? 10;
+  if (!gen || gen.img) return null;
+  if (busy)
+    return (
+      <>
+        <Progress text={last.status === 'running' ? 'AI가 글씨만 지우고 있어요 · 1~3분쯤 걸려요. 다 되면 이 장면이 저절로 바뀌어요' : '차례를 기다리고 있어요'} running={last.status === 'running'} />
+        {last.status === 'queued' && <StuckKick g={last} />}
+      </>
+    );
+  return (
+    <div className="desub">
+      {cleaned && <span className="tiny good-text">✓ 글씨를 지운 영상이에요.</span>}
+      {last && last.status === 'rejected' && <span className="tiny danger-text">{last.rejectReason ?? '이번에는 지우지 못했어요. 크레딧은 돌려받았어요.'}</span>}
+      <button
+        className="btn ai tiny"
+        disabled={sending || s.cls.paused || s.credits < cost}
+        onClick={() => {
+          setSending(true);
+          api
+            .removeSubs({ sceneId })
+            .then(() => d({ t: 'toast', msg: 'AI가 이 장면의 자막 글씨만 지우기 시작했어요. 그림·움직임·소리는 그대로예요.' }))
+            .catch((e) => d({ t: 'toast', msg: errText(e) }))
+            .finally(() => setSending(false));
+        }}
+      >
+        {sending ? '보내는 중…' : `✨ AI로 글씨만 지우기 · ${cost}크레딧`}
+      </button>
+    </div>
+  );
+}
+
 // 조각(장면·올린 영상·제목·끝 화면) 고치기
 function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; label: string; idx: number; count: number; onMove: (dir: -1 | 1) => void; onClose: () => void }) {
   const { s, d } = useStore();
@@ -2646,6 +2685,8 @@ function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; lab
             </div>
             <span className="tiny muted">끄면 AI가 만든 말·효과음이 빠져요. 내가 넣은 목소리는 그대로 들려요.</span>
             <span className="cs-label">영상 속 자막</span>
+            <DesubBox sceneId={it.key} gen={it.gen} />
+            <span className="tiny muted">급할 때는 아래처럼 자막 자리를 흐리게 가릴 수도 있어요.</span>
             <div className="pills">
               <button className={`pill ${!it.scene?.hideSubs ? 'on' : ''}`} onClick={() => d({ t: 'scene', id: it.key, patch: { hideSubs: undefined } })}>
                 그대로
@@ -2657,7 +2698,7 @@ function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; lab
                 위 자막 가리기
               </button>
             </div>
-            <span className="tiny muted">AI가 영상에 써 넣은 글자는 지울 수 없어서, 그 띠를 흐리게 덮어요. 그 위에 내 자막을 넣으면 돼요.</span>
+            <span className="tiny muted">흐리게 가리기는 자막 띠 전체를 흐리게 덮어요. 글씨만 깔끔하게 지우려면 위의 “AI로 글씨만 지우기”를 써요.</span>
           </div>
           <button className="btn tiny" onClick={() => (d({ t: 'scene', id: it.key, patch: { skip: true } }), onClose())}>
             이 장면 통째로 빼기

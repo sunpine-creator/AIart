@@ -31,7 +31,7 @@ export type Gen = {
   id: string; sceneId: string; kind: 'draft' | 'edit' | 'final'; promptKo: string; promptEn: string; editText?: string;
   status: GenStatus; queuePos: number; runLeft: number; res: Res; sec: number; hue: number; img: boolean;
   judgement?: { fit: Fit; reason: string }; rejectReason?: string; parentId?: string; at: number;
-  storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number; wasFinal?: boolean; aspect?: '16:9' | '9:16';
+  storagePath?: string; url?: string; mimeType?: string; mock?: boolean; attempt?: number; wasFinal?: boolean; aspect?: '16:9' | '9:16'; desub?: boolean;
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
 export type Upload = { id: string; name: string; url: string; path?: string; styledPath?: string; styledUrl?: string; styledGenId?: string; useStyled?: boolean; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
@@ -174,7 +174,7 @@ export function toGen(id: string, x: any): Gen {
     id, sceneId: x.sceneId, kind: x.kind, promptKo: x.promptKo ?? '', promptEn: x.promptEn ?? '', editText: x.editText ?? undefined,
     status: status as GenStatus, queuePos: 0, runLeft: 0, res: x.res, sec: x.sec, hue: x.hue ?? 200, img: !!x.img,
     judgement: x.judgement ?? undefined, rejectReason, parentId: x.parentId ?? undefined, at: tsMs(x.createdAt),
-    storagePath: x.storagePath ?? undefined, url: x.url ?? undefined, attempt: x.attempt ?? undefined, mimeType: x.mimeType ?? undefined, mock: !!x.mock, wasFinal: !!x.wasFinal, aspect: x.aspect === '9:16' ? '9:16' : '16:9',
+    storagePath: x.storagePath ?? undefined, url: x.url ?? undefined, attempt: x.attempt ?? undefined, mimeType: x.mimeType ?? undefined, mock: !!x.mock, wasFinal: !!x.wasFinal, aspect: x.aspect === '9:16' ? '9:16' : '16:9', desub: !!x.desub,
   };
 }
 

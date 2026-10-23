@@ -22,7 +22,7 @@ const SYSTEM = `너는 초중고 학생이 쓴 AI 영상 프롬프트를 검사�
    애매하면 safe=true 로 한다.
 2) safe=false 이면 category(폭력·잔인함/성적 내용/놀림·혐오/개인정보/실존 인물/위험 행동 중 하나), reasonKo(초등학생이 이해할 한 문장), suggestionKo(바꿔 쓸 예시 한 문장)를 쓴다.
 3) english: safe 여부와 상관없이 항상 쓴다. 학생 의도를 바꾸지 말고 영상 모델용 영어 한 문단으로 옮긴다. 그림 스타일 문장은 붙이지 않는다(서버가 붙인다).
-   인물이 하는 말(대사·혼잣말·내레이션)이 있으면 번역하지 말고 한국어 그대로 큰따옴표 안에 넣고, 'says in Korean: "..."' 처럼 한국어로 말한다고 쓴다. 화면에 보이는 글자도 한국어 그대로 둔다.
+   인물이 하는 말(대사·혼잣말·내레이션)이 있으면 번역하지 말고 한국어 그대로 두되, 큰따옴표로 감싸지 말고 'AUDIO ONLY (spoken in Korean, never written on screen): 우산 챙겨' 처럼 소리로만 들린다고 쓴다. 장면 설명에는 글자·자막을 화면에 쓰라는 말을 넣지 않는다.
 JSON만 출력한다.`;
 
 export async function checkAndTranslate(textKo: string, kind: 'prompt' | 'edit'): Promise<AiCheck> {

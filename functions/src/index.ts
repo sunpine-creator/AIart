@@ -407,6 +407,45 @@ export const restyleUpload = onCall({ timeoutSeconds: 60 }, async (req) => {
   return { genId: genRef.id, credits: spec.credits };
 });
 
+// ───────── 학생(편집): AI가 영상에 넣은 자막 글씨만 지우기 ─────────
+// 그 장면 영상을 Omni 로 "글자만 지우고 나머지는 그대로" 고친다. 다 되면 그 장면이 지운 영상으로 바뀐다.
+const DESUB_EN = 'Remove ALL subtitles, captions, speech text, titles and any other text overlays from this video. Fill those areas naturally with the background behind them. Keep EVERYTHING else exactly the same: same characters, same art style, same motion, same camera, same timing, same colors and the same sound. Do not add any new text.';
+export const removeSubs = onCall({ timeoutSeconds: 60 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const sceneId = String(req.data?.sceneId ?? '').slice(0, 60);
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (!cls) throw new HttpsError('not-found', '반을 찾을 수 없어요.');
+  if (cls.paused) throw new HttpsError('failed-precondition', '선생님이 화면을 잠시 멈췄어요.');
+  const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
+  const sc = ((p.scenes ?? []) as any[]).find((x) => x.id === sceneId);
+  if (!sc) throw new HttpsError('not-found', '장면을 찾을 수 없어요.');
+  const all = (await db.collection('generations').where('classId', '==', classId).where('no', '==', no).where('sceneId', '==', sceneId).get()).docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  if (all.some((x) => ['flagged', 'awaiting_approval', 'queued', 'running'].includes(x.status))) throw new HttpsError('already-exists', '이 장면은 지금 만드는 중이에요. 끝난 뒤에 다시 눌러 주세요.');
+  const done = all.filter((x) => x.status === 'succeeded' && x.storagePath && !x.img).sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0));
+  const src = done.find((x) => x.id === sc.selectedGenId) ?? done.pop();
+  if (!src) throw new HttpsError('failed-precondition', '이 장면에는 아직 영상이 없어요.');
+  const sec = [3, 4, 5, 6, 8, 10].find((x) => x >= Math.ceil((Number(src.sec) || 3) - 0.05)) ?? 10;
+  const spec = specFor('edit', false, sec);
+  await checkSpend(classId, no, cls, spec.costUsd, spec.credits);
+  const genRef = db.collection('generations').doc();
+  const studentRef = db.doc(`classes/${classId}/students/${no}`);
+  await db.runTransaction(async (tx) => {
+    const st = await tx.get(studentRef);
+    const credits = st.data()?.credits ?? 0;
+    if (credits < spec.credits) throw new HttpsError('resource-exhausted', `크레딧이 부족해요(${spec.credits}크레딧 필요). 선생님께 말씀드려요.`);
+    tx.update(studentRef, { credits: credits - spec.credits, status: 'making' });
+    tx.set(genRef, {
+      classId, no, sceneId, sceneNo: src.sceneNo ?? null, sceneLine: src.sceneLine ?? '', kind: 'final', desub: true, img: false, aspect: src.aspect ?? '16:9',
+      promptKo: `${src.promptKo ?? ''} → 자막 글씨 지우기`, promptEn: DESUB_EN, editEn: DESUB_EN, editText: '자막 글씨 지우기', previousInteractionId: src.interactionId ?? null, srcPath: src.storagePath,
+      res: spec.res, sec: src.sec ?? sec, hue: src.hue ?? hueOf(genRef.id), parentId: src.id, judgement: src.judgement ?? { fit: 'yes', reason: '' },
+      status: 'queued', credits: spec.credits, charged: true, costUsd: spec.costUsd, createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  await log({ classId, no, kind: '자막 지우기', textKo: `장면 ${src.sceneNo ?? ''}`, verdict: 'pass', action: '대기열' });
+  await enqueue(genRef.id);
+  return { genId: genRef.id, credits: spec.credits };
+});
+
 // ───────── 장면끼리 이어지게: 주인공 카드 + 고정 그림체 ─────────
 // 그림체는 한 단어가 아니라 선·색·빛·질감까지 정한 긴 문장으로 모든 장면에 똑같이 붙인다.
 export const STYLE_EN: Record<string, string> = {
@@ -421,9 +460,9 @@ const SAFE_TAIL = 'Safe for children, fictional people only.';
 // 영상 속 말이 영상 끝에서 잘리지 않게: 짧게, 조금 빠른 보통 속도로, 끝나기 전에 다 말하기
 const speechFit = (sec: number) => `TIMING: This clip is only ${sec} seconds long. Any spoken line must be short and must be completely finished at least half a second before the clip ends — speak at a natural, slightly brisk pace with no long pauses, and start speaking early in the clip.`;
 // 자막·글자 절대 넣지 않기(잘못된 자막이 생겨도 학생이 고칠 수 없어서). 프롬프트 앞뒤에 같이 붙인다
-const NO_TEXT_HEAD = 'IMPORTANT — NO ON-SCREEN TEXT: this video must contain no subtitles, no captions, no written dialogue, no titles, no speech bubbles and no text overlays of any kind. ';
+const NO_TEXT_HEAD = 'IMPORTANT — NO ON-SCREEN TEXT: this video must contain no subtitles, no captions, no written dialogue, no titles, no speech bubbles and no text overlays of any kind. Spoken lines are heard as audio only. No subtitles. No captions. No text. ';
 // 영상 속 말·글자는 모두 한국어로
-export const KO_TAIL = 'LANGUAGE: Everyone who speaks in this video speaks KOREAN (한국어) only — all dialogue, narration and voices are in natural spoken Korean, never English. Keep any Korean lines given in quotes exactly as written. NO SUBTITLES: do not add subtitles, captions, speech text, titles or any text overlay on the screen; the speech is heard only as audio. Avoid visible writing in the scene; if a sign or screen must show writing, keep it small and in Korean Hangul.';
+export const KO_TAIL = 'LANGUAGE: Everyone who speaks in this video speaks KOREAN (한국어) only — all dialogue, narration and voices are in natural spoken Korean, never English. Speak any given Korean lines exactly as written, as sound only. NO SUBTITLES: do not add subtitles, captions, speech text, titles or any text overlay on the screen; the speech is heard only as audio. Avoid visible writing in the scene; if a sign or screen must show writing, keep it small and in Korean Hangul.';
 
 // 주인공 설명을 검사·번역한다(같은 설명이면 저장해 둔 번역을 다시 쓴다)
 async function lookEnOf(classId: string, no: number, look: string): Promise<{ en?: string; blocked?: { category: string; reason: string; suggestion: string } }> {
@@ -769,7 +808,10 @@ export const runGeneration = onTaskDispatched(
       if (prevFrame) await ref.update({ contFrom: prevFrame.genId }).catch(() => {});
       // 내 영상 그림체 바꾸기: 올린 영상을 MP4로 바꿔서 보낸다
       let srcVideo: Buffer | undefined;
-      if (g.kind === 'restyle' && g.srcPath) {
+      if (g.desub && g.srcPath) {
+        // 자막 지우기: Omni가 만든 영상 그대로(이미 mp4)
+        srcVideo = await getStorage().bucket().file(g.srcPath).download().then(([b]) => b).catch(() => undefined);
+      } else if (g.kind === 'restyle' && g.srcPath) {
         const tdir = mkdtempSync(pjoin(tmpdir(), 'restyle-'));
         try {
           const raw = pjoin(tdir, 'in');
@@ -783,7 +825,7 @@ export const runGeneration = onTaskDispatched(
       }
       const result = await provider().generate({
         promptEn: g.promptEn, editEn: g.editEn ?? undefined, previousInteractionId: g.previousInteractionId ?? undefined,
-        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo, aspect: g.aspect === '9:16' ? '9:16' : '16:9',
+        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo, aspect: g.aspect === '9:16' ? '9:16' : '16:9', desub: !!g.desub,
       });
       if (result.keyframe) {
         const kp = `classes/${g.classId}/${g.no}/gens/${genId}_key.png`;
@@ -818,6 +860,15 @@ export const runGeneration = onTaskDispatched(
       await ref.update({ ...(realSec ? { sec: realSec } : {}), method: result.method ?? null, status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
       await studentRef.update({ status: 'idle' });
       // 내 영상 그림체 바꾸기: 편집에서 바뀐 영상을 쓰도록 올린 영상에 표시한다
+      // 자막 지우기: 그 장면이 지운 영상을 쓰도록 바꾸고, 흐리게 가리기는 푼다
+      if (g.desub && storagePath) {
+        const projRef = db.doc(`projects/${g.classId}_${g.no}`);
+        await db.runTransaction(async (tx) => {
+          const pd = (await tx.get(projRef)).data();
+          if (!pd?.scenes) return;
+          tx.update(projRef, { scenes: (pd.scenes as any[]).map((x) => (x.id === g.sceneId ? (({ hideSubs, ...rest }) => ({ ...rest, selectedGenId: genId }))(x) : x)) });
+        });
+      }
       if (g.kind === 'restyle' && g.uploadId && storagePath) {
         const projRef = db.doc(`projects/${g.classId}_${g.no}`);
         await db.runTransaction(async (tx) => {
