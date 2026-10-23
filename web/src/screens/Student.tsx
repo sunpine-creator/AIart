@@ -2073,9 +2073,6 @@ function S4() {
   const selCut = sel?.t === 'cut' ? cutsAbs.find((c) => c.id === sel.id) : undefined;
   const selClip = sel?.t === 'clip' ? lay.find((e) => e.item.key === sel.id) : undefined;
   const oT = toO(t);
-  const usedScenes = s.scenes.filter((x) => !x.skip);
-  const allMuted = usedScenes.length > 0 && usedScenes.every((x) => x.mute);
-  const allHidden = usedScenes.length > 0 && usedScenes.every((x) => !!x.hideSubs);
   const TOOLS: [Tool, string, string][] = [
     ['scene', '🎬 장면', '장면 순서 바꾸기 · 구간 지우기'],
     ['cap', '💬 자막', '자막 넣기 · 옮기기 · 길이'],
@@ -2305,7 +2302,13 @@ function S4() {
                     style={{ left: pct(p.o), width: pct(p.len), ['--h' as any]: p.e.item.hue }}
                     title={`${clipLabel(p.e.item)} · ${p.e.item.dur}초`}
                   >
-                    {first && <span className="clip-n mono">{clipLabel(p.e.item)}</span>}
+                    {first && (
+                      <span className="clip-n mono">
+                        {clipLabel(p.e.item)}
+                        {p.e.item.scene?.mute ? ' 🔇' : ''}
+                        {p.e.item.scene?.hideSubs ? ' ▒' : ''}
+                      </span>
+                    )}
                   </span>
                 );
               })}
@@ -2396,15 +2399,7 @@ function S4() {
                   </button>
                 )}
               </span>
-              <span className="range-acts">
-                <button className="btn tiny" onClick={() => d({ t: 'set', patch: { scenes: s.scenes.map((x) => ({ ...x, mute: !allMuted })) } })}>
-                  {allMuted ? '🔊 모든 장면 소리 켜기' : '🔇 모든 장면 소리 끄기'}
-                </button>
-                <button className="btn tiny" onClick={() => d({ t: 'set', patch: { scenes: s.scenes.map((x) => ({ ...x, hideSubs: allHidden ? undefined : 'bottom' })) } })}>
-                  {allHidden ? '자막 가리기 모두 풀기' : '모든 장면 아래 자막 가리기'}
-                </button>
-              </span>
-              <span className="tiny muted">장면 막대를 누르면 순서 바꾸기·빼기·소리 끄기·자막 가리기를 할 수 있어요.{tl.cuts.length ? ` 지운 곳 ${tl.cuts.length}개(✂ 표시)` : ''}</span>
+              <span className="tiny muted">장면 막대를 하나 누르면 그 장면만 소리 끄기·자막 지우기·순서 바꾸기·빼기를 할 수 있어요.{tl.cuts.length ? ` 지운 곳 ${tl.cuts.length}개(✂ 표시)` : ''}</span>
             </>
           ) : tool === 'cap' ? (
             <>
