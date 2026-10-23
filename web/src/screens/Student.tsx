@@ -3270,9 +3270,19 @@ function S5() {
         </button>
         {!allChecked && <span className="muted">체크리스트를 모두 확인하면 제출할 수 있어요.</span>}
       </div>
+      <section className="panel survey">
+        <h3>📝 설문조사</h3>
+        <p className="muted">AI 영상 만들기 수업은 어땠나요? 생각을 들려주세요.</p>
+        <a className="btn primary big" href={SURVEY_URL} target="_blank" rel="noopener noreferrer">
+          설문조사 하러 가기 ↗
+        </a>
+        <span className="tiny muted">새 창에서 열려요. 다 하고 나서 이 창으로 돌아오면 돼요.</span>
+      </section>
     </div>
   );
 }
+
+const SURVEY_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSdPc8Xtw5wU3BpzQcTs0MulyNJixp88RwkQ9vyAe0MEs06k9g/viewform';
 
 // ───────────── 공통 ─────────────
 function ScreenHead({ n, title, lead, human }: { n: number; title: string; lead: string; human?: boolean }) {

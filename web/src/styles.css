@@ -891,3 +891,7 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .subs-hide.top { top: 0; }
 
 .desub { display: grid; gap: 4px; }
+
+/* 6단계 설문조사 */
+.survey { display: grid; gap: 8px; justify-items: start; margin-top: 16px; }
+.survey a.btn { text-decoration: none; }
