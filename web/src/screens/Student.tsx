@@ -1641,15 +1641,21 @@ function Progress({ text, running }: { text: string; running?: boolean }) {
 }
 
 // ───────────── 5단계 영상 편집 (함수 이름 S4) ─────────────
-const VOICES = ['없음', '내 목소리', 'AI 목소리 · 맑은', 'AI 목소리 · 차분한', 'AI 목소리 · 씩씩한'];
+const VOICES = ['없음', '내 목소리', 'AI 목소리 · 여자 · 밝은', 'AI 목소리 · 여자 · 차분한', 'AI 목소리 · 여자 · 명랑한', 'AI 목소리 · 남자 · 밝은', 'AI 목소리 · 남자 · 차분한', 'AI 목소리 · 남자 · 씩씩한'];
 // 목소리마다 어떤 느낌인지
 const VOICE_TONE: Record<string, string> = {
   '원래 소리': '내가 올린 영상에 들어 있던 소리를 그대로 써요.',
   없음: '목소리 없이 자막만 보여요.',
   '내 목소리': '내가 직접 녹음해요. 장면 길이만큼 녹음할 수 있어요.',
-  'AI 목소리 · 맑은': '밝고 또랑또랑한 목소리예요. 즐겁고 신나는 장면에 어울려요.',
-  'AI 목소리 · 차분한': '낮고 안정적인 목소리예요. 설명하거나 생각을 말하는 장면에 어울려요.',
-  'AI 목소리 · 씩씩한': '힘차고 활기찬 목소리예요. 시작이나 마무리 장면에 어울려요.',
+  'AI 목소리 · 여자 · 밝은': '밝고 또랑또랑한 여자 목소리예요. 즐겁고 신나는 장면에 어울려요.',
+  'AI 목소리 · 여자 · 차분한': '또렷하고 안정적인 여자 목소리예요. 설명하거나 생각을 말하는 장면에 어울려요.',
+  'AI 목소리 · 여자 · 명랑한': '맑고 경쾌한 여자 목소리예요. 시작이나 마무리 장면에 어울려요.',
+  'AI 목소리 · 남자 · 밝은': '밝고 활기찬 남자 목소리예요. 즐겁고 신나는 장면에 어울려요.',
+  'AI 목소리 · 남자 · 차분한': '낮고 안정적인 남자 목소리예요. 설명하거나 생각을 말하는 장면에 어울려요.',
+  'AI 목소리 · 남자 · 씩씩한': '힘차고 씩씩한 남자 목소리예요. 신나거나 용감한 장면에 어울려요.',
+  'AI 목소리 · 맑은': '밝고 또랑또랑한 여자 목소리예요.',
+  'AI 목소리 · 차분한': '낮고 안정적인 남자 목소리예요.',
+  'AI 목소리 · 씩씩한': '힘차고 활기찬 남자 목소리예요.',
 };
 
 // AI 목소리 미리 듣기: 예시 문장 또는 내가 쓴 자막으로 들어 본다
@@ -2187,11 +2193,20 @@ function S4() {
               </div>
               {selVoice.kind === 'ai' ? (
                 <>
-                  <select value={selVoice.voice} onChange={(e) => updVoice(selVoice.id, { voice: e.target.value })} aria-label="AI 목소리 고르기">
-                    {AI_VOICES.map((v) => (
-                      <option key={v}>{v}</option>
+                  <div className="voice-pick">
+                    {(['여자', '남자'] as const).map((sex) => (
+                      <div key={sex} className="cs-row">
+                        <span className="cs-label">{sex === '여자' ? '👩 여자' : '👨 남자'}</span>
+                        <div className="pills">
+                          {AI_VOICES.filter((v) => v.includes(`· ${sex} ·`)).map((v) => (
+                            <button key={v} type="button" className={`pill ${selVoice.voice === v ? 'on' : ''}`} aria-pressed={selVoice.voice === v} onClick={() => updVoice(selVoice.id, { voice: v })}>
+                              {v.split(' · ').pop()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     ))}
-                  </select>
+                  </div>
                   {VOICE_TONE[selVoice.voice] && <p className="tiny voice-tone">{VOICE_TONE[selVoice.voice]}</p>}
                   <label htmlFor="v-text">읽어 줄 말</label>
                   <input id="v-text" maxLength={60} value={selVoice.text ?? ''} onChange={(e) => updVoice(selVoice.id, { text: e.target.value, dur: ttsGuess(e.target.value), fixed: false })} placeholder="AI 목소리가 읽어 줄 문장" />

@@ -4,6 +4,15 @@ import { env } from '../config';
 
 // 정해진 AI 목소리만 쓴다. 학생 목소리를 흉내 내는 기능은 만들지 않는다.
 const VOICES: Record<string, string> = {
+  // 여자 목소리
+  'AI 목소리 · 여자 · 밝은': 'Leda',
+  'AI 목소리 · 여자 · 차분한': 'Kore',
+  'AI 목소리 · 여자 · 명랑한': 'Zephyr',
+  // 남자 목소리
+  'AI 목소리 · 남자 · 밝은': 'Puck',
+  'AI 목소리 · 남자 · 차분한': 'Charon',
+  'AI 목소리 · 남자 · 씩씩한': 'Fenrir',
+  // 예전에 고른 목소리(그대로 쓸 수 있게)
   'AI 목소리 · 맑은': 'Leda',
   'AI 목소리 · 차분한': 'Charon',
   'AI 목소리 · 씩씩한': 'Puck',
@@ -15,7 +24,7 @@ export const voiceId = (v: string) => VOICES[v];
 export async function speak(text: string, voice: string, outPath: string): Promise<string | undefined> {
   const res: any = await genai().models.generateContent({
     model: env('TTS_MODEL', 'gemini-2.5-flash-preview-tts'),
-    contents: [{ role: 'user', parts: [{ text: `자연스럽고 조금 빠른 보통 말 속도로, 밝고 또박또박 읽어 줘. 문장 사이를 길게 쉬지 마: ${text}` }] }],
+    contents: [{ role: 'user', parts: [{ text: `${voice.includes('남자') || ['Puck', 'Charon', 'Fenrir'].includes(VOICES[voice]) ? '남자 목소리로, ' : '여자 목소리로, '}자연스럽고 조금 빠른 보통 말 속도로, 밝고 또박또박 읽어 줘. 문장 사이를 길게 쉬지 마: ${text}` }] }],
     config: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICES[voice] } } },
