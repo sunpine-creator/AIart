@@ -210,7 +210,7 @@ function ClassList() {
           <div className="field">
             <label htmlFor="c-band">수업 버전</label>
             <select id="c-band" value={band} onChange={(e) => setBand(e.target.value as any)}>
-              <option value="elementary">초등 버전 (30초 영상)</option>
+              <option value="elementary">초등 버전 (60초 영상)</option>
               <option value="middle">중·고등 버전 (60초 영상, 심화 활동)</option>
             </select>
           </div>

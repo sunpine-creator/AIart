@@ -976,7 +976,7 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
       ],
       config: {
         systemInstruction:
-          '초등학생이 쓴 활동지로 30초 영상의 장면 초안을 만든다. look 에는 모든 장면에 똑같이 나올 주인공의 모습(나이·머리·옷차림을 짧게, 실존 인물·실명 금지)을 쓴다. 장면은 3~5개, 시간 순서대로. 장면마다 line(초등학생이 읽기 쉬운 한 문장 장면 설명)과 육하원칙(who 누가, when 언제, where 어디서, what 무엇을, how 어떻게·어떤 모습으로, why 왜)을 짧은 한국어로 쓴다. 학생이 쓴 내용을 최대한 그대로 살리고, 없는 내용을 지나치게 지어내지 않는다. 마지막 장면에는 학생의 기분이 드러나게 한다. 폭력·혐오·개인정보·실존 인물·실제 상표 이름은 쓰지 않는다. 비어 있는 칸은 빈 문자열로 둔다.',
+          '초등학생이 쓴 활동지로 60초 영상의 장면 초안을 만든다. look 에는 모든 장면에 똑같이 나올 주인공의 모습(나이·머리·옷차림을 짧게, 실존 인물·실명 금지)을 쓴다. 장면은 3~5개, 시간 순서대로. 장면마다 line(초등학생이 읽기 쉬운 한 문장 장면 설명)과 육하원칙(who 누가, when 언제, where 어디서, what 무엇을, how 어떻게·어떤 모습으로, why 왜)을 짧은 한국어로 쓴다. 학생이 쓴 내용을 최대한 그대로 살리고, 없는 내용을 지나치게 지어내지 않는다. 마지막 장면에는 학생의 기분이 드러나게 한다. 폭력·혐오·개인정보·실존 인물·실제 상표 이름은 쓰지 않는다. 비어 있는 칸은 빈 문자열로 둔다.',
         temperature: 0.6,
         responseMimeType: 'application/json',
         responseSchema: {
@@ -1024,7 +1024,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   const cls = (await db.doc(`classes/${classId}`).get()).data();
   if (!p || !cls) throw new HttpsError('not-found', '작업을 찾을 수 없어요.');
   if (p.rendering && Date.now() - p.rendering < 10 * 60_000) throw new HttpsError('failed-precondition', '이미 영상을 만들고 있어요. 잠시만 기다려 주세요.');
-  const limit = cls.band === 'elementary' ? 30 : 60;
+  const limit = 60; // 초등·중등 모두 60초
 
   // 타임라인 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (화면과 같은 규칙)
   const scenes: any[] = p.scenes ?? [];
@@ -1131,7 +1131,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
       base,
     );
     const finalDur = base - cuts.reduce((a, c) => a + (c.b - c.a), 0);
-    // 정한 길이(초등 30초·중등 60초)를 넘어도 저장은 한다(학생 화면에 경고를 보여 준다). 너무 긴 것만 막는다.
+    // 정한 길이(초등·중등 60초)를 넘어도 저장은 한다(학생 화면에 경고를 보여 준다). 너무 긴 것만 막는다.
     if (finalDur > limit * 3) throw new HttpsError('failed-precondition', `영상이 너무 길어요(지금 ${Math.round(finalDur)}초). 필요 없는 구간을 지우거나 장면을 빼 주세요.`);
 
     // 조각을 만들고 디졸브로 잇는다. 이을 수 없으면(오래된 ffmpeg) 그냥 붙인다.

@@ -628,5 +628,5 @@ export function useStore() {
   return v;
 }
 
-export const maxSec = (b: Band) => (b === 'elementary' ? 30 : 60);
+export const maxSec = (_b: Band) => 60; // 초등·중등 모두 60초
 export const mediaWord = (_s: State) => '영상'; // 초등·중고등 모두 영상
