@@ -815,7 +815,7 @@ export const runGeneration = onTaskDispatched(
           rmSync(tdir, { recursive: true, force: true });
         }
       }
-      await ref.update({ ...(realSec ? { sec: realSec } : {}), status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
+      await ref.update({ ...(realSec ? { sec: realSec } : {}), method: result.method ?? null, status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
       await studentRef.update({ status: 'idle' });
       // 내 영상 그림체 바꾸기: 편집에서 바뀐 영상을 쓰도록 올린 영상에 표시한다
       if (g.kind === 'restyle' && g.uploadId && storagePath) {
@@ -1038,7 +1038,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
           const srcLen = real > 0 ? real : g.sec ?? 3;
           const dur = g.img ? Math.max(1, Math.min(num(sc.dur) || 3, 10)) : Math.max(1, Math.round(srcLen * 10) / 10);
           // AI가 만든 소리(한국어 말·효과음)를 그대로 쓴다. 학생이 끄면 뺀다
-          clips.push({ kind: g.img ? 'image' : 'video', dur, start: 0, srcLen, src, keepAudio: !sc.mute, layers: fixedOf(ov.clips?.[sc.id]), grade: true });
+          clips.push({ kind: g.img ? 'image' : 'video', dur, start: 0, srcLen, src, keepAudio: !sc.mute, hideSubs: sc.hideSubs === 'top' || sc.hideSubs === 'bottom' ? sc.hideSubs : undefined, layers: fixedOf(ov.clips?.[sc.id]), grade: true });
         } else {
           clips.push({ kind: 'placeholder', dur: Math.max(1, Math.min(num(sc.dur) || 3, 10)), layers: fixedOf(ov.clips?.[sc.id]) });
         }

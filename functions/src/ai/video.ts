@@ -14,7 +14,7 @@ export type VideoJob = {
   srcVideo?: Buffer; // 그림체를 바꿀 학생 영상(mp4, 10초 이하)
   aspect?: '16:9' | '9:16'; // 가로 또는 세로 영상
 };
-export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number; keyframe?: Buffer; usedRef?: boolean };
+export type VideoResult = { bytes?: Buffer; mimeType: string; interactionId?: string; mock?: boolean; sec?: number; keyframe?: Buffer; usedRef?: boolean; method?: string };
 
 export interface VideoProvider {
   generate(job: VideoJob): Promise<VideoResult>;
@@ -114,7 +114,7 @@ async function runOmniSec(req: Record<string, any>, sec: number, res: string, as
       last = e;
       if (e instanceof SafetyBlockedError) throw e;
       const msg = String(e?.message ?? e);
-      if (!/duration|INVALID_ARGUMENT|400/i.test(msg)) throw e; // 길이 문제가 아니면 바로 실패
+      if (!/duration/i.test(msg)) throw e; // 길이 문제가 아니면 바로 다음 방법으로
       logger.warn('Omni: 이 길이는 안 돼서 더 짧게 다시 시도', { sec: s, err: msg.slice(0, 200) });
     }
   }
@@ -138,6 +138,36 @@ export const omniProvider: VideoProvider = {
     }
     const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
     if (!job.editEn && (job.refImage || job.prevFrame)) {
+      // ⓪ 가장 먼저: 주인공 카드(와 앞 장면 마지막 화면)를 "참고 그림"으로 주고 영상을 만든다(reference_to_video).
+      //    모델이 카드의 얼굴·옷·그림체를 직접 보고 그려서 장면마다 주인공·그림체가 가장 잘 맞는다.
+      try {
+        const content: any[] = [];
+        const notes: string[] = [];
+        if (job.refImage) {
+          notes.push(`The main character is <IMAGE_REF_${content.length}>: keep EXACTLY this character in every frame (same face, hair, body, clothes and colors) and draw the whole video in exactly the same art style, line work and colors as <IMAGE_REF_${content.length}>.`);
+          content.push({ type: 'image', data: job.refImage.toString('base64'), mime_type: 'image/png' });
+        }
+        if (job.prevFrame) {
+          notes.push(`<IMAGE_REF_${content.length}> is the last moment of the previous scene of the same story: continue naturally from it with the same art style, color palette, lighting and setting look (change the place only if the scene says so).`);
+          content.push({ type: 'image', data: job.prevFrame.toString('base64'), mime_type: 'image/png' });
+        }
+        content.push({ type: 'text', text: `${notes.join(' ')} Use the given images as references for video generation; they are not literal first frames. One single continuous shot.\n${job.promptEn}` });
+        const cfg = { generation_config: { video_config: { task: 'reference_to_video' } } };
+        try {
+          const r = await runOmniSec({ input: content, ...cfg }, job.sec, job.res, job.aspect);
+          return { ...r, usedRef: true, method: 'reference' };
+        } catch (e: any) {
+          if (e instanceof SafetyBlockedError) throw e;
+          // 입력 모양이 안 맞는다고 하면 user_input 으로 감싸서 한 번 더
+          if (!/400|INVALID|invalid_request/i.test(String(e?.message ?? e))) throw e;
+          logger.warn('Omni: 참고 그림 영상(첫 형식) 실패, 감싼 형식으로 다시', { err: String(e?.message ?? e).slice(0, 300) });
+          const r = await runOmniSec({ input: [{ type: 'user_input', content }], ...cfg }, job.sec, job.res, job.aspect);
+          return { ...r, usedRef: true, method: 'reference' };
+        }
+      } catch (e) {
+        if (e instanceof SafetyBlockedError) throw e;
+        logger.warn('Omni: 참고 그림 영상 실패, 첫 그림 방식으로 다시', { err: String((e as any)?.message ?? e).slice(0, 300) });
+      }
       // ① 주인공 카드를 보고 이 장면의 첫 그림(같은 주인공·같은 그림체)을 그린다
       // ② 그 그림을 첫 장면으로 영상을 만든다. 어느 단계든 안 되면 글만으로 만든다.
       try {
@@ -167,7 +197,7 @@ export const omniProvider: VideoProvider = {
             job.res,
             job.aspect,
           );
-          return { ...r, keyframe: key.bytes, usedRef: true };
+          return { ...r, keyframe: key.bytes, usedRef: true, method: 'keyframe' };
         } catch (e) {
           if (e instanceof SafetyBlockedError) throw e;
           logger.warn('Omni: 그림으로 시작하는 영상 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
@@ -177,7 +207,7 @@ export const omniProvider: VideoProvider = {
         logger.warn('장면 첫 그림 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    if (!job.editEn) return runOmniSec(t2v, job.sec, job.res, job.aspect);
+    if (!job.editEn) return { ...(await runOmniSec(t2v, job.sec, job.res, job.aspect)), method: 'text' };
     // 수정: ① 이전 결과를 이어서 고치기(previous_interaction_id) → 안 되면 ② 원래 프롬프트에 수정 지시를 합쳐 새로 만들기
     if (job.previousInteractionId) {
       try {

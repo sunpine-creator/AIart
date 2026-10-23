@@ -883,3 +883,9 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .spend-limits { display: grid; gap: 6px; }
 .spend-limits input { width: 100px; margin: 0 4px; }
 .seat-won { color: var(--muted); }
+
+/* 편집: 영상 소리·자막 */
+.scene-av { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--sunk); margin: 6px 0; }
+.subs-hide { position: absolute; left: 0; right: 0; height: 22%; z-index: 2; backdrop-filter: blur(14px) brightness(0.94); -webkit-backdrop-filter: blur(14px) brightness(0.94); pointer-events: none; }
+.subs-hide.bottom { bottom: 0; }
+.subs-hide.top { top: 0; }

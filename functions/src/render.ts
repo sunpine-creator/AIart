@@ -21,6 +21,7 @@ export type Clip = {
   grade?: boolean; // AI 장면: 모든 장면에 같은 색 보정을 입혀 분위기를 맞춘다
   src?: string; // 영상·이미지 파일 경로
   keepAudio?: boolean; // 올린 영상의 원래 소리 쓰기
+  hideSubs?: 'top' | 'bottom'; // AI가 넣은 자막 가리기: 그 띠를 흐리게
   audioSrc?: string; // 소리는 이 파일에서(그림체로 바꾼 내 영상: 화면은 바꾼 것, 소리는 원래 영상)
   voice?: string; // 녹음·AI 목소리 파일 경로
   layers?: Layers;
@@ -143,9 +144,18 @@ export async function renderSegment(c: Clip, i: number, dir: string, size: Size 
     filters.push('[0:v]null[b0]');
   }
 
+  // AI가 영상에 넣은 자막 가리기: 아래(또는 위) 22% 띠를 강하게 흐리게 해서 덮는다
+  let base0 = 'b0';
+  if (c.hideSubs && (c.kind === 'video' || c.kind === 'image')) {
+    const y = c.hideSubs === 'top' ? '0' : 'ih*0.78';
+    const oy = c.hideSubs === 'top' ? '0' : 'main_h*0.78';
+    filters.push(`[b0]split[hm][hs];[hs]crop=iw:ih*0.22:0:${y},boxblur=28:4,eq=brightness=-0.06[hb];[hm][hb]overlay=0:${oy}[b0h]`);
+    base0 = 'b0h';
+  }
+
   // 글자 그림 겹치기
   let idx = 1;
-  let cur = 'b0';
+  let cur = base0;
   const lay = (png: string, opt: { enable?: string; fade?: boolean; slide?: boolean }) => {
     args.push('-loop', '1', '-t', d, '-i', png);
     const o = `o${idx}`;

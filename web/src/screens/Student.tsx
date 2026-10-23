@@ -2073,6 +2073,9 @@ function S4() {
   const selCut = sel?.t === 'cut' ? cutsAbs.find((c) => c.id === sel.id) : undefined;
   const selClip = sel?.t === 'clip' ? lay.find((e) => e.item.key === sel.id) : undefined;
   const oT = toO(t);
+  const usedScenes = s.scenes.filter((x) => !x.skip);
+  const allMuted = usedScenes.length > 0 && usedScenes.every((x) => x.mute);
+  const allHidden = usedScenes.length > 0 && usedScenes.every((x) => !!x.hideSubs);
   const TOOLS: [Tool, string, string][] = [
     ['scene', '🎬 장면', '장면 순서 바꾸기 · 구간 지우기'],
     ['cap', '💬 자막', '자막 넣기 · 옮기기 · 길이'],
@@ -2393,7 +2396,15 @@ function S4() {
                   </button>
                 )}
               </span>
-              <span className="tiny muted">장면 막대를 누르면 순서를 바꾸거나 뺄 수 있어요.{tl.cuts.length ? ` 지운 곳 ${tl.cuts.length}개(✂ 표시)` : ''}</span>
+              <span className="range-acts">
+                <button className="btn tiny" onClick={() => d({ t: 'set', patch: { scenes: s.scenes.map((x) => ({ ...x, mute: !allMuted })) } })}>
+                  {allMuted ? '🔊 모든 장면 소리 켜기' : '🔇 모든 장면 소리 끄기'}
+                </button>
+                <button className="btn tiny" onClick={() => d({ t: 'set', patch: { scenes: s.scenes.map((x) => ({ ...x, hideSubs: allHidden ? undefined : 'bottom' })) } })}>
+                  {allHidden ? '자막 가리기 모두 풀기' : '모든 장면 아래 자막 가리기'}
+                </button>
+              </span>
+              <span className="tiny muted">장면 막대를 누르면 순서 바꾸기·빼기·소리 끄기·자막 가리기를 할 수 있어요.{tl.cuts.length ? ` 지운 곳 ${tl.cuts.length}개(✂ 표시)` : ''}</span>
             </>
           ) : tool === 'cap' ? (
             <>
@@ -2525,6 +2536,7 @@ function ClipView({ e, t, playing, active, reg }: { e: LayE; t: number; playing:
   return (
     <div className="frame frame-lg video-frame">
       {g?.storagePath && it.kind === 'scene' && <KeyPoster g={g} />}
+      {it.kind === 'scene' && it.scene?.hideSubs && <span className={`subs-hide ${it.scene.hideSubs}`} aria-hidden="true" />}
       {url ? (
         <video
           ref={(el) => {
@@ -2622,9 +2634,31 @@ function ClipInspector({ e, label, idx, count, onMove, onClose }: { e: LayE; lab
       ) : (
         <>
           <p className="tiny muted">3단계에서 만든 영상 길이 그대로예요. 필요 없는 부분은 타임라인에서 구간을 골라 지워요.</p>
-          <label className="check">
-            <input type="checkbox" checked={!it.scene?.mute} onChange={(ev) => d({ t: 'scene', id: it.key, patch: { mute: !ev.target.checked } })} /> AI가 만든 소리(말·효과음) 쓰기
-          </label>
+          <div className="scene-av">
+            <span className="cs-label">영상 소리</span>
+            <div className="pills">
+              <button className={`pill ${!it.scene?.mute ? 'on' : ''}`} onClick={() => d({ t: 'scene', id: it.key, patch: { mute: false } })}>
+                🔊 켜기
+              </button>
+              <button className={`pill ${it.scene?.mute ? 'on' : ''}`} onClick={() => d({ t: 'scene', id: it.key, patch: { mute: true } })}>
+                🔇 끄기
+              </button>
+            </div>
+            <span className="tiny muted">끄면 AI가 만든 말·효과음이 빠져요. 내가 넣은 목소리는 그대로 들려요.</span>
+            <span className="cs-label">영상 속 자막</span>
+            <div className="pills">
+              <button className={`pill ${!it.scene?.hideSubs ? 'on' : ''}`} onClick={() => d({ t: 'scene', id: it.key, patch: { hideSubs: undefined } })}>
+                그대로
+              </button>
+              <button className={`pill ${it.scene?.hideSubs === 'bottom' ? 'on' : ''}`} onClick={() => d({ t: 'scene', id: it.key, patch: { hideSubs: 'bottom' } })}>
+                아래 자막 가리기
+              </button>
+              <button className={`pill ${it.scene?.hideSubs === 'top' ? 'on' : ''}`} onClick={() => d({ t: 'scene', id: it.key, patch: { hideSubs: 'top' } })}>
+                위 자막 가리기
+              </button>
+            </div>
+            <span className="tiny muted">AI가 영상에 써 넣은 글자는 지울 수 없어서, 그 띠를 흐리게 덮어요. 그 위에 내 자막을 넣으면 돼요.</span>
+          </div>
           <button className="btn tiny" onClick={() => (d({ t: 'scene', id: it.key, patch: { skip: true } }), onClose())}>
             이 장면 통째로 빼기
           </button>
