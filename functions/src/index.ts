@@ -122,6 +122,11 @@ export const classSpend = onCall(async (req) => {
   return { by, rate };
 });
 
+// 정한 시간 안에 안 끝나면 대신 쓸 값을 돌려준다(원래 작업은 뒤에서 계속 되어 저장될 수 있다)
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p.catch(() => fallback), new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
+}
+
 async function enqueue(genId: string) {
   const q = getFunctions().taskQueue(`locations/${REGION}/functions/runGeneration`);
   try {
@@ -233,7 +238,17 @@ export const joinClass = onCall(async (req) => {
 });
 
 // ───────── 학생: 생성 요청 (검사 → 번역 → 기록 → 크레딧 → 승인 대기 또는 대기열) ─────────
-export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
+// 예상하지 못한 오류도 원인을 화면에 보여 줘서(학생·교사가 알려 줄 수 있게) 바로 고칠 수 있게 한다
+export const requestGeneration = onCall({ timeoutSeconds: 300, memory: '512MiB' }, async (req) => {
+  try {
+    return await requestGenerationImpl(req);
+  } catch (e: any) {
+    if (e instanceof HttpsError) throw e;
+    logger.error('requestGeneration 오류', { err: String(e?.stack ?? e?.message ?? e).slice(0, 1500) });
+    throw new HttpsError('unavailable', `영상 요청을 받지 못했어요. 잠시 뒤 다시 눌러 주세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 90)})`);
+  }
+});
+async function requestGenerationImpl(req: CallableRequest) {
   const { classId, no } = requireStudent(req);
   const kind = req.data?.kind as Kind;
   const sceneId = String(req.data?.sceneId ?? '').slice(0, 60);
@@ -316,14 +331,21 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   let refPath: string | null = null; // 주인공 카드: 장면 첫 그림을 이 카드에 맞춰 그린다
   {
     if (useAi) {
-      const c = await checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt');
+      // 많은 학생이 한꺼번에 누르면 AI 검사가 느려질 수 있다. 40초 안에 안 오면 규칙 검사만으로 넘어가고 한국어 그대로 보낸다
+      const c = await withTimeout(checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt'), 40_000, { safe: true, english: checkText } as Awaited<ReturnType<typeof checkAndTranslate>>);
+      if (c.category === '검사 오류' && !flag) {
+        // AI 검사 자체가 실패한 것(바빠서)이면 막지 않고 규칙 검사 결과만 따른다
+        c.safe = true;
+        c.english = c.english || checkText;
+      }
       if (!c.safe && !flag) flag = { category: c.category ?? '기타', reason: c.reasonKo ?? '확인이 필요한 표현이 있어요.', suggestion: c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', layer: 'ai' };
       const english = c.english || checkText;
       if (kind === 'edit') { editEn = `${NO_TEXT_HEAD}${english} ${KO_TAIL} ${speechFit(spec.sec)}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
         // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
-        const cast = await castPrefix(classId, no);
+        const cast = await withTimeout(castPrefix(classId, no), 25_000, { text: '', style: `${STYLE_EN['그림책']} ${SAFE_TAIL}` } as Awaited<ReturnType<typeof castPrefix>>);
         if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
-        const world = await worldOf(classId, no).catch(() => undefined);
+        // 공통 설정은 저장된 것이 있으면 바로 쓰고, 새로 정해야 하면 10초까지만 기다린다
+        const world = await withTimeout(worldOf(classId, no).catch(() => undefined), 10_000, undefined);
         const cont = world?.en ? `Story continuity (keep the same in every scene unless this scene's text clearly says otherwise): ${world.en} Keep a similar camera height and framing to the other scenes so the scenes connect smoothly. ` : '';
         promptEn = `${NO_TEXT_HEAD}${cast.text}${cont}Scene: ${english} ${cast.style} ${KO_TAIL} ${speechFit(spec.sec)} ${NO_TEXT_HEAD}`;
         refPath = cast.cardPath ?? null;
@@ -362,7 +384,7 @@ export const requestGeneration = onCall({ timeoutSeconds: 60 }, async (req) => {
   await log({ classId, no, kind: kindLabel, textKo: checkText, textEn: editEn ?? promptEn, verdict: 'pass', action: needApproval ? '승인 대기' : '대기열', layer: useAi ? 'ai' : 'rule' });
   if (!needApproval) await enqueue(genRef.id);
   return { genId: genRef.id, blocked: false };
-});
+}
 
 // ───────── 학생: 내가 올린 영상을 고른 그림체로 바꾸기 ─────────
 export const restyleUpload = onCall({ timeoutSeconds: 60 }, async (req) => {
@@ -1016,14 +1038,15 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
 
 // ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
 
-export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 50 }, async (req) => {
+export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 50 }, async (req) => {
   const { classId, no } = requireStudent(req);
   const pid = `${classId}_${no}`;
   const projRef = db.doc(`projects/${pid}`);
   const p = (await projRef.get()).data();
   const cls = (await db.doc(`classes/${classId}`).get()).data();
   if (!p || !cls) throw new HttpsError('not-found', '작업을 찾을 수 없어요.');
-  if (p.rendering && Date.now() - p.rendering < 10 * 60_000) throw new HttpsError('failed-precondition', '이미 영상을 만들고 있어요. 잠시만 기다려 주세요.');
+  // 만드는 중이면 30초마다 시각을 새로 적는다. 90초 넘게 소식이 없으면(서버가 중간에 멈춘 것) 잠금을 풀고 새로 만든다
+  if (p.rendering && Date.now() - p.rendering < 90_000) throw new HttpsError('failed-precondition', '이미 영상을 만들고 있어요. 1~2분 뒤에 저장한 영상이 나타나요. 안 나타나면 다시 눌러 주세요.');
   const limit = 60; // 초등·중등 모두 60초
 
   // 타임라인 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (화면과 같은 규칙)
@@ -1039,6 +1062,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
   const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
   await projRef.update({ rendering: Date.now() });
+  const beat = setInterval(() => projRef.update({ rendering: Date.now() }).catch(() => {}), 30_000);
   const dir = mkdtempSync(pjoin(tmpdir(), 'render-'));
   const bucket = getStorage().bucket();
   const missingFiles: string[] = [];
@@ -1188,6 +1212,7 @@ export const renderVideo = onCall({ timeoutSeconds: 540, memory: '2GiB', cpu: 2,
     if (e instanceof HttpsError) throw e;
     throw new HttpsError('unavailable', `영상을 합치지 못했어요. 잠시 뒤 다시 해 보세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 80)})`);
   } finally {
+    clearInterval(beat);
     rmSync(dir, { recursive: true, force: true });
   }
 });

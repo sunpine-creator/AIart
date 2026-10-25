@@ -88,7 +88,7 @@ export const api = {
   requestGeneration: call<
     { kind: 'draft' | 'edit' | 'final'; sceneId: string; builder?: Record<string, any>; editText?: string; parentId?: string; sec?: number },
     { genId: string; blocked: boolean; flagged?: boolean; category?: string; reason?: string; suggestion?: string }
-  >('requestGeneration'),
+  >('requestGeneration', 300_000), // 반 여러 개가 한꺼번에 쓰면 검사·번역이 오래 걸릴 수 있어 넉넉히 기다린다
   reviewGeneration: call<{ genId: string; approve: boolean; reason?: string }, { ok: boolean }>('reviewGeneration'),
   deleteClass: call<{ classId: string }, { ok: boolean }>('deleteClass', 300_000),
   resetPin: call<{ classId: string; no: number; name?: string }, { ok: boolean }>('resetPin'),
@@ -108,7 +108,7 @@ export const api = {
   classSpend: call<{ classId: string }, { by: Record<string, { totalKrw: number; todayKrw: number }>; rate: number }>('classSpend'),
   removeSubs: call<{ sceneId: string }, { genId: string; credits: number }>('removeSubs'),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number; queued?: boolean }>('makeCharacter', 120_000),
-  renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 540_000),
+  renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 1_800_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),
   requestTeacher: call<{ org: string; realName: string }, { ok: boolean }>('requestTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),
@@ -118,4 +118,4 @@ export const api = {
 };
 
 // 함수 오류 메시지를 학생이 읽을 수 있는 말로
-export const errText = (e: any) => (e?.message && !/internal/i.test(e.message) ? String(e.message) : '잠시 문제가 생겼어요. 다시 해 보세요.');
+export const errText = (e: any) => (e?.message && !/^internal$/i.test(e.message) ? String(e.message) : `잠시 문제가 생겼어요. 다시 해 보세요.${e?.code ? ` (${e.code})` : ''}`);

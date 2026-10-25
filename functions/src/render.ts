@@ -203,7 +203,8 @@ export async function renderSegment(c: Clip, i: number, dir: string, size: Size 
     '-filter_complex', filters.join(';'),
     '-map', '[v]', '-map', '[a]',
     '-t', d,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-r', String(FPS),
+    // 중간 조각은 빨리(ultrafast) 만들고 화질은 높게. 마지막 한 번만 보통 속도로 압축한다
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-r', String(FPS),
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2',
     '-movflags', '+faststart',
     out,
@@ -238,6 +239,7 @@ export async function renderAll(clips: Clip[], dir: string, bgm?: string): Promi
 // ② 학생이 지운 구간을 빼고 ③ 구간마다 넣은 자막·목소리를 얹는다. 모든 시각은 ①의 바탕 영상 기준(초).
 export const XF = 0.5;
 const ENC = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-r', String(FPS), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2'];
+const FAST = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-r', String(FPS), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2'];
 
 export async function concatCopy(list: string, out: string) {
   await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', out]);
@@ -260,7 +262,7 @@ export async function joinXfade(segs: string[], durs: number[], dir: string): Pr
     a = `xa${k}`;
     acc = acc + durs[k] - XF;
   }
-  args.push('-filter_complex', f.join(';'), '-map', `[${v}]`, '-map', `[${a}]`, ...ENC, out);
+  args.push('-filter_complex', f.join(';'), '-map', `[${v}]`, '-map', `[${a}]`, ...FAST, out);
   await run(bin('ffmpeg'), args);
   return out;
 }
@@ -323,7 +325,7 @@ export async function applyTimeline(
       f.push(`[0:a]atrim=start=${r.a.toFixed(3)}:end=${r.b.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
     });
     f.push(`${keep.map((_, i) => `[v${i}][a${i}]`).join('')}concat=n=${keep.length}:v=1:a=1[v][a]`);
-    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', base, '-filter_complex', f.join(';'), '-map', '[v]', '-map', '[a]', ...ENC, cutFile]);
+    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', base, '-filter_complex', f.join(';'), '-map', '[v]', '-map', '[a]', ...FAST, cutFile]);
   }
 
   // ③ 자막·목소리 얹기
@@ -377,7 +379,7 @@ export async function applyTimeline(
   }
   if (mix.length > 1) f.push(`${mix.join('')}amix=inputs=${mix.length}:duration=first:dropout_transition=0:normalize=0[ao]`);
   if (!f.length) {
-    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', cutFile, '-c', 'copy', ...meta, '-movflags', '+faststart', final]);
+    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', cutFile, ...ENC, ...meta, '-movflags', '+faststart', final]);
   } else {
     args.push('-filter_complex', f.join(';'), '-map', vOut === '0:v' ? '0:v' : '[vo]', '-map', mix.length > 1 ? '[ao]' : '0:a', '-t', D, ...ENC, ...meta, '-movflags', '+faststart', final);
     await run(bin('ffmpeg'), args);
