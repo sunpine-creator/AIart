@@ -895,3 +895,6 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 /* 6단계 설문조사 */
 .survey { display: grid; gap: 8px; justify-items: start; margin-top: 16px; }
 .survey a.btn { text-decoration: none; }
+
+/* 새 작품 만들기 */
+.newproj-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 460px; background: var(--ai-tint); border-radius: 10px; padding: 6px 10px; }

@@ -42,6 +42,7 @@ if (import.meta.env.VITE_USE_EMULATORS === '1') {
 export type StudentWork = {
   no: number; name: string; topic: string; submitted: boolean;
   exportUrl: string | null; exportAt: number | null; exportDur: number | null;
+  past?: { topic: string; dur: number | null; at: number | null; url: string | null }[];
   uploads: { id: string; name: string; dur: number; url: string }[];
   ai: { n: number; line: string; img: boolean; url: string | null }[];
 };
@@ -107,6 +108,7 @@ export const api = {
   setClassEnded: call<{ classId: string; ended: boolean }, { ok: boolean; approved: number; bonus?: number }>('setClassEnded', 120_000),
   classSpend: call<{ classId: string }, { by: Record<string, { totalKrw: number; todayKrw: number }>; rate: number }>('classSpend'),
   removeSubs: call<{ sceneId: string }, { genId: string; credits: number }>('removeSubs'),
+  newProject: call<Record<string, never>, { ok: boolean; round: number }>('newProject'),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number; queued?: boolean }>('makeCharacter', 120_000),
   renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 1_800_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),

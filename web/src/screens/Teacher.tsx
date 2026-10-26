@@ -521,6 +521,24 @@ function StudentWorks() {
                 <p className="tiny muted">아직 완성 영상을 저장하지 않았어요.</p>
               )
             )}
+            {only !== 'upload' && (w.past ?? []).filter((x) => x.url).length > 0 && (
+              <div className="work-block">
+                <span className="tiny muted">지난 작품 {(w.past ?? []).filter((x) => x.url).length}개</span>
+                <div className="work-thumbs">
+                  {(w.past ?? [])
+                    .filter((x) => x.url)
+                    .map((x, i) => (
+                      <figure key={i}>
+                        <video className="work-video sm" src={x.url!} controls playsInline preload="metadata" />
+                        <figcaption className="tiny muted">
+                          {x.topic || `작품 ${i + 1}`}
+                          {x.dur ? ` · ${x.dur}초` : ''}
+                        </figcaption>
+                      </figure>
+                    ))}
+                </div>
+              </div>
+            )}
             {only !== 'export' && w.uploads.length > 0 && (
               <div className="work-block">
                 <span className="tiny muted">학생이 올린 영상 {w.uploads.length}개</span>

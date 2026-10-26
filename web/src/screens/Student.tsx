@@ -33,6 +33,7 @@ export function StudentApp() {
           </div>
         </div>
         <div className="st-tools">
+        {s.cls.ended && <NewProjectButton />}
         <button className={`btn ${showMine ? 'primary' : ''}`} onClick={() => setShowMine(!showMine)}>
           {showMine ? '내 작품 닫기' : '내 작품 보기'}
         </button>
@@ -195,6 +196,31 @@ function ScreenShareBanner() {
 }
 
 // 내 작품 모아 보기: 완성 영상, 장면으로 정한 AI 영상, 내가 올린 영상
+// 수업이 끝난 반: 지금 작품은 남기고 1단계부터 새 작품 만들기
+function NewProjectButton() {
+  const { s, d } = useStore();
+  const [ask, setAsk] = useState(false);
+  if (ask)
+    return (
+      <span className="newproj-ask">
+        <span className="tiny">
+          새 작품을 처음부터 만들까요? {s.lastExport ? '지금 완성 영상은 “내 작품 보기”에 남아요.' : '지금 작품은 아직 저장한 완성 영상이 없어서, 만든 장면은 새 작품에서 보이지 않아요.'}
+        </span>
+        <button className="btn tiny primary" onClick={() => (d({ t: 'newProject' }), setAsk(false))}>
+          네, 새로 만들기
+        </button>
+        <button className="btn tiny" onClick={() => setAsk(false)}>
+          아니요
+        </button>
+      </span>
+    );
+  return (
+    <button className="btn ai" onClick={() => setAsk(true)} title="1단계부터 새 작품을 만들어요">
+      ✨ 새 작품 만들기
+    </button>
+  );
+}
+
 function MyWorks({ onClose }: { onClose?: () => void }) {
   const { s, d } = useStore();
   const ex = s.lastExport;
@@ -240,6 +266,21 @@ function MyWorks({ onClose }: { onClose?: () => void }) {
           </p>
         )}
       </div>
+      {s.works.length > 0 && (
+        <div className="work-block">
+          <span className="tiny strong">지난 작품 {s.works.length}개</span>
+          <div className="work-thumbs">
+            {s.works.map((w, i) => (
+              <figure key={`${w.path}-${i}`}>
+                <StoredVideo path={w.path} url={w.url} label={`지난 작품 ${i + 1}`} size="sm" vertical={w.aspect === '9:16'} />
+                <figcaption className="tiny muted">
+                  {w.topic || `작품 ${i + 1}`} · {w.dur}초
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
+      )}
       {scenes.length > 0 && (
         <div className="work-block">
           <span className="tiny strong">AI로 만든 장면 {scenes.length}개</span>
@@ -1002,7 +1043,7 @@ const STYLES = ['그림책', '만화', '3D 애니메이션', '클레이', '수�
 // 영상 방향: 가로(16:9) 또는 세로(9:16, 공모전·쇼츠 1080x1920). 새로 만드는 장면과 완성 영상이 이 방향으로 만들어진다
 function AspectPanel({ compact }: { compact?: boolean }) {
   const { s, d } = useStore();
-  const other = s.gens.filter((g) => g.status === 'succeeded' && g.kind !== 'final' && !g.sceneId.startsWith('up:') && (g.aspect ?? '16:9') !== s.aspect).length;
+  const other = s.gens.filter((g) => g.status === 'succeeded' && g.kind !== 'final' && s.scenes.some((sc) => sc.id === g.sceneId) && (g.aspect ?? '16:9') !== s.aspect).length;
   const set = (aspect: '16:9' | '9:16') => d({ t: 'set', patch: { aspect } });
   return (
     <section className={`panel aspect-panel ${compact ? 'compact' : ''}`}>

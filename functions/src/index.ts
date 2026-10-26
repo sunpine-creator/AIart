@@ -1424,6 +1424,8 @@ export const teacherWorks = onCall({ timeoutSeconds: 120 }, async (req) => {
         exportUrl: p.lastExport ? p.lastExport.url || (await playableUrl(p.lastExport.path)) : null,
         exportAt: p.lastExport?.at ?? null,
         exportDur: p.lastExport?.dur ?? null,
+        // 수업이 끝난 뒤 새로 만들기 전에 저장해 둔 지난 작품들
+        past: await Promise.all(((p.works ?? []) as any[]).map(async (w) => ({ topic: String(w.topic ?? ''), dur: w.dur ?? null, at: w.at ?? null, url: w.url || (await playableUrl(w.path)) }))),
         uploads: uploads.filter((u) => u.url),
         ai: ai.filter(Boolean),
       };
@@ -1431,6 +1433,30 @@ export const teacherWorks = onCall({ timeoutSeconds: 120 }, async (req) => {
   );
   list.sort((a, b) => a.no - b.no);
   return { list };
+});
+
+// ───────── 학생: 수업이 끝난 반에서 새 작품을 처음부터 만들기 ─────────
+// 지금 작품(완성 영상)은 "내 작품"에 남기고, 1단계부터 새로 시작한다. 크레딧·금액 한도는 그대로 이어진다.
+export const newProject = onCall({ timeoutSeconds: 60 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (!cls) throw new HttpsError('not-found', '반을 찾을 수 없어요.');
+  if (!cls.ended) throw new HttpsError('failed-precondition', '수업이 끝난 반에서만 새 작품을 처음부터 만들 수 있어요.');
+  const pid = `${classId}_${no}`;
+  const ref = db.doc(`projects/${pid}`);
+  const p = (await ref.get()).data() ?? {};
+  if (p.rendering && Date.now() - p.rendering < 90_000) throw new HttpsError('failed-precondition', '지금 영상을 저장하는 중이에요. 저장이 끝난 뒤에 눌러 주세요.');
+  const mine = await db.collection('generations').where('classId', '==', classId).where('no', '==', no).get();
+  if (mine.docs.some((d) => ['flagged', 'awaiting_approval', 'queued', 'running'].includes(d.data().status))) throw new HttpsError('failed-precondition', '만들고 있는 영상이 있어요. 다 만들어진 뒤에 눌러 주세요.');
+  // 지금 작품을 통째로 보관하고(선생님·나중을 위해), 완성 영상은 "지난 작품" 목록에 남긴다
+  await db.collection(`projects/${pid}/archive`).add({ ...p, archivedAt: Date.now() });
+  const works = ((p.works ?? []) as any[]).slice(-19);
+  if (p.lastExport) works.push({ ...p.lastExport, topic: String(p.topic ?? ''), round: p.round ?? 1 });
+  await ref.set({ classId, no, works, aspect: p.aspect === '9:16' ? '9:16' : '16:9', round: (p.round ?? 1) + 1, updatedAt: Date.now() });
+  await db.doc(`castCache/${pid}`).delete().catch(() => {}); // 주인공 카드도 새로(3번 다시 만들 수 있게)
+  await db.doc(`classes/${classId}/students/${no}`).update({ stage: 1 }).catch(() => {});
+  await log({ classId, no, kind: '새 작품 시작', textKo: `이전 작품: ${String(p.topic ?? '')}`, verdict: 'pass', action: `${(p.round ?? 1) + 1}번째 작품` });
+  return { ok: true, round: (p.round ?? 1) + 1 };
 });
 
 // ───────── AI 목소리 미리 듣기 ─────────

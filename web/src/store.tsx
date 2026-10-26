@@ -35,7 +35,7 @@ export type Gen = {
 };
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
 export type Upload = { id: string; name: string; url: string; path?: string; styledPath?: string; styledUrl?: string; styledGenId?: string; useStyled?: boolean; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
-export type ExportInfo = { path: string; url?: string; at: number; dur: number; aspect?: '16:9' | '9:16' };
+export type ExportInfo = { path: string; url?: string; at: number; dur: number; aspect?: '16:9' | '9:16'; topic?: string };
 export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string }; sceneNo?: number; sceneLine?: string; kind?: string; sec?: number; editText?: string };
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number; ended?: boolean };
@@ -64,6 +64,7 @@ export type State = {
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
+  works: ExportInfo[]; // 새로 만들기 전에 저장해 둔 지난 작품
   aspect: '16:9' | '9:16'; // 영상 방향: 가로 또는 세로(공모전 1080x1920)
   tl?: Timeline; // 하나의 타임라인 편집(지운 구간·자막·목소리). 없으면 예전 장면별 편집을 옮겨 온다
   topic: string;
@@ -127,7 +128,7 @@ function emptyProject(band: Band) {
 const base: State = {
   role: 'loading', view: 'student', band: 'elementary', joined: false, me: { no: 0, nick: '' }, classId: '',
   cls: { title: '', code: '', open: 1, paused: false, approval: true, videoInMiddle: false, budget: 0 },
-  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
+  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', works: [], topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
@@ -150,6 +151,7 @@ export type Action =
   | { t: 'removeUpload'; id: string }
   | { t: 'voice'; key: string; blob: Blob; dur?: number }
   | { t: 'render' }
+  | { t: 'newProject' }
   | { t: 'join'; code: string; no: number; name: string }
   | { t: 'openClass'; classId: string }
   | { t: 'signOut' }
@@ -402,6 +404,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       reflect: p.reflect ?? '',
       tl: p.tl ?? undefined,
       aspect: p.aspect === '9:16' ? '9:16' : '16:9',
+      works: (p.works ?? []) as ExportInfo[],
       topic: p.topic ?? '',
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,
@@ -584,6 +587,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setCls(null);
         setStudents([]);
         setLocal((l) => ({ ...l, classId: a.classId, selectedStudent: 1 }));
+        return;
+      case 'newProject':
+        // 저장 대기 중인 예전 내용이 새 작품을 덮어쓰지 않게 먼저 멈춘다
+        window.clearTimeout(saveTimer.current);
+        saveTimer.current = undefined;
+        api
+          .newProject({})
+          .then(() => {
+            setLocal((l) => ({ ...l, tab: 1 }));
+            toast('새 작품을 시작해요! 지난 작품은 “내 작품 보기”에 남아 있어요.');
+          })
+          .catch((e) => toast(errText(e)));
         return;
       case 'signOut':
         signOut(auth);
