@@ -633,6 +633,25 @@ function QuizSummary() {
 }
 
 // 학생 한 명이 쓸 수 있는 금액(원): 전체 한도 + 수업이 끝난 반의 하루 한도
+// 우리 반 하루 예산(달러) 바꾸기
+function BudgetEdit() {
+  const { s, d } = useStore();
+  const [v, setV] = useState(String(s.cls.budget ?? 150));
+  useEffect(() => setV(String(s.cls.budget ?? 150)), [s.cls.budget]);
+  const save = (n: number) => d({ t: 'cls', patch: { budget: Math.max(1, Math.round(n)) } });
+  return (
+    <span className="budget-edit tiny">
+      하루 예산 $<input type="number" min={1} step={10} value={v} onChange={(e) => setV(e.target.value)} onBlur={() => save(Number(v) || 150)} aria-label="하루 예산(달러)" />
+      <span className="muted">(≈ {Math.round((Number(v) || 0) * 1450).toLocaleString('ko-KR')}원)</span>
+      {[300, 500, 1000].map((n) => (
+        <button key={n} type="button" className="btn tiny" onClick={() => (setV(String(n)), save(n))}>
+          ${n}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 function SpendLimits() {
   const { s, d } = useStore();
   const [max, setMax] = useState(String(s.cls.studentMaxKrw ?? 30000));
@@ -740,6 +759,7 @@ function Dashboard() {
             </span>
           </div>
           <span className="tiny muted">80%가 되면 알림, 100%면 새 생성이 멈춰요</span>
+          <BudgetEdit />
           <button className="btn tiny" onClick={() => d({ t: 'addCredits', amount: 10 })}>
             학생 모두 +10크레딧 (영상 10초)
           </button>

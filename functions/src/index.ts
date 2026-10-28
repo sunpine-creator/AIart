@@ -153,6 +153,15 @@ export const kickGeneration = onCall(async (req) => {
   const tok = req.auth?.token as any;
   const isOwner = tok?.classId === g.classId && Number(tok?.no) === g.no;
   if (!isOwner) await ownedClass(await requireTeacher(req), g.classId);
+  // "만드는 중"인데 31분이 넘으면(작업자 제한 30분) 작업자가 멈춘 것이니 다시 차례에 넣는다
+  if (g.status === 'running') {
+    const st = g.startedAt?.toMillis?.() ?? 0;
+    if (Date.now() - st < 31 * 60_000) return { ok: true, status: g.status, wait: true };
+    await ref.update({ status: 'queued', kickedAt: Date.now() });
+    await enqueue(genId);
+    logger.info('kickGeneration(running→queued)', { genId });
+    return { ok: true, kicked: true };
+  }
   if (g.status !== 'queued') return { ok: true, status: g.status };
   const since = Math.max(g.createdAt?.toMillis?.() ?? 0, g.kickedAt ?? 0, g.approvedAt ?? 0);
   if (Date.now() - since < 2 * 60_000) return { ok: true, wait: true };
@@ -186,7 +195,7 @@ export const createClass = onCall(async (req) => {
   batch.set(classRef, {
     teacherUid: uid, title: String(title).slice(0, 40), school: String(school ?? '').trim().slice(0, 40), grade: String(grade ?? '').slice(0, 10), klass: String(klass ?? '').slice(0, 10), band, code, size: n,
     open: 1, paused: false, approval: true, videoInMiddle: true, creditsPerStudent: credits,
-    budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 150 : 250),
+    budgetUsd: Number(budgetUsd) || (band === 'elementary' ? 300 : 500), // 반 하루 예산(달러). 교사 화면에서 바꿀 수 있다
     createdAt: FieldValue.serverTimestamp(),
   });
   batch.set(db.doc(`codes/${code}`), { classId: classRef.id });
@@ -321,7 +330,7 @@ async function requestGenerationImpl(req: CallableRequest) {
   type Flag = { category: string; reason: string; suggestion: string; layer: string };
   let flag: Flag | null = null;
   {
-    const r = moderateRules(checkText);
+    const r = moderateRules(checkText, cls.band);
     if (!r.pass) flag = { category: r.category!, reason: r.reason!, suggestion: r.suggestion!, layer: 'rule' };
   }
   // 2단계: Gemini 맥락 검사 + 번역 (가짜 모드에서는 TEXT_CHECK=on 일 때만)
@@ -332,7 +341,7 @@ async function requestGenerationImpl(req: CallableRequest) {
   {
     if (useAi) {
       // 많은 학생이 한꺼번에 누르면 AI 검사가 느려질 수 있다. 40초 안에 안 오면 규칙 검사만으로 넘어가고 한국어 그대로 보낸다
-      const c = await withTimeout(checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt'), 40_000, { safe: true, english: checkText } as Awaited<ReturnType<typeof checkAndTranslate>>);
+      const c = await withTimeout(checkAndTranslate(checkText, kind === 'edit' ? 'edit' : 'prompt', cls.band), 40_000, { safe: true, english: checkText } as Awaited<ReturnType<typeof checkAndTranslate>>);
       if (c.category === '검사 오류' && !flag) {
         // AI 검사 자체가 실패한 것(바빠서)이면 막지 않고 규칙 검사 결과만 따른다
         c.safe = true;
@@ -926,7 +935,7 @@ export const draftScenario = onCall({ timeoutSeconds: 60 }, async (req) => {
   const fields = ['goal', 'role', 'content', 'cond', 'topic'].map((k) => String(f[k] ?? '').slice(0, 200));
   const joined = fields.filter(Boolean).join(' / ');
   if (!joined) throw new HttpsError('invalid-argument', '프롬프트 칸을 채워 주세요.');
-  const r = moderateRules(joined);
+  const r = moderateRules(joined, 'middle');
   if (!r.pass) {
     await log({ classId, no, kind: '시나리오 초안', textKo: joined, verdict: 'blocked', category: r.category, action: '차단', layer: 'rule' });
     return { blocked: true, reason: r.reason, lines: [] };
@@ -1038,7 +1047,7 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
 
 // ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
 
-export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 50 }, async (req) => {
+export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 40 }, async (req) => {
   const { classId, no } = requireStudent(req);
   const pid = `${classId}_${no}`;
   const projRef = db.doc(`projects/${pid}`);
@@ -1046,7 +1055,7 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
   const cls = (await db.doc(`classes/${classId}`).get()).data();
   if (!p || !cls) throw new HttpsError('not-found', '작업을 찾을 수 없어요.');
   // 만드는 중이면 30초마다 시각을 새로 적는다. 90초 넘게 소식이 없으면(서버가 중간에 멈춘 것) 잠금을 풀고 새로 만든다
-  if (p.rendering && Date.now() - p.rendering < 90_000) throw new HttpsError('failed-precondition', '이미 영상을 만들고 있어요. 1~2분 뒤에 저장한 영상이 나타나요. 안 나타나면 다시 눌러 주세요.');
+  // 예전에는 "이미 만들고 있어요"로 막았다. 이제는 새로 누르면 새 저장이 이어받고, 예전 저장은 스스로 멈춘다(새로고침 후 다시 눌러도 된다)
   const limit = 60; // 초등·중등 모두 60초
 
   // 타임라인 순서: 저장된 순서 + 새로 생긴 장면·업로드는 뒤에 (화면과 같은 규칙)
@@ -1061,8 +1070,20 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
   const tl = (p.tl ?? {}) as { cuts?: any[]; caps?: any[]; voices?: any[] };
   const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-  await projRef.update({ rendering: Date.now() });
-  const beat = setInterval(() => projRef.update({ rendering: Date.now() }).catch(() => {}), 30_000);
+  const renderId = randomUUID();
+  await projRef.update({ rendering: Date.now(), renderId });
+  // 아직 내 저장이 맞는지(나중에 누른 저장이 이어받지 않았는지) 확인
+  const mine = async () => (await projRef.get()).data()?.renderId === renderId;
+  const stillMine = async () => {
+    if (!(await mine())) throw new HttpsError('aborted', '새로 누른 저장이 이어서 만들고 있어요.');
+  };
+  const beat = setInterval(() => {
+    mine()
+      .then(async (ok) => {
+        if (ok) await projRef.update({ rendering: Date.now() });
+      })
+      .catch(() => {});
+  }, 30_000);
   const dir = mkdtempSync(pjoin(tmpdir(), 'render-'));
   const bucket = getStorage().bucket();
   const missingFiles: string[] = [];
@@ -1101,13 +1122,33 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
     // ① 바탕 조각: 제목 · 장면(만든 영상 길이 그대로) · 올린 영상 · 끝 화면
     const clips: Clip[] = [{ kind: 'title', dur: Math.max(1, Math.min(num(p.intro?.dur) || 3, 5)), layers: fixedOf(ov.intro) }];
     const ckeys: string[] = ['intro'];
+    // 빨리 하려고: 장면·올린 영상 파일과 목소리(내 녹음 내려받기·AI 목소리 만들기)를 처음에 한꺼번에 시작한다
+    const pre = new Map<string, Promise<string | undefined>>();
+    keys.forEach((k, j) => {
+      const sc = scenes.find((s) => s.id === k);
+      if (sc) {
+        const g = genOf(sc);
+        if (g?.storagePath) pre.set(`g:${k}`, fetchFile(g.storagePath, `gen_${j + 1}`));
+        return;
+      }
+      const u = uploads.find((x) => x.id === k);
+      if (u?.path) pre.set(`u:${k}`, fetchFile(u.path, `up_${j + 1}`));
+      if (u?.useStyled && u?.styledPath) pre.set(`s:${k}`, fetchFile(u.styledPath, `upst_${j + 1}`));
+    });
+    const voiceFiles = (tl.voices ?? []).slice(0, 30).map((v, j) =>
+      v.kind === 'mine' && v.path
+        ? fetchFile(String(v.path), `voice_${j + 1}`)
+        : v.kind === 'ai' && isAiVoice(v.voice) && String(v.text ?? '').trim() && useAi
+          ? speak(String(v.text).slice(0, 120), v.voice, pjoin(dir, `tts_${j + 1}.wav`)).catch(() => undefined)
+          : Promise.resolve(undefined),
+    );
     let i = 0;
     for (const k of keys) {
       i++;
       const sc = scenes.find((s) => s.id === k);
       if (sc) {
         const g = genOf(sc);
-        const src = g?.storagePath ? await fetchFile(g.storagePath, `gen_${i}`) : undefined;
+        const src = g?.storagePath ? await pre.get(`g:${k}`) : undefined;
         if (g && src) {
           const real = g.img ? 0 : await probeDur(src);
           const srcLen = real > 0 ? real : g.sec ?? 3;
@@ -1121,8 +1162,8 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
         continue;
       }
       const u = uploads.find((x) => x.id === k);
-      const usrc = u?.path ? await fetchFile(u.path, `up_${i}`) : undefined;
-      const styled = u?.useStyled && u?.styledPath ? await fetchFile(u.styledPath, `upst_${i}`) : undefined;
+      const usrc = u?.path ? await pre.get(`u:${k}`) : undefined;
+      const styled = u?.useStyled && u?.styledPath ? await pre.get(`s:${k}`) : undefined;
       if (u && usrc) {
         clips.push({ kind: 'video', dur: uploadDur(u), start: 0, src: styled ?? usrc, audioSrc: styled ? usrc : undefined, keepAudio: u.voice === '원래 소리', grade: !!styled, layers: fixedOf(ov.clips?.[u.id]) });
         ckeys.push(u.id);
@@ -1163,9 +1204,21 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
     // 마지막이 아닌 조각은 끝 화면을 XF초 더 붙여 두고, 그 위로 다음 조각이 서서히 나타나게 잇는다
     const padded = clips.map((c, k) => (k < clips.length - 1 ? c.dur + XF : c.dur));
     const size = sizeOf(p.aspect);
-    for (let k = 0; k < clips.length; k++) segs.push(await renderSegment({ ...clips[k], dur: padded[k] }, k, dir, size));
+    {
+      const out: string[] = new Array(clips.length);
+      let next = 0;
+      const worker = async () => {
+        while (next < clips.length) {
+          const k = next++;
+          out[k] = await renderSegment({ ...clips[k], dur: padded[k] }, k, dir, size);
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      segs.push(...out);
+    }
     let baseFile: string;
     try {
+      await stillMine();
       baseFile = await joinXfade(segs, padded, dir);
     } catch (e: any) {
       logger.warn('render: 디졸브 잇기 실패, 그냥 붙입니다', { err: String(e?.message ?? e).slice(0, 300) });
@@ -1185,30 +1238,31 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
     }
     // 구간 목소리: 내 녹음 또는 AI 목소리(정해진 목소리만)
     const voices: TlVoiceIn[] = [];
-    let vn = 0;
-    for (const v of (tl.voices ?? []).slice(0, 30)) {
-      vn++;
+    const vlist = (tl.voices ?? []).slice(0, 30);
+    for (let vn = 0; vn < vlist.length; vn++) {
+      const v = vlist[vn];
       const at = absAt(v);
+      const file = await voiceFiles[vn];
       if (at === undefined) continue;
-      let file: string | undefined;
-      if (v.kind === 'mine' && v.path) file = await fetchFile(String(v.path), `voice_${vn}`);
-      else if (v.kind === 'ai' && isAiVoice(v.voice) && String(v.text ?? '').trim() && useAi) file = await speak(String(v.text).slice(0, 120), v.voice, pjoin(dir, `tts_${vn}.wav`)).catch(() => undefined);
       // 내 녹음은 정한 길이까지, AI 목소리는 학생이 길이를 직접 정했을 때만 자른다(아니면 끝까지 다 들려준다)
       const cutTo = v.kind === 'mine' || v.fixed ? Math.max(0, num(v.dur)) || undefined : undefined;
       if (file) voices.push({ a: at, file, dur: cutTo });
     }
 
+    await stillMine();
     const out = await applyTimeline(baseFile, base, cuts, caps, voices, dir);
+    await stillMine();
     const exportId = `${Date.now()}`;
     const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
     const token = randomUUID();
     await bucket.upload(out.file, { destination: path, contentType: 'video/mp4', metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
-    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: out.dur, aspect: p.aspect === '9:16' ? '9:16' : '16:9' }, rendering: FieldValue.delete() });
+    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: out.dur, aspect: p.aspect === '9:16' ? '9:16' : '16:9' }, rendering: FieldValue.delete(), renderId: FieldValue.delete() });
     await log({ classId, no, kind: '완성 영상', textKo: `${out.dur}초 · 클립 ${clips.length}개 · 지운 구간 ${cuts.length}개 · 자막 ${caps.length}개 · 목소리 ${voices.length}개`, verdict: 'pass', action: '영상 저장' });
     return { path, missing: missingFiles.length };
   } catch (e: any) {
     logger.error('render failed', { pid, err: String(e?.message ?? e) });
-    await projRef.update({ rendering: FieldValue.delete() });
+    // 내 저장일 때만 "만드는 중" 표시를 지운다(이어받은 새 저장은 건드리지 않는다)
+    if (await mine().catch(() => false)) await projRef.update({ rendering: FieldValue.delete(), renderId: FieldValue.delete() });
     if (e instanceof HttpsError) throw e;
     throw new HttpsError('unavailable', `영상을 합치지 못했어요. 잠시 뒤 다시 해 보세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 80)})`);
   } finally {
@@ -1479,7 +1533,8 @@ export const previewVoice = onCall({ timeoutSeconds: 60 }, async (req) => {
       await getStorage().bucket().upload(out, { destination: path, contentType: 'audio/wav', metadata: { metadata: { firebaseStorageDownloadTokens: token } } });
       return { url: mediaUrl(path, token) };
     }
-    const r = moderateRules(text);
+    const vband = req.auth?.token?.classId ? (await db.doc(`classes/${String(req.auth.token.classId)}`).get()).data()?.band : undefined;
+    const r = moderateRules(text, vband);
     if (!r.pass) throw new HttpsError('invalid-argument', `이 자막은 읽어 줄 수 없어요: ${r.reason}`);
     const out = await speak(text, voice, pjoin(dir, 't.wav'));
     if (!out) throw new HttpsError('unavailable', '목소리를 만들지 못했어요. 잠시 뒤 다시 해 보세요.');

@@ -1340,7 +1340,7 @@ function SceneWork({ scene, index }: { scene: Scene; index: number }) {
   const ko = buildPromptKo(b);
   const lastSent = [...gens].reverse().find((g) => g.promptEn && g.status !== 'blocked');
   const en = lastSent?.promptEn || '보내면 안전 검사를 거쳐 영어로 바뀌어요. 바뀐 문장이 여기에 보여요.';
-  const live = moderate(ko);
+  const live = moderate(ko, s.band);
   const img = false; // 초등·중고등 모두 영상
   const mid = s.band === 'middle';
   const genSec = scene.genSec ?? DRAFT.sec;
@@ -2504,6 +2504,11 @@ function S4() {
         )}
         {missing > 0 && <p className="muted">아직 만든 영상이 없는 장면이 {missing}개 있어요. 3단계에서 장면을 만들어 주세요.</p>}
         <div className="actions">
+          {!s.rendering && s.serverRendering && (
+            <span className="notice warn" role="status">
+              아까 누른 저장을 아직 합치고 있어요. 조금 기다리면 아래에 나타나요. 오래 걸리면 다시 눌러요 — 처음부터 빠르게 다시 만들어요.
+            </span>
+          )}
           <button className="btn primary" disabled={s.rendering} onClick={() => (setPlaying(false), d({ t: 'render' }))}>
             {s.rendering ? '영상을 합치는 중… (1~2분쯤 걸려요)' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}
           </button>
@@ -2642,10 +2647,16 @@ function DesubBox({ sceneId, gen }: { sceneId: string; gen?: Gen }) {
     <div className="desub">
       {cleaned && <span className="tiny good-text">✓ 글씨를 지운 영상이에요.</span>}
       {last && last.status === 'rejected' && <span className="tiny danger-text">{last.rejectReason ?? '이번에는 지우지 못했어요. 크레딧은 돌려받았어요.'}</span>}
+      {/* 누를 수 없는 이유를 버튼 대신 글로 알려 준다(버튼을 회색으로 막아 두면 왜 안 눌리는지 모른다) */}
+      {s.cls.paused && <span className="tiny danger-text">선생님이 화면을 잠시 멈췄어요. 멈춤이 풀리면 눌러 주세요.</span>}
+      {!s.cls.paused && s.credits < cost && <span className="tiny danger-text">크레딧이 부족해요({cost}크레딧 필요, 지금 {s.credits}). 선생님께 크레딧을 받아요.</span>}
       <button
-        className="btn ai tiny"
-        disabled={sending || s.cls.paused || s.credits < cost}
+        type="button"
+        className="btn ai desub-btn"
+        disabled={sending}
         onClick={() => {
+          if (s.cls.paused) return d({ t: 'toast', msg: '선생님이 화면을 잠시 멈췄어요.' });
+          if (s.credits < cost) return d({ t: 'toast', msg: `크레딧이 부족해요. ${cost}크레딧이 필요해요.` });
           setSending(true);
           api
             .removeSubs({ sceneId })

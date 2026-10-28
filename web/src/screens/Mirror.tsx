@@ -152,6 +152,7 @@ function StudentMirror({ no, name, stage }: { no: number; name: string; stage: n
                       {gs.map((g) => (
                         <figure key={g.id}>
                           {g.status === 'succeeded' ? <GenMedia g={g} label={sc.line} size="sm" badge={g.kind === 'final' ? '확정' : g.kind === 'edit' ? '수정본' : '초안'} /> : <div className="frame frame-sm empty-frame tiny">{STATUS[g.status] ?? g.status}</div>}
+                          {['queued', 'running'].includes(g.status) && Date.now() - g.at > 3 * 60_000 && <TeacherKick genId={g.id} />}
                           <figcaption className="tiny muted">
                             {g.editText ? `수정: ${g.editText}` : g.promptKo}
                             {g.judgement ? ` · 판단: ${g.judgement.fit === 'yes' ? '맞아요' : '아니에요'}${g.judgement.reason ? `(${g.judgement.reason})` : ''}` : ''}
@@ -225,6 +226,28 @@ function StudentMirror({ no, name, stage }: { no: number; name: string; stage: n
         </div>
       )}
     </section>
+  );
+}
+
+// 교사: 오래 기다리는 학생 영상을 다시 차례에 넣기
+function TeacherKick({ genId }: { genId: string }) {
+  const { d } = useStore();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="btn tiny"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        api
+          .kickGeneration({ genId })
+          .then((r) => d({ t: 'toast', msg: r.kicked ? '다시 차례에 넣었어요. 몇 분 안에 만들어져요.' : r.wait ? '아직 만드는 중이에요. 영상 AI가 오래 걸리고 있어요(30분이 지나면 다시 넣을 수 있어요).' : '이미 처리됐어요.' }))
+          .catch((e) => d({ t: 'toast', msg: errText(e) }))
+          .finally(() => setBusy(false));
+      }}
+    >
+      {busy ? '…' : '⟳ 다시 차례에 넣기'}
+    </button>
   );
 }
 

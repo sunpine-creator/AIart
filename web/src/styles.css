@@ -898,3 +898,9 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 
 /* 새 작품 만들기 */
 .newproj-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 460px; background: var(--ai-tint); border-radius: 10px; padding: 6px 10px; }
+
+.budget-edit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.budget-edit input { width: 80px; }
+
+/* 자막 글씨 지우기 버튼: 손가락으로 누르기 쉽게 크게 */
+.desub-btn { min-height: 44px; position: relative; z-index: 3; touch-action: manipulation; }

@@ -238,7 +238,7 @@ export async function renderAll(clips: Clip[], dir: string, bgm?: string): Promi
 // ① 조각들을 장면 사이 XF 초씩 겹쳐(디졸브) 한 편의 바탕 영상으로 잇는다
 // ② 학생이 지운 구간을 빼고 ③ 구간마다 넣은 자막·목소리를 얹는다. 모든 시각은 ①의 바탕 영상 기준(초).
 export const XF = 0.5;
-const ENC = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-r', String(FPS), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2'];
+const ENC = ['-c:v', 'libx264', '-preset', 'superfast', '-crf', '23', '-r', String(FPS), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2'];
 const FAST = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-r', String(FPS), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2'];
 
 export async function concatCopy(list: string, out: string) {
@@ -315,27 +315,25 @@ export async function applyTimeline(
   const dur = keep.reduce((s, r) => s + (r.b - r.a), 0);
   if (dur < 0.5) throw new Error('지우고 남은 영상이 없어요');
 
-  // ② 지운 구간 빼기
-  let cutFile = base;
-  if (cuts.length) {
-    cutFile = join(dir, 'cut.mp4');
-    const f: string[] = [];
-    keep.forEach((r, i) => {
-      f.push(`[0:v]trim=start=${r.a.toFixed(3)}:end=${r.b.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
-      f.push(`[0:a]atrim=start=${r.a.toFixed(3)}:end=${r.b.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
-    });
-    f.push(`${keep.map((_, i) => `[v${i}][a${i}]`).join('')}concat=n=${keep.length}:v=1:a=1[v][a]`);
-    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', base, '-filter_complex', f.join(';'), '-map', '[v]', '-map', '[a]', ...FAST, cutFile]);
-  }
-
-  // ③ 자막·목소리 얹기
+  // ②③ 한 번에: 지운 구간 빼기 + 자막·목소리 얹기 (예전엔 두 번 압축해서 느렸다)
   const final = join(dir, 'final.mp4');
   const meta = ['-metadata', 'comment=AI 생성 콘텐츠 포함 (AI 스튜디오)', '-metadata', 'title=AI로 달라진 나의 일상'];
   const D = dur.toFixed(3);
-  const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', cutFile];
+  const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', base];
   const f: string[] = [];
+  let vBase = '0:v';
+  let aBase = '0:a';
+  if (cuts.length) {
+    keep.forEach((r, i) => {
+      f.push(`[0:v]trim=start=${r.a.toFixed(3)}:end=${r.b.toFixed(3)},setpts=PTS-STARTPTS[kv${i}]`);
+      f.push(`[0:a]atrim=start=${r.a.toFixed(3)}:end=${r.b.toFixed(3)},asetpts=PTS-STARTPTS[ka${i}]`);
+    });
+    f.push(`${keep.map((_, i) => `[kv${i}][ka${i}]`).join('')}concat=n=${keep.length}:v=1:a=1[vc][ac]`);
+    vBase = 'vc';
+    aBase = 'ac';
+  }
   let idx = 1;
-  let cur = '0:v';
+  let cur = vBase;
   let n = 0;
   const lay = (png: string, enable: string, opt: { fadeAt?: number; slideAt?: number }) => {
     args.push('-loop', '1', '-t', D, '-i', png);
@@ -362,9 +360,9 @@ export async function applyTimeline(
       lay(p, win(a, b), { fadeAt: c.anim === 'fade' || c.anim === 'slide' ? a : undefined, slideAt: c.anim === 'slide' ? a : undefined });
     }
   }
-  const vOut = cur === '0:v' ? '0:v' : cur;
-  if (vOut !== '0:v') f.push(`[${vOut}]format=yuv420p[vo]`);
-  const mix: string[] = ['[0:a]'];
+  const vMapped = cur !== '0:v';
+  if (vMapped) f.push(`[${cur}]format=yuv420p[vo]`);
+  const mix: string[] = [`[${aBase}]`];
   // 장면 소리(AI 말·효과음·원래 소리)는 그대로 두고 목소리를 위에 섞는다. 모두 들리게 normalize=0
   for (const v of voices.slice(0, 30)) {
     const at = mapTime(v.a, cuts);
@@ -378,11 +376,10 @@ export async function applyTimeline(
     idx++;
   }
   if (mix.length > 1) f.push(`${mix.join('')}amix=inputs=${mix.length}:duration=first:dropout_transition=0:normalize=0[ao]`);
-  if (!f.length) {
-    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-i', cutFile, ...ENC, ...meta, '-movflags', '+faststart', final]);
-  } else {
-    args.push('-filter_complex', f.join(';'), '-map', vOut === '0:v' ? '0:v' : '[vo]', '-map', mix.length > 1 ? '[ao]' : '0:a', '-t', D, ...ENC, ...meta, '-movflags', '+faststart', final);
-    await run(bin('ffmpeg'), args);
-  }
+  const vMap = vMapped ? '[vo]' : '0:v';
+  const aMap = mix.length > 1 ? '[ao]' : cuts.length ? '[ac]' : '0:a';
+  if (f.length) args.push('-filter_complex', f.join(';'));
+  args.push('-map', vMap, '-map', aMap, '-t', D, ...ENC, ...meta, '-movflags', '+faststart', final);
+  await run(bin('ffmpeg'), args);
   return { file: final, dur: Math.round(dur * 10) / 10 };
 }

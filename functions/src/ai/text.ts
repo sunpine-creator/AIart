@@ -25,12 +25,19 @@ const SYSTEM = `너는 초중고 학생이 쓴 AI 영상 프롬프트를 검사�
    인물이 하는 말(대사·혼잣말·내레이션)이 있으면 번역하지 말고 한국어 그대로 두되, 큰따옴표로 감싸지 말고 'AUDIO ONLY (spoken in Korean, never written on screen): 우산 챙겨' 처럼 소리로만 들린다고 쓴다. 장면 설명에는 글자·자막을 화면에 쓰라는 말을 넣지 않는다.
 JSON만 출력한다.`;
 
-export async function checkAndTranslate(textKo: string, kind: 'prompt' | 'edit'): Promise<AiCheck> {
+// 중·고등학생은 표현을 훨씬 넓게 허용한다(수업에서 요청). 정말 위험한 것만 막는다
+const MIDDLE_NOTE = `
+[중·고등학생 기준 — 위의 1)보다 이 기준을 따른다]
+이 학생은 중·고등학생이다. 다음은 모두 safe=true 다: 욕설·비속어, "죽겠다/죽어/죽여버린다/죽어줌" 같은 과장·장난 표현, 친구끼리 다투거나 싸우는 장면, 화나거나 우울한 감정, 어둡거나 무서운 분위기, 공포·긴장, 넘어지거나 다치는 정도의 가벼운 사고.
+safe=false 는 이것뿐이다: 성적인 내용, 신체가 훼손되거나 피가 낭자한 잔인한 묘사, 특정 집단 혐오, 자해·자살 방법, 실제 개인정보, 실존 인물의 얼굴.
+욕설이 들어간 대사는 바꾸지 말고 한국어 그대로 소리로만 들리게 쓴다.`;
+
+export async function checkAndTranslate(textKo: string, kind: 'prompt' | 'edit', band?: string): Promise<AiCheck> {
   const res = await genai().models.generateContent({
     model: CONFIG.textModel(),
     contents: [{ role: 'user', parts: [{ text: `${kind === 'edit' ? '[수정 지시]' : '[장면 프롬프트]'} ${textKo}` }] }],
     config: {
-      systemInstruction: SYSTEM,
+      systemInstruction: band === 'middle' ? SYSTEM + MIDDLE_NOTE : SYSTEM,
       temperature: 0,
       responseMimeType: 'application/json',
       responseSchema: {

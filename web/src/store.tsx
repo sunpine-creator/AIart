@@ -64,6 +64,7 @@ export type State = {
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
+  serverRendering: boolean; // 서버에서 아직 합치는 중(새로고침해도 보인다)
   works: ExportInfo[]; // 새로 만들기 전에 저장해 둔 지난 작품
   aspect: '16:9' | '9:16'; // 영상 방향: 가로 또는 세로(공모전 1080x1920)
   tl?: Timeline; // 하나의 타임라인 편집(지운 구간·자막·목소리). 없으면 예전 장면별 편집을 옮겨 온다
@@ -128,7 +129,7 @@ function emptyProject(band: Band) {
 const base: State = {
   role: 'loading', view: 'student', band: 'elementary', joined: false, me: { no: 0, nick: '' }, classId: '',
   cls: { title: '', code: '', open: 1, paused: false, approval: true, videoInMiddle: false, budget: 0 },
-  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', works: [], topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
+  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', works: [], serverRendering: false, topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
@@ -405,6 +406,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       tl: p.tl ?? undefined,
       aspect: p.aspect === '9:16' ? '9:16' : '16:9',
       works: (p.works ?? []) as ExportInfo[],
+      serverRendering: !!p.rendering && Date.now() - Number(p.rendering) < 90_000,
       topic: p.topic ?? '',
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,

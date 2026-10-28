@@ -36,10 +36,15 @@ const RULES: Rule[] = [
   },
 ];
 
-export function moderateRules(text: string): RuleVerdict {
+// 중·고등학생: 욕설·과장 표현("죽겠다", "죽여버린다")·다툼·어두운 분위기는 막지 않는다.
+// 남겨 두는 것: 아주 잔인한 표현, 개인정보, 실존 인물(초상권)
+const MIDDLE_SEVERE = ['피투성이', '피범벅', '시체', '고문', '자살', '목을 졸', '살인'];
+
+export function moderateRules(text: string, band?: string): RuleVerdict {
   let t = text.replace(/\s+/g, ' ');
   for (const a of ALLOW) t = t.split(a).join(' ');
-  for (const r of RULES) {
+  const rules = band === 'middle' ? RULES.filter((r) => r.category === '개인정보' || r.category === '실존 인물').concat([{ ...RULES[0], words: MIDDLE_SEVERE }]) : RULES;
+  for (const r of rules) {
     for (const w of r.words) {
       const hit = typeof w === 'string' ? t.includes(w) : w.test(t);
       if (hit) return { pass: false, category: r.category, reason: r.reason, suggestion: r.suggestion };
