@@ -12,7 +12,7 @@ import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, pickSec, specFor } 
 import { Builder, buildPromptKo, moderateRules } from './moderation';
 import { World, checkAndTranslate, makeWorld } from './ai/text';
 import { SafetyBlockedError, drawImage, provider } from './ai/video';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
 import { Clip, Layers, TlCapIn, TlVoiceIn, XF, applyTimeline, concatCopy, joinXfade, lastFrame, mergeCuts, probeDur, renderSegment, sizeOf, toMp4 } from './render';
@@ -1217,6 +1217,8 @@ async function doRender(classId: string, no: number, renderId: string, ovIn: any
         while (next < clips.length) {
           const k = next++;
           out[k] = await renderSegment({ ...clips[k], dur: padded[k] }, k, dir, size);
+          // 서버의 임시 폴더는 메모리를 쓴다. 다 쓴 원본은 바로 지워 메모리가 넘치지 않게 한다
+          for (const f of [clips[k].src, clips[k].audioSrc]) if (f) try { unlinkSync(f); } catch {}
           done++;
           await step(`장면 만드는 중 (${done}/${clips.length})`);
         }
@@ -1229,6 +1231,7 @@ async function doRender(classId: string, no: number, renderId: string, ovIn: any
       await stillMine();
       await step('장면을 자연스럽게 잇는 중');
       baseFile = await joinXfade(segs, padded, dir);
+      for (const f of segs) try { unlinkSync(f); } catch {}
     } catch (e: any) {
       logger.warn('render: 디졸브 잇기 실패, 그냥 붙입니다', { err: String(e?.message ?? e).slice(0, 300) });
       const list = pjoin(dir, 'list.txt');
@@ -1261,6 +1264,7 @@ async function doRender(classId: string, no: number, renderId: string, ovIn: any
     await stillMine();
     await step('자막·목소리를 넣는 중');
     const out = await applyTimeline(baseFile, base, cuts, caps, voices, dir);
+    try { unlinkSync(baseFile); } catch {}
     await stillMine();
     const exportId = `${Date.now()}`;
     const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
@@ -1304,7 +1308,7 @@ export const runRender = onTaskDispatched(
     retryConfig: { maxAttempts: 2, minBackoffSeconds: 10 },
     rateLimits: { maxConcurrentDispatches: 40 },
     timeoutSeconds: 1800,
-    memory: '2GiB',
+    memory: '4GiB',
     cpu: 2,
     concurrency: 1,
     maxInstances: 40,
@@ -1312,6 +1316,13 @@ export const runRender = onTaskDispatched(
   async (req) => {
     const { classId, no, renderId, ovPath } = (req.data ?? {}) as any;
     if (!classId || !renderId) return;
+    // 앞선 시도가 서버째 멈췄다(대개 메모리 부족). 같은 일을 또 하면 또 멈추니 한 번만 하고 알려 준다
+    if ((req.retryCount ?? 0) > 0) {
+      const ref = db.doc(`projects/${classId}_${no}`);
+      if ((await ref.get()).data()?.renderId === renderId)
+        await ref.update({ rendering: FieldValue.delete(), renderId: FieldValue.delete(), renderStep: FieldValue.delete(), renderError: '저장하다가 서버가 멈췄어요. 다시 저장을 눌러 주세요. 계속 그러면 필요 없는 구간·자막을 조금 줄여 주세요.' });
+      return;
+    }
     let ov: any = {};
     try {
       const [buf] = await getStorage().bucket().file(String(ovPath)).download();

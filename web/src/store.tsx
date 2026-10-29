@@ -438,7 +438,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       works: (p.works ?? []) as ExportInfo[],
       serverRendering: !!p.rendering && Date.now() - Number(p.rendering) < 3 * 60_000,
       renderStep: p.rendering && Date.now() - Number(p.rendering) < 3 * 60_000 ? String(p.renderStep ?? '') : '',
-      renderError: p.rendering ? '' : String(p.renderError ?? ''),
+      renderError: p.rendering ? (Date.now() - Number(p.rendering) < 3 * 60_000 ? '' : '저장이 중간에 멈춘 것 같아요. 다시 저장을 눌러 주세요.') : String(p.renderError ?? ''),
       topic: p.topic ?? '',
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,
