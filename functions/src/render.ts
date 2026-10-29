@@ -337,31 +337,67 @@ export async function applyTimeline(
   }
   let idx = 1;
   let cur = vBase;
-  let n = 0;
-  const lay = (png: string, enable: string, opt: { fadeAt?: number; slideAt?: number }) => {
-    args.push('-loop', '1', '-t', D, '-i', png);
-    const o = `o${idx}`;
-    f.push(`[${idx}:v]format=rgba${opt.fadeAt !== undefined ? `,fade=in:st=${opt.fadeAt.toFixed(3)}:d=0.6:alpha=1` : ''}[${o}]`);
-    const y = opt.slideAt !== undefined ? `'if(lt(t,${(opt.slideAt + 0.6).toFixed(3)}),(${(opt.slideAt + 0.6).toFixed(3)}-t)*160,0)'` : '0';
-    const next = `c${idx}`;
-    f.push(`[${cur}][${o}]overlay=x=0:y=${y}:eof_action=pass:enable='${enable}'[${next}]`);
-    cur = next;
-    idx++;
-    n++;
-  };
+  // 글자 그림(자막·음표 등)을 하나의 "글자 트랙"으로 합쳐 넣는다.
+  // 예전엔 그림 하나마다 ffmpeg 입력을 하나씩 열어(그림당 메모리 60MB쯤) 자막이 많으면 서버가 멈췄다.
+  type L = { png: string; a: number; b: number; fade?: boolean; slideAt?: number; k: number };
+  const all: L[] = [];
+  let k = 0;
   for (const c of caps) {
-    if (n > 150) break;
-    const a = mapTime(c.a, cuts);
-    const b = mapTime(c.b, cuts);
+    const a = Math.max(0, mapTime(c.a, cuts));
+    const b = Math.min(mapTime(c.b, cuts), dur);
     if (b - a < 0.1 || !c.pngs.length) continue;
-    const win = (x: number, y: number) => `between(t,${x.toFixed(3)},${y.toFixed(3)})`;
     if (c.anim === 'type' && c.pngs.length > 1) {
       const step = Math.min(1.6, (b - a) * 0.6) / c.pngs.length;
-      c.pngs.forEach((p, k) => lay(p, win(a + k * step, k < c.pngs.length - 1 ? a + (k + 1) * step : b), {}));
+      c.pngs.forEach((p, j) => all.push({ png: p, a: a + j * step, b: j < c.pngs.length - 1 ? a + (j + 1) * step : b, k: k++ }));
     } else {
-      const p = c.pngs[c.pngs.length - 1];
-      lay(p, win(a, b), { fadeAt: c.anim === 'fade' || c.anim === 'slide' ? a : undefined, slideAt: c.anim === 'slide' ? a : undefined });
+      all.push({ png: c.pngs[c.pngs.length - 1], a, b, fade: c.anim === 'fade' || c.anim === 'slide', slideAt: c.anim === 'slide' ? a : undefined, k: k++ });
     }
+  }
+  // 움직이는 자막(서서히·밀려오기)은 몇 개만 따로 넣고, 나머지는 멈춘 그림으로 글자 트랙에 넣는다
+  const moving = all.filter((x) => x.fade).slice(0, 6);
+  const still = all.filter((x) => !moving.includes(x));
+  if (still.length) {
+    const size = (await run(bin('ffprobe'), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0:s=x', still[0].png])).trim() || '1280x720';
+    const blank = join(dir, 'cap_blank.png');
+    await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `color=c=black@0.0:s=${size},format=rgba`, '-frames:v', '1', blank]);
+    const pts = [...new Set([0, dur, ...still.flatMap((x) => [x.a, x.b])].map((t) => Math.round(Math.max(0, Math.min(dur, t)) * 1000) / 1000))].sort((p, q) => p - q);
+    const lines: string[] = [];
+    let last = blank;
+    let comp = 0;
+    for (let j = 0; j < pts.length - 1; j++) {
+      const t0 = pts[j];
+      const t1 = pts[j + 1];
+      if (t1 - t0 < 0.001) continue;
+      const mid = (t0 + t1) / 2;
+      const on = still.filter((x) => x.a <= mid && mid < x.b).sort((p, q) => p.k - q.k);
+      let img = blank;
+      if (on.length === 1) img = on[0].png;
+      else if (on.length > 1) {
+        // 같은 때 보이는 그림이 여럿이면 한 장으로 겹쳐 둔다
+        img = join(dir, `cap_comp_${comp++}.png`);
+        const ins = on.flatMap((x) => ['-i', x.png]);
+        const g = on.slice(1).map((_, q) => `${q === 0 ? '[0:v]' : `[m${q}]`}[${q + 1}:v]overlay=0:0${q === on.length - 2 ? '' : `[m${q + 1}]`}`).join(';');
+        await run(bin('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', ...ins, '-filter_complex', g, '-frames:v', '1', img]);
+      }
+      lines.push(`file '${img}'`, `duration ${(t1 - t0).toFixed(3)}`);
+      last = img;
+    }
+    lines.push(`file '${last}'`);
+    const list = join(dir, 'caps.txt');
+    writeFileSync(list, lines.join('\n'));
+    args.push('-f', 'concat', '-safe', '0', '-i', list);
+    f.push(`[${idx}:v]format=rgba,setpts=PTS-STARTPTS[o${idx}]`);
+    f.push(`[${cur}][o${idx}]overlay=0:0:eof_action=pass[c${idx}]`);
+    cur = `c${idx}`;
+    idx++;
+  }
+  for (const m of moving) {
+    args.push('-framerate', '25', '-loop', '1', '-t', (m.b - m.a).toFixed(3), '-itsoffset', m.a.toFixed(3), '-i', m.png);
+    f.push(`[${idx}:v]format=rgba,fade=in:st=${m.a.toFixed(3)}:d=0.6:alpha=1[o${idx}]`);
+    const y = m.slideAt !== undefined ? `'if(lt(t,${(m.slideAt + 0.6).toFixed(3)}),(${(m.slideAt + 0.6).toFixed(3)}-t)*160,0)'` : '0';
+    f.push(`[${cur}][o${idx}]overlay=x=0:y=${y}:eof_action=pass:repeatlast=0:enable='between(t,${m.a.toFixed(3)},${m.b.toFixed(3)})'[c${idx}]`);
+    cur = `c${idx}`;
+    idx++;
   }
   const vMapped = cur !== '0:v';
   if (vMapped) f.push(`[${cur}]format=yuv420p[vo]`);
