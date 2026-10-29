@@ -110,7 +110,7 @@ export const api = {
   removeSubs: call<{ sceneId: string }, { genId: string; credits: number }>('removeSubs'),
   newProject: call<Record<string, never>, { ok: boolean; round: number }>('newProject'),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number; queued?: boolean }>('makeCharacter', 120_000),
-  renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { path: string; missing?: number }>('renderVideo', 1_800_000),
+  renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { queued: boolean; renderId: string }>('renderVideo', 120_000),
   claimTeacher: call<Record<string, never>, { approved: boolean; admin: boolean; requested: boolean }>('claimTeacher'),
   requestTeacher: call<{ org: string; realName: string }, { ok: boolean }>('requestTeacher'),
   adminTeachers: call<Record<string, never>, { list: TeacherRow[] }>('adminTeachers'),

@@ -1047,13 +1047,14 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
 
 // ───────── 학생: 편집한 장면을 한 편의 MP4 로 합치기 ─────────
 
-export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2, concurrency: 1, maxInstances: 40 }, async (req) => {
-  const { classId, no } = requireStudent(req);
+// 실제로 합치는 일(대기열 작업자 runRender 가 부른다). 학생 화면은 project.renderStep 으로 진행 상황을 본다
+async function doRender(classId: string, no: number, renderId: string, ovIn: any) {
   const pid = `${classId}_${no}`;
   const projRef = db.doc(`projects/${pid}`);
   const p = (await projRef.get()).data();
   const cls = (await db.doc(`classes/${classId}`).get()).data();
-  if (!p || !cls) throw new HttpsError('not-found', '작업을 찾을 수 없어요.');
+  if (!p || !cls) return;
+  if (p.renderId !== renderId) return; // 그새 다시 누른 저장이 있으면 그쪽이 한다
   // 만드는 중이면 30초마다 시각을 새로 적는다. 90초 넘게 소식이 없으면(서버가 중간에 멈춘 것) 잠금을 풀고 새로 만든다
   // 예전에는 "이미 만들고 있어요"로 막았다. 이제는 새로 누르면 새 저장이 이어받고, 예전 저장은 스스로 멈춘다(새로고침 후 다시 눌러도 된다)
   const limit = 60; // 초등·중등 모두 60초
@@ -1070,8 +1071,7 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
   const tl = (p.tl ?? {}) as { cuts?: any[]; caps?: any[]; voices?: any[] };
   const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-  const renderId = randomUUID();
-  await projRef.update({ rendering: Date.now(), renderId });
+  const step = (t: string) => projRef.update({ renderStep: t, rendering: Date.now() }).catch(() => {});
   // 아직 내 저장이 맞는지(나중에 누른 저장이 이어받지 않았는지) 확인
   const mine = async () => (await projRef.get()).data()?.renderId === renderId;
   const stillMine = async () => {
@@ -1091,7 +1091,10 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
   const fetchFile = async (path: string, name: string): Promise<string | undefined> => {
     const local = pjoin(dir, name);
     try {
-      await bucket.file(path).download({ destination: local });
+      await Promise.race([
+        bucket.file(path).download({ destination: local }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('내려받기 시간 초과')), 120_000)),
+      ]);
       return local;
     } catch (e: any) {
       logger.warn('render: 파일을 받지 못함', { path, err: String(e?.message ?? e) });
@@ -1103,7 +1106,7 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
 
   try {
     // 브라우저가 그려 보낸 글자 그림(PNG)을 파일로 저장한다
-    const ov = (req.data?.overlays ?? {}) as { intro?: string; outro?: string; clips?: Record<string, string>; caps?: Record<string, string[]> };
+    const ov = (ovIn ?? {}) as { intro?: string; outro?: string; clips?: Record<string, string>; caps?: Record<string, string[]> };
     let pngN = 0;
     const savePng = (dataUrl?: string) => {
       const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? ''));
@@ -1139,9 +1142,10 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
       v.kind === 'mine' && v.path
         ? fetchFile(String(v.path), `voice_${j + 1}`)
         : v.kind === 'ai' && isAiVoice(v.voice) && String(v.text ?? '').trim() && useAi
-          ? speak(String(v.text).slice(0, 120), v.voice, pjoin(dir, `tts_${j + 1}.wav`)).catch(() => undefined)
+          ? withTimeout(speak(String(v.text).slice(0, 120), v.voice, pjoin(dir, `tts_${j + 1}.wav`)), 60_000, undefined as string | undefined)
           : Promise.resolve(undefined),
     );
+    await step('영상 조각을 불러오는 중');
     let i = 0;
     for (const k of keys) {
       i++;
@@ -1207,10 +1211,14 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
     {
       const out: string[] = new Array(clips.length);
       let next = 0;
+      let done = 0;
+      await step(`장면 만드는 중 (0/${clips.length})`);
       const worker = async () => {
         while (next < clips.length) {
           const k = next++;
           out[k] = await renderSegment({ ...clips[k], dur: padded[k] }, k, dir, size);
+          done++;
+          await step(`장면 만드는 중 (${done}/${clips.length})`);
         }
       };
       await Promise.all([worker(), worker(), worker()]);
@@ -1219,6 +1227,7 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
     let baseFile: string;
     try {
       await stillMine();
+      await step('장면을 자연스럽게 잇는 중');
       baseFile = await joinXfade(segs, padded, dir);
     } catch (e: any) {
       logger.warn('render: 디졸브 잇기 실패, 그냥 붙입니다', { err: String(e?.message ?? e).slice(0, 300) });
@@ -1250,26 +1259,70 @@ export const renderVideo = onCall({ timeoutSeconds: 1800, memory: '2GiB', cpu: 2
     }
 
     await stillMine();
+    await step('자막·목소리를 넣는 중');
     const out = await applyTimeline(baseFile, base, cuts, caps, voices, dir);
     await stillMine();
     const exportId = `${Date.now()}`;
     const path = `classes/${classId}/${no}/exports/${exportId}.mp4`;
     const token = randomUUID();
     await bucket.upload(out.file, { destination: path, contentType: 'video/mp4', metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true', notice: 'AI 생성 콘텐츠 포함' } } });
-    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: out.dur, aspect: p.aspect === '9:16' ? '9:16' : '16:9' }, rendering: FieldValue.delete(), renderId: FieldValue.delete() });
+    await projRef.update({ lastExport: { path, url: mediaUrl(path, token), at: Date.now(), dur: out.dur, aspect: p.aspect === '9:16' ? '9:16' : '16:9' }, rendering: FieldValue.delete(), renderId: FieldValue.delete(), renderStep: FieldValue.delete(), renderError: FieldValue.delete(), renderMissing: missingFiles.length });
     await log({ classId, no, kind: '완성 영상', textKo: `${out.dur}초 · 클립 ${clips.length}개 · 지운 구간 ${cuts.length}개 · 자막 ${caps.length}개 · 목소리 ${voices.length}개`, verdict: 'pass', action: '영상 저장' });
     return { path, missing: missingFiles.length };
   } catch (e: any) {
     logger.error('render failed', { pid, err: String(e?.message ?? e) });
     // 내 저장일 때만 "만드는 중" 표시를 지운다(이어받은 새 저장은 건드리지 않는다)
-    if (await mine().catch(() => false)) await projRef.update({ rendering: FieldValue.delete(), renderId: FieldValue.delete() });
-    if (e instanceof HttpsError) throw e;
-    throw new HttpsError('unavailable', `영상을 합치지 못했어요. 잠시 뒤 다시 해 보세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 80)})`);
+    const msg = e instanceof HttpsError ? e.message : `영상을 합치지 못했어요. 다시 저장해 보세요. (원인: ${String(e?.message ?? e).replace(/\/[^\s]+/g, '').slice(0, 80)})`;
+    if (await mine().catch(() => false)) await projRef.update({ rendering: FieldValue.delete(), renderId: FieldValue.delete(), renderStep: FieldValue.delete(), renderError: msg });
   } finally {
     clearInterval(beat);
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// 저장 버튼: 바로 대기열에 넣고 끝난다(학생 화면이 오래 붙잡혀 있지 않게). 다시 누르면 새 저장이 이어받는다
+export const renderVideo = onCall({ timeoutSeconds: 120, memory: '512MiB' }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const projRef = db.doc(`projects/${classId}_${no}`);
+  if (!(await projRef.get()).exists) throw new HttpsError('not-found', '작업을 찾을 수 없어요.');
+  const renderId = randomUUID();
+  const ovPath = `classes/${classId}/${no}/render/${renderId}.json`;
+  await getStorage().bucket().file(ovPath).save(JSON.stringify(req.data?.overlays ?? {}), { contentType: 'application/json' });
+  await projRef.update({ rendering: Date.now(), renderId, renderStep: '차례를 기다리는 중', renderError: FieldValue.delete() });
+  try {
+    await getFunctions().taskQueue(`locations/${REGION}/functions/runRender`).enqueue({ classId, no, renderId, ovPath }, { dispatchDeadlineSeconds: 1800 });
+  } catch (e: any) {
+    logger.error('render enqueue failed', { err: String(e?.message ?? e) });
+    await projRef.update({ rendering: FieldValue.delete(), renderId: FieldValue.delete(), renderStep: FieldValue.delete() });
+    throw new HttpsError('unavailable', '저장 대기열에 넣지 못했어요. 잠시 뒤 다시 눌러 주세요.');
+  }
+  return { queued: true, renderId };
 });
+
+export const runRender = onTaskDispatched(
+  {
+    retryConfig: { maxAttempts: 2, minBackoffSeconds: 10 },
+    rateLimits: { maxConcurrentDispatches: 40 },
+    timeoutSeconds: 1800,
+    memory: '2GiB',
+    cpu: 2,
+    concurrency: 1,
+    maxInstances: 40,
+  },
+  async (req) => {
+    const { classId, no, renderId, ovPath } = (req.data ?? {}) as any;
+    if (!classId || !renderId) return;
+    let ov: any = {};
+    try {
+      const [buf] = await getStorage().bucket().file(String(ovPath)).download();
+      ov = JSON.parse(buf.toString('utf8'));
+    } catch (e: any) {
+      logger.warn('render: 글자 그림을 못 읽음', { err: String(e?.message ?? e) });
+    }
+    await doRender(String(classId), Number(no), String(renderId), ov);
+    getStorage().bucket().file(String(ovPath)).delete().catch(() => {});
+  },
+);
 
 // ───────── 연습 모드(에뮬레이터) 전용: 교사 계정 바로 승인 ─────────
 // 실제 배포 환경에서는 FUNCTIONS_EMULATOR 가 없으므로 항상 거절된다.

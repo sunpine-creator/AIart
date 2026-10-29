@@ -2504,13 +2504,18 @@ function S4() {
         )}
         {missing > 0 && <p className="muted">아직 만든 영상이 없는 장면이 {missing}개 있어요. 3단계에서 장면을 만들어 주세요.</p>}
         <div className="actions">
-          {!s.rendering && s.serverRendering && (
-            <span className="notice warn" role="status">
-              아까 누른 저장을 아직 합치고 있어요. 조금 기다리면 아래에 나타나요. 오래 걸리면 다시 눌러요 — 처음부터 빠르게 다시 만들어요.
+          {s.rendering && (
+            <span className="notice" role="status">
+              ⏳ 서버에서 영상을 합치고 있어요{s.renderStep ? ` — ${s.renderStep}` : ''}. 다른 단계로 가거나 새로고침해도 계속 만들어져요.
+            </span>
+          )}
+          {!s.rendering && s.renderError && (
+            <span className="notice warn" role="alert">
+              {s.renderError}
             </span>
           )}
           <button className="btn primary" disabled={s.rendering} onClick={() => (setPlaying(false), d({ t: 'render' }))}>
-            {s.rendering ? '영상을 합치는 중… (1~2분쯤 걸려요)' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}
+            {s.rendering ? '영상을 합치는 중…' : s.lastExport ? '다시 저장하기' : '영상 저장하기'}
           </button>
           <span className="tiny muted">한 편의 MP4로 합쳐요. 끝 화면에 “AI 생성 콘텐츠 포함” 표시가 자동으로 들어가요.</span>
         </div>

@@ -52,6 +52,9 @@ function bin(name: 'ffmpeg' | 'ffprobe'): string {
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // 멈춰 버린 ffmpeg 가 저장을 영영 붙잡지 않게 15분이 지나면 끈다
+    const kill = setTimeout(() => p.kill('SIGKILL'), 15 * 60_000);
+    p.on('close', () => clearTimeout(kill));
     let out = '';
     let err = '';
     p.stdout.on('data', (d) => (out += d));

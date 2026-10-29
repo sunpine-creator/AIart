@@ -65,6 +65,8 @@ export type State = {
   editNote: string;
   reflect: string;
   serverRendering: boolean; // 서버에서 아직 합치는 중(새로고침해도 보인다)
+  renderStep: string; // 서버가 알려 주는 저장 진행 상황
+  renderError: string; // 마지막 저장이 실패한 까닭
   works: ExportInfo[]; // 새로 만들기 전에 저장해 둔 지난 작품
   aspect: '16:9' | '9:16'; // 영상 방향: 가로 또는 세로(공모전 1080x1920)
   tl?: Timeline; // 하나의 타임라인 편집(지운 구간·자막·목소리). 없으면 예전 장면별 편집을 옮겨 온다
@@ -129,7 +131,7 @@ function emptyProject(band: Band) {
 const base: State = {
   role: 'loading', view: 'student', band: 'elementary', joined: false, me: { no: 0, nick: '' }, classId: '',
   cls: { title: '', code: '', open: 1, paused: false, approval: true, videoInMiddle: false, budget: 0 },
-  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', works: [], serverRendering: false, topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
+  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', works: [], serverRendering: false, renderStep: '', renderError: '', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
@@ -213,9 +215,37 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [peers, setPeers] = useState<{ no: number; nick: string; exportPath?: string; exportUrl?: string }[]>([]);
   const [uploadUrls, setUploadUrls] = useState<Record<string, string>>({});
   const saveTimer = useRef<number | undefined>(undefined);
+  // 서버 저장이 멈췄는지 알 수 있게, 저장 중에는 20초마다 화면을 다시 계산한다
+  const [tick, setTick] = useState(0);
+  const renderingAt = project?.rendering;
+  useEffect(() => {
+    if (!renderingAt) return;
+    const t = window.setInterval(() => setTick((x) => x + 1), 20_000);
+    return () => window.clearInterval(t);
+  }, [renderingAt]);
+  // 저장이 끝나거나 실패하면 알려 준다
+  const lastExAt = project?.lastExport?.at;
+  const renderErr = project?.renderError;
+  const seenEx = useRef<number | undefined>(undefined);
+  const seenErr = useRef<string | undefined>(undefined);
   const projectRef = useRef<Record<string, any> | null>(null);
 
   const toast = (msg?: string) => setLocal((l) => ({ ...l, toast: msg }));
+  useEffect(() => {
+    if (!project) return;
+    if (seenEx.current !== undefined && lastExAt && lastExAt !== seenEx.current) {
+      const miss = Number(project?.renderMissing) || 0;
+      toast(miss ? `영상을 저장했어요! 불러오지 못한 조각 ${miss}개는 빼고 만들었어요.` : '영상을 저장했어요!');
+    }
+    seenEx.current = lastExAt ?? 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastExAt, !!project]);
+  useEffect(() => {
+    if (!project) return;
+    if (seenErr.current !== undefined && renderErr && renderErr !== seenErr.current) toast(renderErr);
+    seenErr.current = renderErr ?? '';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderErr, !!project]);
   // 실시간 구독이 권한 등으로 실패하면 조용히 멈추지 않고 화면과 콘솔에 알린다
   const onErr = (what: string) => (e: any) => {
     console.error(`[구독 실패] ${what}`, e);
@@ -406,7 +436,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       tl: p.tl ?? undefined,
       aspect: p.aspect === '9:16' ? '9:16' : '16:9',
       works: (p.works ?? []) as ExportInfo[],
-      serverRendering: !!p.rendering && Date.now() - Number(p.rendering) < 90_000,
+      serverRendering: !!p.rendering && Date.now() - Number(p.rendering) < 3 * 60_000,
+      renderStep: p.rendering && Date.now() - Number(p.rendering) < 3 * 60_000 ? String(p.renderStep ?? '') : '',
+      renderError: p.rendering ? '' : String(p.renderError ?? ''),
       topic: p.topic ?? '',
       story: p.story ?? base.story,
       brief: p.brief ?? base.brief,
@@ -436,13 +468,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       peers: peers.map((p) => ({ ...p, nick: nickByNo(p.no) })),
       lastExport: p.lastExport,
       sending: local.sending,
-      rendering: local.rendering || (!!p.rendering && Date.now() - p.rendering < 10 * 60_000),
+      rendering: local.rendering || (!!p.rendering && Date.now() - Number(p.rendering) < 3 * 60_000),
       classes,
       pins,
       teacherEmail: user?.email ?? '',
       toast: local.toast,
     };
-  }, [role, cls, student, project, gens, students, pending, logs, usage, classes, pins, peers, uploadUrls, local, claims, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, cls, student, project, gens, students, pending, logs, usage, classes, pins, peers, uploadUrls, local, claims, user, tick]);
 
   const d = (a: Action) => {
     switch (a.t) {
@@ -569,8 +602,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
               clips,
               caps: (tl.caps ?? []).filter((c) => c.text.trim()),
             });
-            const r = await api.renderVideo({ overlays });
-            toast(r.missing ? `영상을 저장했어요. 불러오지 못한 조각 ${r.missing}개는 빼고 만들었어요.` : '영상을 저장했어요!');
+            await api.renderVideo({ overlays });
+            toast('저장을 시작했어요. 다 되면 아래에 완성 영상이 나타나요(다른 단계로 가거나 새로고침해도 괜찮아요).');
           } catch (e) {
             toast(errText(e));
           } finally {
