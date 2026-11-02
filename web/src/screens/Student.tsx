@@ -1564,7 +1564,7 @@ function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene
           <span className="mono muted">{time}</span>
         </div>
         {g.status === 'awaiting_approval' && <Progress text="선생님이 프롬프트를 확인하고 있어요" />}
-        {g.status === 'queued' && !g.attempt && <StuckKick g={g} />}
+        <StuckKick g={g} />
         {g.status === 'queued' && (g.attempt ? <Progress text={`반 친구들이 한꺼번에 만들고 있어서 AI가 바빠요. 잠시 뒤 자동으로 다시 만들어요 (${g.attempt}번째 다시 시도) · 그대로 기다리면 돼요`} /> : <Progress text="대기열에서 차례를 기다려요 · 반 친구들 작업과 차례로 만들어요" />)}
         {g.status === 'running' && <Progress text={`AI가 ${word === "영상" ? "영상을" : "이미지를"} 만드는 중이에요 · 1~3분쯤 걸려요`} running />}
       </li>
@@ -2654,7 +2654,7 @@ function DesubBox({ sceneId, gen }: { sceneId: string; gen?: Gen }) {
     return (
       <>
         <Progress text={last.status === 'running' ? 'AI가 글씨만 지우고 있어요 · 1~3분쯤 걸려요. 다 되면 이 장면이 저절로 바뀌어요' : '차례를 기다리고 있어요'} running={last.status === 'running'} />
-        {last.status === 'queued' && <StuckKick g={last} />}
+        <StuckKick g={last} />
       </>
     );
   return (
@@ -2831,7 +2831,7 @@ function RestyleBox({ u }: { u: Upload }) {
           running={last.status === 'running'}
         />
       ) : null}
-      {busy && last.status === 'queued' && <StuckKick g={last} />}
+      {busy && <StuckKick g={last} />}
       {u.styledPath || busy ? null : (
         <>
           <p className="tiny muted">
@@ -2849,30 +2849,35 @@ function RestyleBox({ u }: { u: Upload }) {
 }
 
 // 오래 "차례를 기다리는 중"이면 다시 대기열에 넣는 버튼(대기열에서 빠져 버린 경우 대비)
+// 만드는 중에 오래 걸리면: 하던 일을 버리고 처음부터 다시 만든다(크레딧·횟수는 그대로)
 function StuckKick({ g }: { g: Gen }) {
   const { d } = useStore();
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 15_000);
+    const id = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(id);
   }, []);
-  if (now - g.at < 3 * 60_000) return null;
+  if (!['queued', 'running'].includes(g.status) || now - g.at < 40_000) return null;
+  const long = now - g.at > 4 * 60_000;
   return (
-    <button
-      className="btn tiny"
-      disabled={busy}
-      onClick={() => {
-        setBusy(true);
-        api
-          .kickGeneration({ genId: g.id })
-          .then((r) => d({ t: 'toast', msg: r.kicked ? '다시 차례에 넣었어요. 조금만 기다려 주세요.' : r.wait ? '방금 넣었어요. 1~2분만 더 기다려 주세요.' : '이미 만들기 시작했어요.' }))
-          .catch((e) => d({ t: 'toast', msg: errText(e) }))
-          .finally(() => setBusy(false));
-      }}
-    >
-      {busy ? '다시 넣는 중…' : '⟳ 너무 오래 기다리면 다시 차례에 넣기'}
-    </button>
+    <span className="stuck-kick">
+      <button
+        className={`btn tiny ${long ? 'primary' : ''}`}
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          api
+            .kickGeneration({ genId: g.id, restart: true })
+            .then((r) => d({ t: 'toast', msg: r.kicked ? '처음부터 다시 만들기 시작했어요. 크레딧은 그대로예요.' : r.wait ? '방금 다시 시작했어요. 30초 뒤에 다시 눌러 주세요.' : '이미 다 만들었어요.' }))
+            .catch((e) => d({ t: 'toast', msg: errText(e) }))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? '다시 시작하는 중…' : '↺ 처음부터 다시 만들기'}
+      </button>
+      {long && <span className="tiny hint"> 오래 걸리고 있어요. 눌러서 다시 만들어요(크레딧·횟수는 줄지 않아요).</span>}
+    </span>
   );
 }
 

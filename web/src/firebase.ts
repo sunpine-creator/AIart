@@ -104,7 +104,7 @@ export const api = {
   storyWorld: call<{ refresh?: boolean }, { place?: string; weather?: string; time?: string; light?: string; camera?: string; empty?: boolean }>('storyWorld', 60_000),
   teacherResetScene: call<{ classId: string; no: number; sceneId: string; mode: 'unfinal' | 'redo' }, { ok: boolean; count: number }>('teacherResetScene'),
   restyleUpload: call<{ uploadId: string }, { genId: string; credits: number }>('restyleUpload'),
-  kickGeneration: call<{ genId: string }, { ok: boolean; kicked?: boolean; wait?: boolean; status?: string }>('kickGeneration'),
+  kickGeneration: call<{ genId: string; restart?: boolean }, { ok: boolean; kicked?: boolean; wait?: boolean; status?: string }>('kickGeneration'),
   setClassEnded: call<{ classId: string; ended: boolean }, { ok: boolean; approved: number; bonus?: number }>('setClassEnded', 120_000),
   classSpend: call<{ classId: string }, { by: Record<string, { totalKrw: number; todayKrw: number }>; rate: number }>('classSpend'),
   removeSubs: call<{ sceneId: string }, { genId: string; credits: number }>('removeSubs'),

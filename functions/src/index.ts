@@ -127,10 +127,10 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p.catch(() => fallback), new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
 }
 
-async function enqueue(genId: string) {
+async function enqueue(genId: string, runId?: string) {
   const q = getFunctions().taskQueue(`locations/${REGION}/functions/runGeneration`);
   try {
-    await q.enqueue({ genId }, { dispatchDeadlineSeconds: 1800 });
+    await q.enqueue(runId ? { genId, runId } : { genId }, { dispatchDeadlineSeconds: 1800 });
   } catch (e: any) {
     // 대기열에 못 넣으면 "차례 기다리는 중"으로 영영 남지 않게 실패로 끝내고 크레딧을 돌려준다
     logger.error('enqueue failed', { genId, err: String(e?.message ?? e) });
@@ -153,12 +153,22 @@ export const kickGeneration = onCall(async (req) => {
   const tok = req.auth?.token as any;
   const isOwner = tok?.classId === g.classId && Number(tok?.no) === g.no;
   if (!isOwner) await ownedClass(await requireTeacher(req), g.classId);
+  // 학생이 "처음부터 다시 만들기"를 누르면: 하던 일은 버리고 새로 차례에 넣는다(크레딧·횟수는 그대로)
+  if (req.data?.restart === true) {
+    if (!['queued', 'running'].includes(g.status)) return { ok: true, status: g.status };
+    if (Date.now() - (g.kickedAt ?? 0) < 30_000) return { ok: true, wait: true };
+    const runId = randomUUID();
+    await ref.update({ status: 'queued', runId, kickedAt: Date.now(), attempt: FieldValue.delete(), lastError: FieldValue.delete(), startedAt: FieldValue.delete() });
+    await enqueue(genId, runId);
+    logger.info('kickGeneration(restart)', { genId, from: g.status });
+    return { ok: true, kicked: true };
+  }
   // "만드는 중"인데 31분이 넘으면(작업자 제한 30분) 작업자가 멈춘 것이니 다시 차례에 넣는다
   if (g.status === 'running') {
     const st = g.startedAt?.toMillis?.() ?? 0;
     if (Date.now() - st < 31 * 60_000) return { ok: true, status: g.status, wait: true };
     await ref.update({ status: 'queued', kickedAt: Date.now() });
-    await enqueue(genId);
+    await enqueue(genId, g.runId);
     logger.info('kickGeneration(running→queued)', { genId });
     return { ok: true, kicked: true };
   }
@@ -166,7 +176,7 @@ export const kickGeneration = onCall(async (req) => {
   const since = Math.max(g.createdAt?.toMillis?.() ?? 0, g.kickedAt ?? 0, g.approvedAt ?? 0);
   if (Date.now() - since < 2 * 60_000) return { ok: true, wait: true };
   await ref.update({ kickedAt: Date.now() });
-  await enqueue(genId);
+  await enqueue(genId, g.runId);
   logger.info('kickGeneration', { genId });
   return { ok: true, kicked: true };
 });
@@ -837,13 +847,18 @@ export const runGeneration = onTaskDispatched(
   },
   async (req) => {
     const genId = String((req.data as any)?.genId ?? '');
+    const runId = String((req.data as any)?.runId ?? '');
     const ref = db.doc(`generations/${genId}`);
     const g = (await ref.get()).data();
     if (!g || !['queued', 'running'].includes(g.status)) return;
+    // 학생이 "처음부터 다시 만들기"를 눌렀으면 예전 작업은 여기서 멈춘다(결과도 덮어쓰지 않는다)
+    const current = async () => String((await ref.get()).data()?.runId ?? '') === runId;
+    if (String(g.runId ?? '') !== runId) return;
     const studentRef = db.doc(`classes/${g.classId}/students/${g.no}`);
     await ref.update({ status: 'running', startedAt: FieldValue.serverTimestamp() });
 
     const fail = async (status: 'failed' | 'blocked', message: string) => {
+      if (!(await current())) return;
       await ref.update({ status, error: message, rejectReason: status === 'blocked' ? `AI가 만들 수 없는 장면이었어요.|다른 말로 바꿔 다시 해 보세요.` : null });
       await studentRef.update({ ...(g.charged === false ? {} : { credits: FieldValue.increment(g.credits ?? 0) }), status: 'idle' });
       await log({ classId: g.classId, no: g.no, kind: '생성 실패', textKo: g.editText ?? g.promptKo, verdict: status === 'blocked' ? 'blocked' : 'pass', category: status === 'blocked' ? '모델 안전 차단' : undefined, action: `${message.slice(0, 60)} · 크레딧 환불` });
@@ -907,6 +922,7 @@ export const runGeneration = onTaskDispatched(
           rmSync(tdir, { recursive: true, force: true });
         }
       }
+      if (!(await current())) return;
       await ref.update({ ...(realSec ? { sec: realSec } : {}), method: result.method ?? null, status: 'succeeded', storagePath, url, mimeType: result.mimeType, interactionId: result.interactionId ?? null, mock: !!result.mock, doneAt: FieldValue.serverTimestamp() });
       await studentRef.update({ status: 'idle' });
       // 내 영상 그림체 바꾸기: 편집에서 바뀐 영상을 쓰도록 올린 영상에 표시한다
@@ -941,6 +957,7 @@ export const runGeneration = onTaskDispatched(
       if (permanent) return fail('failed', em.slice(0, 200));
       const last = (req.retryCount ?? 0) >= 7;
       if (last) return fail('failed', String(e?.message ?? '알 수 없는 오류'));
+      if (!(await current().catch(() => false))) return;
       await ref.update({ status: 'queued', attempt: (req.retryCount ?? 0) + 1, lastError: String(e?.message ?? e).slice(0, 300) });
       throw e; // 대기열이 잠시 뒤 다시 시도한다
     }
