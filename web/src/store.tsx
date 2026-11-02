@@ -60,7 +60,7 @@ export type State = {
   prmSort: Record<string, PromptPart | undefined>;
   prmThink: string;
   prmSortDone: boolean;
-  cast: { look: string; place: string; style: string; cardUrl?: string; cardLook?: string; cardStyle?: string; tries?: number; cardStatus?: 'making' | 'done' | 'failed'; cardError?: string; cardRetry?: number };
+  cast: { look: string; place: string; style: string; cardUrl?: string; cardLook?: string; cardStyle?: string; tries?: number; cardStatus?: 'making' | 'done' | 'failed'; cardError?: string; cardRetry?: number; cardAt?: number };
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
@@ -429,7 +429,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       prmThink: p.prmThink ?? '',
       prmSortDone: !!p.prmSortDone,
       // 주인공 카드 결과는 서버가 project.card 에 쓴다(학생 화면이 덮어쓰지 않게 따로 둔다)
-      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책', cardUrl: p.card?.url || p.cast?.cardUrl, cardLook: p.card?.look ?? p.cast?.cardLook, cardStyle: p.card?.style ?? p.cast?.cardStyle, tries: p.card?.tries ?? p.cast?.tries ?? 0, cardStatus: p.card?.status, cardError: p.card?.error, cardRetry: p.card?.retry },
+      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책', cardUrl: p.card?.url || p.cast?.cardUrl, cardLook: p.card?.look ?? p.cast?.cardLook, cardStyle: p.card?.style ?? p.cast?.cardStyle, tries: p.card?.tries ?? p.cast?.tries ?? 0, cardStatus: p.card?.status, cardError: p.card?.error, cardRetry: p.card?.retry, cardAt: p.card?.at },
       flow: p.flow ?? {},
       editNote: p.editNote ?? '',
       reflect: p.reflect ?? '',

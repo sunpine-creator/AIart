@@ -1082,7 +1082,15 @@ function CastPanel() {
   const lookChanged = hasCard && c.cardLook !== c.look;
   const styleChanged = hasCard && !!c.cardStyle && c.cardStyle !== c.style;
   const changed = (lookChanged || styleChanged) && c.cardStatus !== 'making';
-  const making = c.cardStatus === 'making';
+  // 3분 넘게 소식이 없으면 멈춘 것으로 보고 다시 누를 수 있게 한다(누르면 서버가 대기열에 다시 넣는다)
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    if (c.cardStatus !== 'making') return;
+    const t = window.setInterval(() => setNow((x) => x + 1), 15_000);
+    return () => window.clearInterval(t);
+  }, [c.cardStatus]);
+  const stuck = c.cardStatus === 'making' && !!c.cardAt && Date.now() - c.cardAt > 3 * 60_000;
+  const making = c.cardStatus === 'making' && !stuck;
   // 다 그려지면 알려 준다
   const prevStatus = React.useRef(c.cardStatus);
   useEffect(() => {
@@ -1125,10 +1133,11 @@ function CastPanel() {
           </div>
           {hasCard && <p className="tiny muted">장면은 주인공 카드의 그림체로 만들어져요. 그림체를 바꾸려면 다른 그림체를 고른 뒤 카드를 다시 만들어요.</p>}
           <div className="actions">
-            <button className="btn ai" disabled={busy || making || !c.look.trim() || (tries >= 3 && !(styleChanged && !lookChanged)) || s.cls.paused} onClick={make}>
-              {busy ? '보내는 중…' : making ? 'AI가 주인공을 그리는 중…' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
+            <button className="btn ai" disabled={busy || !c.look.trim() || (tries >= 3 && !(styleChanged && !lookChanged)) || s.cls.paused} onClick={make}>
+              {busy ? '보내는 중…' : making || stuck ? '↺ 처음부터 다시 그리기' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
             </button>
-            {making && <span className="tiny hint">반 친구들 것과 차례로 그려요{c.cardRetry ? ` · AI가 바빠서 다시 그리는 중(${c.cardRetry}번째)` : ''}. 기다리는 동안 아래 장면 내용을 먼저 써도 돼요.</span>}
+            {making && <span className="tiny hint">반 친구들 것과 차례로 그려요{c.cardRetry ? ` · AI가 바빠서 다시 그리는 중(${c.cardRetry}번째)` : ''}. 기다리는 동안 아래 장면 내용을 먼저 써도 돼요. 너무 오래 걸리면 “처음부터 다시 그리기”를 눌러요(횟수는 줄지 않아요).</span>}
+            {stuck && <span className="tiny hint">3분 넘게 걸리고 있어요. “처음부터 다시 그리기”를 눌러 주세요(횟수는 줄지 않아요).</span>}
             {c.cardStatus === 'failed' && c.cardError && <span className="tiny danger-text">{c.cardError}</span>}
             {changed && <span className="tiny hint">{styleChanged && !lookChanged ? '그림체를 바꿨어요.' : '주인공 설명을 바꿨어요.'} {tries >= 3 && !(styleChanged && !lookChanged) ? '카드를 더 만들 수 없어서 지금 카드의 그림체로 만들어져요.' : '“주인공 카드 다시 만들기”를 눌러야 장면에 반영돼요.'}{styleChanged && !lookChanged ? ' (그림체만 바꿔 다시 그리는 건 횟수에 안 들어가요)' : ''}</span>}
             {tries >= 3 && <span className="tiny muted">카드는 3번까지 만들 수 있어요.</span>}

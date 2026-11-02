@@ -584,28 +584,33 @@ export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {
   }
   // 반 전체가 한꺼번에 눌러도 되도록 대기열에 넣고 바로 돌아간다. 다 그리면 학생 화면에 저절로 나타난다.
   const projRef = db.doc(`projects/${classId}_${no}`);
-  if (cur.cardStatus === 'making' && Date.now() - (cur.cardReqAt ?? 0) < 10 * 60_000) return { blocked: false, queued: true };
-  await ref.set({ cardStatus: 'making', cardReqLook: look, cardReqStyle: style, cardReqEn: l.en, cardReqAt: Date.now() }, { merge: true });
+  // 그리는 중에 다시 누르면 앞의 요청은 버리고 처음부터 새로 그린다(앞 요청이 늦게 끝나도 덮어쓰지 않는다)
+  const reqId = randomUUID();
+  await ref.set({ cardStatus: 'making', cardReqId: reqId, cardReqLook: look, cardReqStyle: style, cardReqEn: l.en, cardReqAt: Date.now() }, { merge: true });
   await projRef.set({ card: { status: 'making', at: Date.now(), url: cur.cardUrl ?? null, look: cur.cardLook ?? null, style: cur.cardStyle ?? null, tries: cur.cardTries ?? 0 } }, { merge: true });
-  await getFunctions().taskQueue(`locations/${REGION}/functions/runCard`).enqueue({ classId, no }, { dispatchDeadlineSeconds: 600 });
+  await getFunctions().taskQueue(`locations/${REGION}/functions/runCard`).enqueue({ classId, no, reqId }, { dispatchDeadlineSeconds: 600 });
   return { blocked: false, queued: true };
 });
 
 // 대기열 작업자: 주인공 카드 그리기 (한 번에 몇 장씩만 그려서 AI가 바쁘다고 거절하지 않게)
 export const runCard = onTaskDispatched(
   {
-    retryConfig: { maxAttempts: 6, minBackoffSeconds: 15, maxBackoffSeconds: 120 },
-    rateLimits: { maxConcurrentDispatches: 6 },
+    retryConfig: { maxAttempts: 6, minBackoffSeconds: 10, maxBackoffSeconds: 60 },
+    // 반 여러 개가 한꺼번에 눌러도 오래 기다리지 않게 20장씩 동시에 그린다
+    rateLimits: { maxConcurrentDispatches: 20 },
     timeoutSeconds: 300,
     memory: '512MiB',
   },
   async (req) => {
-    const { classId, no } = (req.data ?? {}) as { classId: string; no: number };
+    const { classId, no, reqId } = (req.data ?? {}) as { classId: string; no: number; reqId?: string };
     if (!classId || !Number.isInteger(no)) return;
     const ref = db.doc(`castCache/${classId}_${no}`);
     const projRef = db.doc(`projects/${classId}_${no}`);
     const cur = (await ref.get()).data() ?? {};
     if (cur.cardStatus !== 'making') return;
+    // 학생이 그새 "다시 그리기"를 눌렀으면 이 요청은 버린다
+    const latest = async () => !reqId || (await ref.get()).data()?.cardReqId === reqId;
+    if (!(await latest())) return;
     const look = String(cur.cardReqLook ?? '');
     const style = styleOf(cur.cardReqStyle);
     // 같은 주인공을 그림체만 바꿔 다시 그리면 횟수를 세지 않는다(5번까지)
@@ -624,6 +629,7 @@ export const runCard = onTaskDispatched(
         await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
         url = mediaUrl(path, token);
       }
+      if (!(await latest())) return;
       await ref.set({ cardStatus: 'done', cardPath: path, cardUrl: url, cardLook: look, cardStyle: style, cardTries: tries, ...(styleOnly ? { cardStyleRedos: (cur.cardStyleRedos ?? 0) + 1 } : {}), cardAt: FieldValue.serverTimestamp() }, { merge: true });
       await projRef.set({ card: { status: 'done', url, look, style, tries, at: Date.now() } }, { merge: true });
       await log({ classId, no, kind: '주인공 카드', textKo: `${look} (${style})`, textEn: cur.cardReqEn, verdict: 'pass', action: `카드 만들기 ${tries}/3` });
@@ -631,8 +637,10 @@ export const runCard = onTaskDispatched(
       const safety = e instanceof SafetyBlockedError;
       const last = safety || (req.retryCount ?? 0) >= 5;
       logger.warn('주인공 카드 실패', { classId, no, retry: req.retryCount, err: String(e?.message ?? e).slice(0, 300) });
+      if (!(await latest().catch(() => false))) return;
       if (!last) {
-        await projRef.set({ card: { status: 'making', retry: (req.retryCount ?? 0) + 1 } }, { merge: true });
+        await ref.set({ cardReqAt: Date.now() }, { merge: true });
+        await projRef.set({ card: { status: 'making', retry: (req.retryCount ?? 0) + 1, at: Date.now() } }, { merge: true });
         throw e; // 대기열이 잠시 뒤 다시 그린다
       }
       await ref.set({ cardStatus: 'failed' }, { merge: true });
