@@ -486,6 +486,14 @@ export const STYLE_EN: Record<string, string> = {
   클레이: 'Art style (identical in every scene): handmade claymation stop-motion, plasticine textures with fingerprints, miniature set, soft studio lighting, warm colors.',
   수채화: 'Art style (identical in every scene): soft watercolor illustration, visible paper grain, gentle color bleeding, light pencil outlines, airy pastel palette, no photorealism.',
 };
+// 주인공 카드 첫머리: 무엇으로 만든 그림인지부터 말해야 그림 AI가 그림체를 제대로 따른다(뒤에만 붙이면 그림책풍으로 쏠렸다)
+const STYLE_CARD: Record<string, string> = {
+  그림책: "A warm children's picture-book illustration (soft pastel colors, thin clean outlines, paper texture)",
+  만화: 'A bright 2D cartoon / comic-style drawing with bold black outlines, flat saturated colors and cel shading',
+  '3D 애니메이션': 'A 3D computer-rendered animated-movie character (stylized 3D model, smooth shaded volumes, soft cinematic lighting, NOT a flat 2D drawing)',
+  클레이: 'A photo of a handmade clay figurine for a claymation stop-motion film (real plasticine material, fingerprints, miniature studio set, NOT a drawing)',
+  수채화: 'A loose watercolor painting on textured paper (wet color bleeds, soft edges, light pencil lines, visible paper grain)',
+};
 const styleOf = (v: unknown) => (String(v ?? '') in STYLE_EN ? String(v) : '그림책');
 const SAFE_TAIL = 'Safe for children, fictional people only.';
 // 영상 속 말이 영상 끝에서 잘리지 않게: 짧게, 조금 빠른 보통 속도로, 끝나기 전에 다 말하기
@@ -567,7 +575,8 @@ export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {
   if (cls?.paused) throw new HttpsError('failed-precondition', '선생님이 화면을 잠시 멈췄어요.');
   const ref = db.doc(`castCache/${classId}_${no}`);
   const cur = (await ref.get()).data() ?? {};
-  if ((cur.cardTries ?? 0) >= 3) throw new HttpsError('resource-exhausted', '주인공 카드는 3번까지 만들 수 있어요. 지금 카드로 장면을 만들어 봐요.');
+  const styleOnly = !!cur.cardPath && cur.cardLook === look && cur.cardStyle !== style && (cur.cardStyleRedos ?? 0) < 5;
+  if ((cur.cardTries ?? 0) >= 3 && !styleOnly) throw new HttpsError('resource-exhausted', '주인공 카드는 3번까지 만들 수 있어요. 지금 카드로 장면을 만들어 봐요.');
   const l = await lookEnOf(classId, no, look);
   if (l.blocked) {
     await log({ classId, no, kind: '주인공 카드', textKo: look, verdict: 'blocked', category: l.blocked.category, action: '차단', layer: 'ai' });
@@ -599,13 +608,15 @@ export const runCard = onTaskDispatched(
     if (cur.cardStatus !== 'making') return;
     const look = String(cur.cardReqLook ?? '');
     const style = styleOf(cur.cardReqStyle);
-    const tries = (cur.cardTries ?? 0) + 1;
+    // 같은 주인공을 그림체만 바꿔 다시 그리면 횟수를 세지 않는다(5번까지)
+    const styleOnly = !!cur.cardPath && cur.cardLook === look && cur.cardStyle !== style;
+    const tries = styleOnly ? cur.cardTries ?? 0 : (cur.cardTries ?? 0) + 1;
     try {
       let url = '';
       let path: string | null = null;
       if (CONFIG.videoProvider() === 'omni') {
         const img = await drawImage(
-          [{ text: `Character reference sheet of ONE fictional main character: ${cur.cardReqEn} Full body, front view, friendly neutral pose, centered, plain light background, no text, no other people. ${STYLE_EN[style]} ${SAFE_TAIL}` }],
+          [{ text: `${STYLE_CARD[style]} showing ONE fictional main character as a character reference: ${cur.cardReqEn} Full body, front view, friendly neutral pose, centered, simple plain background, no text, no other people. ${STYLE_EN[style]} The whole picture must clearly be in this "${style}" style. ${SAFE_TAIL}` }],
           '1:1',
         );
         const token = randomUUID();
@@ -613,7 +624,7 @@ export const runCard = onTaskDispatched(
         await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
         url = mediaUrl(path, token);
       }
-      await ref.set({ cardStatus: 'done', cardPath: path, cardUrl: url, cardLook: look, cardStyle: style, cardTries: tries, cardAt: FieldValue.serverTimestamp() }, { merge: true });
+      await ref.set({ cardStatus: 'done', cardPath: path, cardUrl: url, cardLook: look, cardStyle: style, cardTries: tries, ...(styleOnly ? { cardStyleRedos: (cur.cardStyleRedos ?? 0) + 1 } : {}), cardAt: FieldValue.serverTimestamp() }, { merge: true });
       await projRef.set({ card: { status: 'done', url, look, style, tries, at: Date.now() } }, { merge: true });
       await log({ classId, no, kind: '주인공 카드', textKo: `${look} (${style})`, textEn: cur.cardReqEn, verdict: 'pass', action: `카드 만들기 ${tries}/3` });
     } catch (e: any) {

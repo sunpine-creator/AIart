@@ -1125,12 +1125,12 @@ function CastPanel() {
           </div>
           {hasCard && <p className="tiny muted">장면은 주인공 카드의 그림체로 만들어져요. 그림체를 바꾸려면 다른 그림체를 고른 뒤 카드를 다시 만들어요.</p>}
           <div className="actions">
-            <button className="btn ai" disabled={busy || making || !c.look.trim() || tries >= 3 || s.cls.paused} onClick={make}>
+            <button className="btn ai" disabled={busy || making || !c.look.trim() || (tries >= 3 && !(styleChanged && !lookChanged)) || s.cls.paused} onClick={make}>
               {busy ? '보내는 중…' : making ? 'AI가 주인공을 그리는 중…' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
             </button>
             {making && <span className="tiny hint">반 친구들 것과 차례로 그려요{c.cardRetry ? ` · AI가 바빠서 다시 그리는 중(${c.cardRetry}번째)` : ''}. 기다리는 동안 아래 장면 내용을 먼저 써도 돼요.</span>}
             {c.cardStatus === 'failed' && c.cardError && <span className="tiny danger-text">{c.cardError}</span>}
-            {changed && <span className="tiny hint">{styleChanged && !lookChanged ? '그림체를 바꿨어요.' : '주인공 설명을 바꿨어요.'} {tries >= 3 ? '카드를 더 만들 수 없어서 지금 카드의 그림체로 만들어져요.' : '“주인공 카드 다시 만들기”를 눌러야 장면에 반영돼요.'}</span>}
+            {changed && <span className="tiny hint">{styleChanged && !lookChanged ? '그림체를 바꿨어요.' : '주인공 설명을 바꿨어요.'} {tries >= 3 && !(styleChanged && !lookChanged) ? '카드를 더 만들 수 없어서 지금 카드의 그림체로 만들어져요.' : '“주인공 카드 다시 만들기”를 눌러야 장면에 반영돼요.'}{styleChanged && !lookChanged ? ' (그림체만 바꿔 다시 그리는 건 횟수에 안 들어가요)' : ''}</span>}
             {tries >= 3 && <span className="tiny muted">카드는 3번까지 만들 수 있어요.</span>}
           </div>
         </div>
