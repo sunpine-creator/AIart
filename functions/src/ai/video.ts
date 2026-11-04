@@ -37,12 +37,13 @@ export const mockProvider: VideoProvider = {
 const POLL_MS = 4_000; // 다 됐는지 자주 확인해서 끝나자마자 가져온다
 const TIMEOUT_MS = 25 * 60_000;
 
-async function waitDone(id: string): Promise<any> {
+async function waitDone(id: string, until?: number): Promise<any> {
   const ai: any = genai();
   const start = Date.now();
+  const end = Math.min(until ?? Infinity, start + TIMEOUT_MS);
   let it = await ai.interactions.get(id);
   while (it.status === 'in_progress' || it.status === 'queued' || it.status === 'pending') {
-    if (Date.now() - start > TIMEOUT_MS) throw new Error('Omni 생성 시간이 너무 오래 걸려요');
+    if (Date.now() > end) throw new Error('Omni 생성 시간이 너무 오래 걸려요(timeout)');
     await new Promise((r) => setTimeout(r, POLL_MS));
     it = await ai.interactions.get(id);
   }
@@ -72,7 +73,7 @@ async function download(uri: string): Promise<Buffer> {
 }
 
 // 한 번 만들기: 요청 → 끝날 때까지 기다리기 → 영상 꺼내기
-async function runOmni(req: Record<string, any>, sec: number, res: string, aspect: '16:9' | '9:16' = '16:9') {
+async function runOmni(req: Record<string, any>, sec: number, res: string, aspect: '16:9' | '9:16' = '16:9', until?: number) {
   const ai: any = genai();
   // 고치기(edit)는 원래 영상의 화면 비율·길이를 그대로 쓰므로 비율·길이를 보내면 안 된다(400 오류)
   const isEdit = req?.generation_config?.video_config?.task === 'edit' || !!req?.previous_interaction_id;
@@ -93,7 +94,7 @@ async function runOmni(req: Record<string, any>, sec: number, res: string, aspec
     logger.warn('Omni: response_format 에서 빼고 다시', { key });
     created = await ai.interactions.create({ model: CONFIG.omniModel(), background: true, response_format: fmt, ...req });
   }
-  const it = created.status === 'completed' ? created : await waitDone(created.id);
+  const it = created.status === 'completed' ? created : await waitDone(created.id, until);
   if (it.status !== 'completed') {
     const reason = JSON.stringify(it.error ?? it.status);
     if (/safety|blocked|policy/i.test(reason)) throw new SafetyBlockedError(reason);
@@ -105,12 +106,12 @@ async function runOmni(req: Record<string, any>, sec: number, res: string, aspec
 }
 
 // 고른 길이를 모델이 받지 않으면(400) 더 짧은 길이로 다시 시도한다. 실제로 만든 길이를 돌려준다
-async function runOmniSec(req: Record<string, any>, sec: number, res: string, aspect: '16:9' | '9:16' = '16:9'): Promise<VideoResult> {
+async function runOmniSec(req: Record<string, any>, sec: number, res: string, aspect: '16:9' | '9:16' = '16:9', until?: number): Promise<VideoResult> {
   const tries = [sec, ...[8, 6, 5, 4, 3].filter((x) => x < sec)];
   let last: unknown;
   for (const s of tries) {
     try {
-      return { ...(await runOmni(req, s, res, aspect)), sec: s };
+      return { ...(await runOmni(req, s, res, aspect, until)), sec: s };
     } catch (e: any) {
       last = e;
       if (e instanceof SafetyBlockedError) throw e;
@@ -146,6 +147,11 @@ export const omniProvider: VideoProvider = {
       }
     }
     const t2v = { input: job.promptEn, generation_config: { video_config: { task: 'text_to_video' } } };
+    // 작업자 제한(30분) 안에 반드시 끝나도록 단계마다 기다리는 시간을 나눈다.
+    // 예전엔 참고 그림 단계 하나가 25분까지 기다려서, AI가 바쁜 때(수업 후반)에는 끝까지 못 가고 멈췄다.
+    const T0 = Date.now();
+    const END = T0 + 26 * 60_000;
+    const upTo = (min: number) => Math.min(END, Date.now() + min * 60_000);
     if (!job.editEn && (job.refImage || job.prevFrame)) {
       // ⓪ 가장 먼저: 주인공 카드(와 앞 장면 마지막 화면)를 "참고 그림"으로 주고 영상을 만든다(reference_to_video).
       //    모델이 카드의 얼굴·옷·그림체를 직접 보고 그려서 장면마다 주인공·그림체가 가장 잘 맞는다.
@@ -163,19 +169,19 @@ export const omniProvider: VideoProvider = {
         content.push({ type: 'text', text: `${notes.join(' ')} Use the given images as references for video generation; they are not literal first frames. One single continuous shot.\n${job.promptEn}` });
         const cfg = { generation_config: { video_config: { task: 'reference_to_video' } } };
         try {
-          const r = await runOmniSec({ input: content, ...cfg }, job.sec, job.res, job.aspect);
+          const r = await runOmniSec({ input: content, ...cfg }, job.sec, job.res, job.aspect, upTo(9));
           return { ...r, usedRef: true, method: 'reference' };
         } catch (e: any) {
           if (e instanceof SafetyBlockedError) throw e;
           // 입력 모양이 안 맞는다고 하면 user_input 으로 감싸서 한 번 더
           if (!/400|INVALID|invalid_request/i.test(String(e?.message ?? e))) throw e;
           logger.warn('Omni: 참고 그림 영상(첫 형식) 실패, 감싼 형식으로 다시', { err: String(e?.message ?? e).slice(0, 300) });
-          const r = await runOmniSec({ input: [{ type: 'user_input', content }], ...cfg }, job.sec, job.res, job.aspect);
+          const r = await runOmniSec({ input: [{ type: 'user_input', content }], ...cfg }, job.sec, job.res, job.aspect, upTo(9));
           return { ...r, usedRef: true, method: 'reference' };
         }
       } catch (e) {
-        if (e instanceof SafetyBlockedError) throw e;
-        logger.warn('Omni: 참고 그림 영상 실패, 첫 그림 방식으로 다시', { err: String((e as any)?.message ?? e).slice(0, 300) });
+        // 참고 그림(주인공 카드·앞 장면 화면) 때문에 막힌 것일 수 있으니, 여기서 끝내지 않고 다른 방법으로 계속한다
+        logger.warn('Omni: 참고 그림 영상 실패, 첫 그림 방식으로 다시', { safety: e instanceof SafetyBlockedError, err: String((e as any)?.message ?? e).slice(0, 300) });
       }
       // ① 주인공 카드를 보고 이 장면의 첫 그림(같은 주인공·같은 그림체)을 그린다
       // ② 그 그림을 첫 장면으로 영상을 만든다. 어느 단계든 안 되면 글만으로 만든다.
@@ -205,18 +211,17 @@ export const omniProvider: VideoProvider = {
             job.sec,
             job.res,
             job.aspect,
+            upTo(7),
           );
           return { ...r, keyframe: key.bytes, usedRef: true, method: 'keyframe' };
         } catch (e) {
-          if (e instanceof SafetyBlockedError) throw e;
           logger.warn('Omni: 그림으로 시작하는 영상 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
         }
       } catch (e) {
-        if (e instanceof SafetyBlockedError) throw e;
         logger.warn('장면 첫 그림 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    if (!job.editEn) return { ...(await runOmniSec(t2v, job.sec, job.res, job.aspect)), method: 'text' };
+    if (!job.editEn) return { ...(await runOmniSec(t2v, job.sec, job.res, job.aspect, END)), method: 'text' };
     // 수정: ① 이전 결과를 이어서 고치기(previous_interaction_id) → 안 되면 ② 원래 프롬프트에 수정 지시를 합쳐 새로 만들기
     if (job.previousInteractionId) {
       try {
@@ -225,13 +230,14 @@ export const omniProvider: VideoProvider = {
           job.sec,
           job.res,
           job.aspect,
+          upTo(12),
         );
       } catch (e) {
         if (e instanceof SafetyBlockedError) throw e;
         logger.warn('Omni 이어서 고치기 실패, 합친 프롬프트로 새로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    return runOmniSec({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res, job.aspect);
+    return runOmniSec({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res, job.aspect, END);
   },
 };
 
