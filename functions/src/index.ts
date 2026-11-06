@@ -6,6 +6,7 @@ import { getStorage } from 'firebase-admin/storage';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { CallableRequest, HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, pickSec, specFor } from './config';
@@ -179,6 +180,43 @@ export const kickGeneration = onCall(async (req) => {
   await enqueue(genId, g.runId);
   logger.info('kickGeneration', { genId });
   return { ok: true, kicked: true };
+});
+
+// ───────── 자동 점검: 멈춘 영상 만들기를 5분마다 찾아 처음부터 다시 넣는다 ─────────
+// 학생이 버튼을 누르지 않아도 된다. 두 번 다시 넣어도 안 되면 실패로 끝내고 크레딧을 돌려준다.
+export const sweepStuck = onSchedule({ schedule: 'every 5 minutes', timeZone: 'Asia/Seoul', timeoutSeconds: 300, memory: '512MiB' }, async () => {
+  const now = Date.now();
+  const snap = await db.collection('generations').where('status', 'in', ['queued', 'running']).limit(500).get();
+  let restarted = 0;
+  let failed = 0;
+  for (const d of snap.docs) {
+    const g = d.data() as any;
+    const ms = (v: any) => (typeof v === 'number' ? v : v?.toMillis?.() ?? 0);
+    const since = Math.max(ms(g.createdAt), ms(g.kickedAt), ms(g.approvedAt), ms(g.startedAt));
+    // 만드는 중 28분(작업자 제한 30분), 대기 중 10분(AI가 바빠 다시 시도하는 중이면 20분)이 넘으면 멈춘 것으로 본다
+    const limit = g.status === 'running' ? 28 * 60_000 : g.attempt ? 20 * 60_000 : 10 * 60_000;
+    if (now - since < limit) continue;
+    if ((g.sweeps ?? 0) >= 2) {
+      // 세 번째로 멈추면 끝내고 크레딧을 돌려준다(학생이 다시 만들 수 있게)
+      const ok = await db
+        .runTransaction(async (tx) => {
+          const cur = (await tx.get(d.ref)).data();
+          if (!cur || !['queued', 'running'].includes(cur.status)) return false;
+          tx.update(d.ref, { status: 'failed', error: '여러 번 시도했지만 AI가 응답하지 않았어요. 다시 만들어 주세요. (크레딧은 돌려줬어요)' });
+          const sref = db.doc(`classes/${cur.classId}/students/${cur.no}`);
+          tx.update(sref, { ...(cur.charged === false ? {} : { credits: FieldValue.increment(cur.credits ?? 0) }), status: 'idle' });
+          return true;
+        })
+        .catch(() => false);
+      if (ok) failed++;
+      continue;
+    }
+    const runId = randomUUID();
+    await d.ref.update({ status: 'queued', runId, kickedAt: now, sweeps: FieldValue.increment(1), attempt: FieldValue.delete(), startedAt: FieldValue.delete() });
+    await enqueue(d.id, runId);
+    restarted++;
+  }
+  if (restarted || failed) logger.info('sweepStuck', { restarted, failed });
 });
 
 // ───────── 교사: 반 만들기 ─────────
