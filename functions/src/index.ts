@@ -193,8 +193,8 @@ export const sweepStuck = onSchedule({ schedule: 'every 5 minutes', timeZone: 'A
     const g = d.data() as any;
     const ms = (v: any) => (typeof v === 'number' ? v : v?.toMillis?.() ?? 0);
     const since = Math.max(ms(g.createdAt), ms(g.kickedAt), ms(g.approvedAt), ms(g.startedAt));
-    // 만드는 중 28분(작업자 제한 30분), 대기 중 10분(AI가 바빠 다시 시도하는 중이면 20분)이 넘으면 멈춘 것으로 본다
-    const limit = g.status === 'running' ? 28 * 60_000 : g.attempt ? 20 * 60_000 : 10 * 60_000;
+    // 만드는 중 28분(작업자 제한 30분), 대기 중 30분이 넘으면 멈춘 것으로 본다
+    const limit = g.status === 'running' ? 28 * 60_000 : 30 * 60_000; // 대기 중인 것은 다시 넣으면 맨 뒤로 가니 오래 기다린다
     if (now - since < limit) continue;
     if ((g.sweeps ?? 0) >= 2) {
       // 세 번째로 멈추면 끝내고 크레딧을 돌려준다(학생이 다시 만들 수 있게)

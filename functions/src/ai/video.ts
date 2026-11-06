@@ -169,14 +169,14 @@ export const omniProvider: VideoProvider = {
         content.push({ type: 'text', text: `${notes.join(' ')} Use the given images as references for video generation; they are not literal first frames. One single continuous shot.\n${job.promptEn}` });
         const cfg = { generation_config: { video_config: { task: 'reference_to_video' } } };
         try {
-          const r = await runOmniSec({ input: content, ...cfg }, job.sec, job.res, job.aspect, upTo(9));
+          const r = await runOmniSec({ input: content, ...cfg }, job.sec, job.res, job.aspect, upTo(6));
           return { ...r, usedRef: true, method: 'reference' };
         } catch (e: any) {
           if (e instanceof SafetyBlockedError) throw e;
           // 입력 모양이 안 맞는다고 하면 user_input 으로 감싸서 한 번 더
           if (!/400|INVALID|invalid_request/i.test(String(e?.message ?? e))) throw e;
           logger.warn('Omni: 참고 그림 영상(첫 형식) 실패, 감싼 형식으로 다시', { err: String(e?.message ?? e).slice(0, 300) });
-          const r = await runOmniSec({ input: [{ type: 'user_input', content }], ...cfg }, job.sec, job.res, job.aspect, upTo(9));
+          const r = await runOmniSec({ input: [{ type: 'user_input', content }], ...cfg }, job.sec, job.res, job.aspect, upTo(6));
           return { ...r, usedRef: true, method: 'reference' };
         }
       } catch (e) {
@@ -211,7 +211,7 @@ export const omniProvider: VideoProvider = {
             job.sec,
             job.res,
             job.aspect,
-            upTo(7),
+            upTo(5),
           );
           return { ...r, keyframe: key.bytes, usedRef: true, method: 'keyframe' };
         } catch (e) {
