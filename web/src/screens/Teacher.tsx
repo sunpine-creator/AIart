@@ -457,6 +457,36 @@ function DeleteClass({ onClose }: { onClose: () => void }) {
 }
 
 // 학생 작품 모아 보기: 완성 영상, 학생이 올린 영상, 장면으로 정한 AI 영상
+// 주인공 다시 만들기 허락: 체크한 학생만 주인공 카드를 한 번 다시 만들 수 있다(다시 만들면 체크가 저절로 풀린다)
+function CardRedoBox({ roster }: { roster: { no: number; nick: string; cardRedo?: boolean }[] }) {
+  const { d } = useStore();
+  const on = roster.filter((r) => r.cardRedo).length;
+  return (
+    <details className="card-redo mt">
+      <summary>
+        <strong>주인공 다시 만들기 허락</strong> <span className="tiny muted">지금 {on}명 허락함</span>
+      </summary>
+      <p className="tiny muted">체크한 학생은 주인공 카드를 한 번 다시 만들 수 있어요. 다시 만들면 체크가 저절로 풀려요. 또 주려면 다시 체크해요.</p>
+      <div className="actions">
+        <button className="btn tiny" onClick={() => d({ t: 'cardRedo', nos: roster.map((r) => r.no), on: true })}>
+          모두 체크
+        </button>
+        <button className="btn tiny" onClick={() => d({ t: 'cardRedo', nos: roster.map((r) => r.no), on: false })}>
+          모두 해제
+        </button>
+      </div>
+      <div className="redo-grid">
+        {roster.map((r) => (
+          <label key={r.no} className="redo-item">
+            <input type="checkbox" checked={!!r.cardRedo} onChange={(e) => d({ t: 'cardRedo', nos: [r.no], on: e.target.checked })} />
+            <span className="mono">{r.no}</span> {r.nick || '(미입장)'}
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function StudentWorks() {
   const { s, d } = useStore();
   const [list, setList] = useState<StudentWork[] | null>(null);
@@ -788,6 +818,7 @@ function Dashboard() {
             ))}
           </div>
           <p className="tiny muted">카드를 누르면 오른쪽에 그 학생의 프롬프트 기록이 보여요.</p>
+          <CardRedoBox roster={roster} />
           {s.band === 'middle' && <QuizSummary />}
         </section>
 

@@ -37,7 +37,7 @@ service cloud.firestore {
       match /students/{no} {
         allow read: if ownsClass(classId) || inClass(classId);
         allow update: if (isStudentNo(classId, no) && onlyChanges(['stage', 'lastSeen', 'quiz']))
-                      || (ownsClass(classId) && onlyChanges(['credits']));
+                      || (ownsClass(classId) && onlyChanges(['credits', 'cardRedo']));
         allow create, delete: if false;
       }
       // 노트북 화면 공유 신호(교사 요청·학생 허락). 해당 학생과 반 담당 교사만

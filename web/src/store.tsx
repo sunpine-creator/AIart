@@ -36,7 +36,7 @@ export type Gen = {
 export type Log = { id: string; at: number; who: number; kind: string; textKo: string; textEn?: string; verdict: 'pass' | 'blocked'; category?: string; action: string };
 export type Upload = { id: string; name: string; url: string; path?: string; styledPath?: string; styledUrl?: string; styledGenId?: string; useStyled?: boolean; srcDur: number; start?: number; capStyle?: CapStyle; dur: number; caption: string; voice: string; playable: boolean; voicePath?: string; voiceUrl?: string; dl?: string };
 export type ExportInfo = { path: string; url?: string; at: number; dur: number; aspect?: '16:9' | '9:16'; topic?: string };
-export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
+export type MockStudent = { no: number; nick: string; stage: Stage; credits: number; cardRedo?: boolean; status: 'idle' | 'waiting' | 'making' | 'blocked' | 'done'; quiz?: { right: number; total: number } };
 export type Approval = { id: string; no: number; nick: string; promptKo: string; promptEn: string; genId?: string; flag?: { category: string; reason: string }; sceneNo?: number; sceneLine?: string; kind?: string; sec?: number; editText?: string };
 export type ClassInfo = { id: string; title: string; school?: string; code: string; band: Band; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; size: number; ended?: boolean };
 
@@ -58,6 +58,7 @@ export type State = {
   cls: { title: string; school?: string; code: string; open: Stage; paused: boolean; approval: boolean; videoInMiddle: boolean; budget: number; ended?: boolean; studentMaxKrw?: number; studentDailyCredits?: number };
   tab: Stage;
   credits: number;
+  cardRedo: boolean; // 선생님이 주인공 다시 만들기를 허락했는지
   sortCards: Record<string, 'ai' | 'human' | undefined>;
   prmCmp: Record<string, { pick?: 'a' | 'b'; missing?: PromptPart[]; checked?: boolean }>;
   prmSort: Record<string, PromptPart | undefined>;
@@ -134,7 +135,7 @@ function emptyProject(band: Band) {
 const base: State = {
   role: 'loading', view: 'student', band: 'elementary', joined: false, me: { no: 0, nick: '' }, classId: '',
   cls: { title: '', code: '', open: 1, paused: false, approval: true, videoInMiddle: false, budget: 0 },
-  tab: 1, credits: 0, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', works: [], serverRendering: false, renderStep: '', renderError: '', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
+  tab: 1, credits: 0, cardRedo: false, sortCards: {}, prmCmp: {}, prmSort: {}, prmSortDone: false, prmThink: '', cast: { look: '', place: '', style: '그림책' }, flow: {}, editNote: '', reflect: '', aspect: '16:9', works: [], serverRendering: false, renderStep: '', renderError: '', topic: '', story: { who: '', where: '', what: '', event: '', feeling: '' },
   brief: { audience: '', purpose: '', message: '' }, scenario: { builder: { goal: '', role: '', content: '', cond: '' }, draft: [], marked: [], final: '' },
   scenes: [], gens: [], logs: [], intro: { dur: 3, caption: '' }, outro: { dur: 3, caption: '' }, bgm: '없음', uploads: [], order: [],
   checklist: {}, aiNote: '', self: {}, peer: {}, submitted: false, spent: 0, others: [], approvals: [], otherQueue: 0,
@@ -164,6 +165,7 @@ export type Action =
   | { t: 'tick' }
   | { t: 'toast'; msg?: string }
   | { t: 'addCredits'; amount: number }
+  | { t: 'cardRedo'; nos: number[]; on: boolean }
   | { t: 'quizDone'; right: number; total: number };
 
 const Ctx = createContext<{ s: State; d: (a: Action) => void } | null>(null);
@@ -426,6 +428,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         : base.cls,
       tab: local.tab,
       credits: student?.credits ?? 0,
+      cardRedo: !!student?.cardRedo,
       sortCards: p.sortCards ?? {},
       prmCmp: p.prmCmp ?? {},
       prmSort: p.prmSort ?? {},
@@ -465,7 +468,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       peer: p.peer ?? {},
       submitted: !!p.submitted,
       spent: Math.round(usage * 100) / 100,
-      others: students.map((x) => ({ no: x.no, nick: x.nick || '', stage: x.stage, credits: x.credits, status: x.status, quiz: x.quiz ?? undefined })),
+      others: students.map((x) => ({ no: x.no, nick: x.nick || '', stage: x.stage, credits: x.credits, cardRedo: !!x.cardRedo, status: x.status, quiz: x.quiz ?? undefined })),
       approvals: [...pending].sort((a, b) => a.no - b.no || (a.sceneNo ?? 99) - (b.sceneNo ?? 99)).map((g) => ({ id: g.id, genId: g.id, no: g.no, nick: nickByNo(g.no), promptKo: g.editText ? `${g.promptKo}` : g.promptKo, promptEn: g.promptEn ?? '', sceneNo: g.sceneNo ?? undefined, sceneLine: g.sceneLine ?? '', kind: g.kind, sec: g.sec, editText: g.editText ?? undefined, flag: g.status === 'flagged' ? { category: g.flag?.category ?? '안전 검사', reason: g.flag?.reason ?? '' } : undefined })),
       selectedStudent: local.selectedStudent,
       peers: peers.map((p) => ({ ...p, nick: nickByNo(p.no) })),
@@ -647,6 +650,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         patchProject({ prmSortDone: true });
         if (claims.classId)
           updateDoc(doc(db, 'classes', claims.classId, 'students', String(claims.no)), { quiz: { right: a.right, total: a.total, at: Date.now() } }).catch(() => {});
+        return;
+      }
+      case 'cardRedo': {
+        // 선생님: 학생에게 주인공 다시 만들기 기회를 준다(체크) / 거둔다
+        if (!s.classId) return;
+        Promise.all(a.nos.map((n: number) => updateDoc(doc(db, 'classes', s.classId, 'students', String(n)), { cardRedo: a.on }))).catch((e) => toast(errText(e)));
         return;
       }
       case 'addCredits': {

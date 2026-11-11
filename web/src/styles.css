@@ -914,3 +914,8 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 
 /* 자막 글씨 지우기 버튼: 손가락으로 누르기 쉽게 크게 */
 .desub-btn { min-height: 44px; position: relative; z-index: 3; touch-action: manipulation; }
+
+/* 주인공 다시 만들기 허락 */
+.card-redo summary { cursor: pointer; padding: 6px 0; }
+.redo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 10px; margin-top: 8px; }
+.redo-item { display: flex; align-items: center; gap: 6px; font-size: 14px; }

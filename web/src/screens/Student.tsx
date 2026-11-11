@@ -1114,7 +1114,8 @@ function CastPanel() {
   // 서버가 쓰는 등장인물 카드 결과(extraCards)는 학생 저장본에 넣지 않는다
   const set = (patch: Partial<typeof c>) => d({ t: 'set', patch: { cast: (({ extraCards, ...rest }) => rest)({ ...c, ...patch }) } });
   const hasCard = !!c.cardUrl;
-  const tries = c.tries ?? 0;
+  // 카드가 있으면 선생님이 허락(체크)해 줘야 다시 만들 수 있다. 그리는 중에 다시 누르는 건 괜찮다
+  const locked = hasCard && !s.cardRedo && c.cardStatus !== 'making';
   const lookChanged = hasCard && c.cardLook !== c.look;
   const styleChanged = hasCard && !!c.cardStyle && c.cardStyle !== c.style;
   const changed = (lookChanged || styleChanged) && c.cardStatus !== 'making';
@@ -1148,7 +1149,7 @@ function CastPanel() {
     <section className="panel cast-panel">
       <div className="panel-head">
         <h3>① 주인공 카드 만들기</h3>
-        <span className="tiny muted">장면을 만들기 전에 먼저 해요 · {tries}/3번 사용</span>
+        <span className="tiny muted">장면을 만들기 전에 먼저 해요{hasCard ? (s.cardRedo ? ' · 선생님이 다시 만들기를 허락했어요(1번)' : ' · 다시 만들려면 선생님 허락이 필요해요') : ''}</span>
       </div>
       <div className="cast-body">
         <div className="cast-form">
@@ -1169,14 +1170,14 @@ function CastPanel() {
           </div>
           {hasCard && <p className="tiny muted">장면은 주인공 카드의 그림체로 만들어져요. 그림체를 바꾸려면 다른 그림체를 고른 뒤 카드를 다시 만들어요.</p>}
           <div className="actions">
-            <button className="btn ai" disabled={busy || !c.look.trim() || (tries >= 3 && !(styleChanged && !lookChanged)) || s.cls.paused} onClick={make}>
+            <button className="btn ai" disabled={busy || !c.look.trim() || locked || s.cls.paused} onClick={make}>
               {busy ? '보내는 중…' : making || stuck ? '↺ 처음부터 다시 그리기' : hasCard ? '주인공 카드 다시 만들기' : '주인공 카드 만들기'}
             </button>
             {making && <span className="tiny hint">반 친구들 것과 차례로 그려요{c.cardRetry ? ` · AI가 바빠서 다시 그리는 중(${c.cardRetry}번째)` : ''}. 기다리는 동안 아래 장면 내용을 먼저 써도 돼요. 너무 오래 걸리면 “처음부터 다시 그리기”를 눌러요(횟수는 줄지 않아요).</span>}
             {stuck && <span className="tiny hint">3분 넘게 걸리고 있어요. “처음부터 다시 그리기”를 눌러 주세요(횟수는 줄지 않아요).</span>}
             {c.cardStatus === 'failed' && c.cardError && <span className="tiny danger-text">{c.cardError}</span>}
-            {changed && <span className="tiny hint">{styleChanged && !lookChanged ? '그림체를 바꿨어요.' : '주인공 설명을 바꿨어요.'} {tries >= 3 && !(styleChanged && !lookChanged) ? '카드를 더 만들 수 없어서 지금 카드의 그림체로 만들어져요.' : '“주인공 카드 다시 만들기”를 눌러야 장면에 반영돼요.'}{styleChanged && !lookChanged ? ' (그림체만 바꿔 다시 그리는 건 횟수에 안 들어가요)' : ''}</span>}
-            {tries >= 3 && <span className="tiny muted">카드는 3번까지 만들 수 있어요.</span>}
+            {changed && <span className="tiny hint">{styleChanged && !lookChanged ? '그림체를 바꿨어요.' : '주인공 설명을 바꿨어요.'} {locked ? '지금 카드로 장면이 만들어져요. 바꾸려면 선생님께 “주인공 다시 만들기” 허락을 받아요.' : '“주인공 카드 다시 만들기”를 눌러야 장면에 반영돼요.'}</span>}
+            {locked && !changed && <span className="tiny muted">주인공을 다시 만들려면 선생님께 허락을 받아요.</span>}
           </div>
         </div>
         <div className="cast-card">

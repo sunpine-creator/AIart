@@ -653,7 +653,11 @@ export const makeCharacter = onCall({ timeoutSeconds: 120 }, async (req) => {
   const ref = db.doc(`castCache/${classId}_${no}`);
   const cur = (await ref.get()).data() ?? {};
   const styleOnly = !!cur.cardPath && cur.cardLook === look && cur.cardStyle !== style && (cur.cardStyleRedos ?? 0) < 5;
-  if ((cur.cardTries ?? 0) >= 3 && !styleOnly) throw new HttpsError('resource-exhausted', '주인공 카드는 3번까지 만들 수 있어요. 지금 카드로 장면을 만들어 봐요.');
+  // 이미 카드가 있으면 선생님이 "주인공 다시 만들기"를 허락(체크)했을 때만 다시 그린다. 그리는 중에 다시 누르는 건 괜찮다
+  if (cur.cardPath && cur.cardStatus !== 'making') {
+    const st = (await db.doc(`classes/${classId}/students/${no}`).get()).data();
+    if (!st?.cardRedo) throw new HttpsError('permission-denied', '주인공을 다시 만들려면 선생님께 허락을 받아요. 선생님이 체크해 주면 한 번 다시 만들 수 있어요.');
+  }
   const l = await lookEnOf(classId, no, look);
   if (l.blocked) {
     await log({ classId, no, kind: '주인공 카드', textKo: look, verdict: 'blocked', category: l.blocked.category, action: '차단', layer: 'ai' });
@@ -707,6 +711,8 @@ export const runCard = onTaskDispatched(
         url = mediaUrl(path, token);
       }
       if (!(await latest())) return;
+      // 다시 만들기였으면 선생님이 준 기회를 한 번 쓴다
+      if (cur.cardPath) await db.doc(`classes/${classId}/students/${no}`).update({ cardRedo: false }).catch(() => {});
       await ref.set({ cardStatus: 'done', cardPath: path, cardUrl: url, cardLook: look, cardStyle: style, cardTries: tries, ...(styleOnly ? { cardStyleRedos: (cur.cardStyleRedos ?? 0) + 1 } : {}), cardAt: FieldValue.serverTimestamp() }, { merge: true });
       await projRef.set({ card: { status: 'done', url, look, style, tries, at: Date.now() } }, { merge: true });
       await log({ classId, no, kind: '주인공 카드', textKo: `${look} (${style})`, textEn: cur.cardReqEn, verdict: 'pass', action: `카드 만들기 ${tries}/3` });
