@@ -732,6 +732,43 @@ export const runCard = onTaskDispatched(
   },
 );
 
+// ───────── 그림체 예시 그림 ─────────
+// 학생이 그림체를 고르기 전에 볼 수 있게, 그림체마다 같은 장면을 한 장씩 그려 둔다(처음 한 번만 그리고 계속 쓴다)
+const SAMPLE_SCENE =
+  'a cheerful fictional child with short black hair, a yellow raincoat and red boots, standing next to a small round friendly helper robot in a cozy living room by a rainy window, full body, centered, no text';
+export const styleSamples = onCall({ timeoutSeconds: 300, memory: '512MiB' }, async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', '먼저 들어와 주세요.');
+  const ref = db.doc('config/styleSamples');
+  const cur = (await ref.get()).data() ?? {};
+  const urls: Record<string, string> = { ...(cur.urls ?? {}) };
+  const keys = Object.keys(STYLE_EN);
+  const missing = keys.filter((k) => !urls[k]);
+  if (!missing.length || CONFIG.videoProvider() !== 'omni') return { urls, pending: false };
+  // 반 전체가 동시에 열어도 한 번만 그리게 잠근다
+  const got = await db.runTransaction(async (tx) => {
+    const d = (await tx.get(ref)).data() ?? {};
+    if (d.lockAt && Date.now() - d.lockAt < 4 * 60_000) return false;
+    tx.set(ref, { lockAt: Date.now() }, { merge: true });
+    return true;
+  });
+  if (!got) return { urls, pending: true };
+  await Promise.all(
+    missing.map(async (k) => {
+      try {
+        const img = await drawImage([{ text: `${STYLE_CARD[k]}: ${SAMPLE_SCENE}. ${STYLE_EN[k]} ${SAFE_TAIL}` }], '1:1');
+        const token = randomUUID();
+        const path = `samples/style_${keys.indexOf(k)}_${Date.now()}.png`;
+        await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
+        urls[k] = mediaUrl(path, token);
+      } catch (e: any) {
+        logger.warn('그림체 예시 그리기 실패', { style: k, err: String(e?.message ?? e).slice(0, 200) });
+      }
+    }),
+  );
+  await ref.set({ urls, lockAt: FieldValue.delete() }, { merge: true });
+  return { urls, pending: keys.some((k) => !urls[k]) };
+});
+
 // ───────── 학생: 등장인물 카드 (가족·친구 등, 4명까지) ─────────
 // 주인공 카드와 같은 그림체로 그린다. 장면 글에 이름이 나오면 그 장면에 자동으로 함께 쓴다.
 export const makeExtra = onCall({ timeoutSeconds: 120 }, async (req) => {

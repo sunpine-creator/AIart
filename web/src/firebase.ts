@@ -109,6 +109,7 @@ export const api = {
   classSpend: call<{ classId: string }, { by: Record<string, { totalKrw: number; todayKrw: number }>; rate: number }>('classSpend'),
   removeSubs: call<{ sceneId: string }, { genId: string; credits: number }>('removeSubs'),
   newProject: call<Record<string, never>, { ok: boolean; round: number }>('newProject'),
+  styleSamples: call<Record<string, never>, { urls: Record<string, string>; pending?: boolean }>('styleSamples', 300_000),
   makeExtra: call<{ slot: number; name: string; look: string }, { blocked: boolean; reason?: string; suggestion?: string; queued?: boolean }>('makeExtra', 120_000),
   makeCharacter: call<{ look: string; style: string }, { blocked: boolean; reason?: string; suggestion?: string; url?: string; tries?: number; queued?: boolean }>('makeCharacter', 120_000),
   renderVideo: call<{ overlays: { intro?: string; outro?: string; clips: Record<string, string>; caps: Record<string, string[]> } }, { queued: boolean; renderId: string }>('renderVideo', 120_000),

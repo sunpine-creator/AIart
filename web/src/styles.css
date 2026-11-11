@@ -919,3 +919,10 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .card-redo summary { cursor: pointer; padding: 6px 0; }
 .redo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 10px; margin-top: 8px; }
 .redo-item { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+
+/* 그림체 고르기(예시 그림) */
+.style-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; width: 100%; }
+.style-opt { display: grid; gap: 4px; padding: 6px; border: 2px solid var(--line); border-radius: 12px; background: var(--surface, transparent); text-align: center; cursor: pointer; color: inherit; font: inherit; }
+.style-opt.on { border-color: var(--human, #2f6fde); box-shadow: 0 0 0 2px var(--human-soft, rgba(47,111,222,.25)); }
+.style-img { aspect-ratio: 1; border-radius: 8px; background: var(--sunk); display: grid; place-items: center; overflow: hidden; }
+.style-img img { width: 100%; height: 100%; object-fit: cover; }

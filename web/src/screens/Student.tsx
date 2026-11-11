@@ -1075,6 +1075,49 @@ function FlowCheck() {
 // ───────────── 모든 장면에 똑같이: 주인공·배경·그림 스타일 ─────────────
 // 장면마다 따로 만들면 주인공과 배경이 바뀌기 쉬워서, 여기 쓴 설정을 모든 장면 프롬프트에 함께 보낸다.
 const STYLES = ['그림책', '만화', '3D 애니메이션', '클레이', '수채화'];
+const STYLE_NOTE: Record<string, string> = {
+  그림책: '부드러운 파스텔 색, 동화책 그림',
+  만화: '굵은 선, 쨍한 색의 만화',
+  '3D 애니메이션': '입체적인 3D 애니메이션 영화',
+  클레이: '찰흙 인형으로 찍은 영상',
+  수채화: '물감이 번지는 수채화',
+};
+// 그림체 예시 그림: 한 번 불러오면 이 화면에서 계속 쓴다
+let sampleCache: Record<string, string> | null = null;
+function StylePicker({ value, onPick }: { value: string; onPick: (st: string) => void }) {
+  const [urls, setUrls] = useState<Record<string, string>>(sampleCache ?? {});
+  useEffect(() => {
+    if (sampleCache && STYLES.every((k) => sampleCache![k])) return;
+    let stop = false;
+    let n = 0;
+    const load = () =>
+      api
+        .styleSamples({})
+        .then((r) => {
+          if (stop) return;
+          sampleCache = r.urls;
+          setUrls(r.urls);
+          // 아직 그리는 중이면 잠시 뒤 다시 확인한다(몇 번만)
+          if (r.pending && n++ < 6) window.setTimeout(load, 20_000);
+        })
+        .catch(() => {});
+    load();
+    return () => {
+      stop = true;
+    };
+  }, []);
+  return (
+    <div className="style-pick" role="radiogroup" aria-label="그림체">
+      {STYLES.map((st) => (
+        <button key={st} type="button" role="radio" aria-checked={value === st} className={`style-opt ${value === st ? 'on' : ''}`} onClick={() => onPick(st)}>
+          <span className="style-img">{urls[st] ? <img src={urls[st]} alt={`${st} 그림체 예시`} loading="lazy" /> : <span className="tiny muted">예시 준비 중…</span>}</span>
+          <strong>{st}</strong>
+          <span className="tiny muted">{STYLE_NOTE[st]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 // 영상 방향: 가로(16:9) 또는 세로(9:16, 공모전·쇼츠 1080x1920). 새로 만드는 장면과 완성 영상이 이 방향으로 만들어진다
 function AspectPanel({ compact }: { compact?: boolean }) {
   const { s, d } = useStore();
@@ -1160,13 +1203,7 @@ function CastPanel() {
           </div>
           <div className="cs-row">
             <span className="cs-label">그림체</span>
-            <div className="pills">
-              {STYLES.map((st) => (
-                <button key={st} type="button" className={`pill ${c.style === st ? 'on' : ''}`} aria-pressed={c.style === st} onClick={() => set({ style: st })}>
-                  {st}
-                </button>
-              ))}
-            </div>
+            <StylePicker value={c.style} onPick={(st) => set({ style: st })} />
           </div>
           {hasCard && <p className="tiny muted">장면은 주인공 카드의 그림체로 만들어져요. 그림체를 바꾸려면 다른 그림체를 고른 뒤 카드를 다시 만들어요.</p>}
           <div className="actions">
