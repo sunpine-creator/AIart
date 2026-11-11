@@ -1193,8 +1193,11 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
   const f = req.data ?? {};
   const t = (k: string) => String(f[k] ?? '').trim().slice(0, 120);
   const sheet = { topic: t('topic'), who: t('who'), when: t('when'), where: t('where'), what: t('what'), how: t('event'), why: t('why'), feeling: t('feeling'), free: String(f.free ?? '').trim().slice(0, 400) };
+  // 등장인물 카드 이름: 초안에 이 이름을 그대로 써야 장면에 카드가 들어간다
+  const names = String(f.names ?? '').split(',').map((x) => x.trim().slice(0, 10)).filter(Boolean).slice(0, 4);
   const joined = Object.values(sheet).filter(Boolean).join(' / ');
   if (!joined) throw new HttpsError('invalid-argument', '활동지를 먼저 써 주세요.');
+  const namesNote = names.length ? `\n등장인물 카드 이름(장면에 이 사람이 나오면 who·line 에 이 이름을 글자 그대로 쓴다. 다른 호칭으로 바꾸지 않는다): ${names.join(', ')}` : '';
   const r = moderateRules(joined);
   if (!r.pass) {
     await log({ classId, no, kind: '장면 초안', textKo: joined, verdict: 'blocked', category: r.category, action: '차단', layer: 'rule' });
@@ -1221,8 +1224,8 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
           parts: [
             {
               text: sheet.free
-                ? `제목: ${sheet.topic}\n학생이 문장으로 쓴 이야기: ${sheet.free}\n기분: ${sheet.feeling}`
-                : `제목: ${sheet.topic}\n누가: ${sheet.who}\n언제: ${sheet.when}\n어디서: ${sheet.where}\n무엇을(어떤 AI와): ${sheet.what}\n어떻게: ${sheet.how}\n왜: ${sheet.why}\n기분: ${sheet.feeling}`,
+                ? `제목: ${sheet.topic}\n학생이 문장으로 쓴 이야기: ${sheet.free}\n기분: ${sheet.feeling}${namesNote}`
+                : `제목: ${sheet.topic}\n누가: ${sheet.who}\n언제: ${sheet.when}\n어디서: ${sheet.where}\n무엇을(어떤 AI와): ${sheet.what}\n어떻게: ${sheet.how}\n왜: ${sheet.why}\n기분: ${sheet.feeling}${namesNote}`,
             },
           ],
         },

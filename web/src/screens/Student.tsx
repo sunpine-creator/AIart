@@ -1327,13 +1327,17 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
   const st = s.story;
   const filled = st.mode === 'free' ? (String(st.free ?? '').trim().length >= 10 ? 2 : 0) + (s.topic.trim() ? 1 : 0) : [s.topic, st.who, st.when, st.where, st.what, st.event, st.why].filter((x) => String(x ?? '').trim()).length;
   const used = s.gens.some((g) => ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
+  // 주인공 카드(와 그리는 중인 등장인물 카드)가 다 된 뒤에 누를 수 있다
+  const castReady = (!!s.cast.cardUrl || s.cast.cardStatus === 'done') && s.cast.cardStatus !== 'making';
+  const extraMaking = Object.values(s.cast.extraCards ?? {}).some((x) => x?.status === 'making');
+  const names = Object.values(s.cast.extraCards ?? {}).filter((x) => x?.status === 'done' && x.name).map((x) => x!.name as string);
   const run = () => {
     setBusy(true);
     api
       .draftScenes(
         st.mode === 'free'
-          ? { topic: s.topic, free: st.free ?? '', feeling: st.feeling }
-          : { topic: s.topic, who: st.who, when: st.when ?? '', where: st.where, what: st.what, event: st.event, why: st.why ?? '', feeling: st.feeling },
+          ? { topic: s.topic, free: st.free ?? '', feeling: st.feeling, names: names.join(',') }
+          : { topic: s.topic, who: st.who, when: st.when ?? '', where: st.where, what: st.what, event: st.event, why: st.why ?? '', feeling: st.feeling, names: names.join(',') },
       )
       .then((r) => {
         if (r.blocked) return d({ t: 'toast', msg: `활동지에 고쳐야 할 표현이 있어요: ${r.reason}` });
@@ -1357,16 +1361,19 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
   return (
     <section className="panel draft-box">
       <div>
-        <strong>활동지로 장면 초안 만들기</strong>
+        <strong>③ 활동지로 장면 초안 만들기</strong>
         <p className="tiny muted">
           2단계 활동지(육하원칙이나 내가 쓴 문장, 기분)를 AI가 읽고 장면 3~5개와 장면마다 육하원칙을 채워 줘요. 초안일 뿐이니 내 생각과 다르면 고쳐 써요.
           {used && ' 이미 영상을 만든 장면은 그대로 두고 나머지만 바꿔요.'}
         </p>
       </div>
       <div className="actions">
-        <button className="btn ai" disabled={busy || filled < 2 || s.cls.paused} onClick={run}>
+        <button className="btn ai" disabled={busy || filled < 2 || !castReady || extraMaking || s.cls.paused} onClick={run}>
           {busy ? 'AI가 초안을 만드는 중…' : '장면 초안 만들기'}
         </button>
+        {!castReady && <span className="tiny hint">위에서 주인공 카드를 먼저 만들어요. 가족·친구가 나오면 등장인물 카드도 만든 뒤 눌러요.</span>}
+        {castReady && extraMaking && <span className="tiny hint">등장인물 카드를 그리는 중이에요. 다 되면 누를 수 있어요.</span>}
+        {castReady && names.length > 0 && <span className="tiny muted">등장인물 {names.join(', ')}이(가) 초안에 그 이름 그대로 들어가요.</span>}
         {filled < 2 && (
           <button className="link" onClick={() => d({ t: 'set', patch: { tab: 2 } })}>
             먼저 활동지를 써요
@@ -1394,10 +1401,10 @@ function S3() {
         lead={`활동지를 보며 장면을 AI로 만들어 봐요. ${word === '영상' ? '3초짜리 영상' : '이미지'}을 만들어 보고, 마음에 들면 그 결과로 장면을 정해요. 고치고 싶으면 한 번 고칠 수 있어요. 이야기로 엮는 건 다음 단계에서 해요.`}
       />
       <SheetSummary />
-      {s.band === 'elementary' && <SceneDraftBox onPick={setSel} />}
       <AspectPanel />
       <CastPanel />
       <ExtraCast />
+      {s.band === 'elementary' && <SceneDraftBox onPick={setSel} />}
       <WorldPanel />
       <div className="make">
         <aside className="scene-list" aria-label="장면 목록">
