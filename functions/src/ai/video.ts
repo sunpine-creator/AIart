@@ -154,7 +154,27 @@ export const omniProvider: VideoProvider = {
     const END = T0 + 26 * 60_000;
     const upTo = (min: number) => Math.min(END, Date.now() + min * 60_000);
     const extras = (job.extraRefs ?? []).slice(0, 2);
-    if (!job.editEn && (job.refImage || job.prevFrame || extras.length)) {
+    // 고치기: ① 원래 영상을 이어서 고친다(주인공·배경이 그대로 남는다).
+    //        ② 안 되면 아래의 "주인공 카드를 참고 그림으로" 방식으로, 원래 장면 + 고칠 점을 합친 글로 새로 만든다.
+    //        (예전엔 ②에서 카드 없이 글로만 만들어 주인공이 바뀌었다)
+    if (job.editEn && job.previousInteractionId) {
+      try {
+        return {
+          ...(await runOmniSec(
+            { input: job.editEn, previous_interaction_id: job.previousInteractionId, generation_config: { video_config: { task: 'edit' } } },
+            job.sec,
+            job.res,
+            job.aspect,
+            upTo(10),
+          )),
+          method: 'edit',
+        };
+      } catch (e) {
+        if (e instanceof SafetyBlockedError) throw e;
+        logger.warn('Omni 이어서 고치기 실패, 주인공 카드로 새로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
+      }
+    }
+    if (job.refImage || job.prevFrame || extras.length) {
       // ⓪ 가장 먼저: 주인공 카드(와 앞 장면 마지막 화면)를 "참고 그림"으로 주고 영상을 만든다(reference_to_video).
       //    모델이 카드의 얼굴·옷·그림체를 직접 보고 그려서 장면마다 주인공·그림체가 가장 잘 맞는다.
       try {
@@ -233,23 +253,8 @@ export const omniProvider: VideoProvider = {
         logger.warn('장면 첫 그림 실패, 글만으로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
       }
     }
-    if (!job.editEn) return { ...(await runOmniSec(t2v, job.sec, job.res, job.aspect, END)), method: 'text' };
-    // 수정: ① 이전 결과를 이어서 고치기(previous_interaction_id) → 안 되면 ② 원래 프롬프트에 수정 지시를 합쳐 새로 만들기
-    if (job.previousInteractionId) {
-      try {
-        return await runOmniSec(
-          { input: job.editEn, previous_interaction_id: job.previousInteractionId, generation_config: { video_config: { task: 'edit' } } },
-          job.sec,
-          job.res,
-          job.aspect,
-          upTo(12),
-        );
-      } catch (e) {
-        if (e instanceof SafetyBlockedError) throw e;
-        logger.warn('Omni 이어서 고치기 실패, 합친 프롬프트로 새로 만듭니다', { err: String((e as any)?.message ?? e).slice(0, 300) });
-      }
-    }
-    return runOmniSec({ ...t2v, input: `${job.promptEn}` }, job.sec, job.res, job.aspect, END);
+    // 마지막: 글만으로 만들기(고치기였다면 원래 장면 + 고칠 점을 합친 글로)
+    return { ...(await runOmniSec(t2v, job.sec, job.res, job.aspect, END)), method: 'text' };
   },
 };
 

@@ -402,7 +402,18 @@ async function requestGenerationImpl(req: CallableRequest) {
       }
       if (!c.safe && !flag) flag = { category: c.category ?? '기타', reason: c.reasonKo ?? '확인이 필요한 표현이 있어요.', suggestion: c.suggestionKo ?? '다른 말로 바꿔 써 보세요.', layer: 'ai' };
       const english = c.english || checkText;
-      if (kind === 'edit') { editEn = `${NO_TEXT_HEAD}${english} ${KO_TAIL} ${speechFit(spec.sec)}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
+      if (kind === 'edit') {
+        editEn = `${NO_TEXT_HEAD}Change ONLY this: ${english} Keep everything else exactly the same as the original video — the same main character (same face, hairstyle, clothes) and the same other characters, the same place, background, lighting and art style. ${KO_TAIL} ${speechFit(spec.sec)}`;
+        promptEn = `${parent!.promptEn} Change: ${english}`;
+        // 원래 장면의 주인공·등장인물 카드를 그대로 이어 쓴다
+        refPath = parent!.refPath ?? null;
+        extraRefs = (parent!.extraRefs ?? []) as { name: string; path: string }[];
+        if (!refPath) {
+          const cast = await withTimeout(castPrefix(classId, no, `${parent!.promptKo ?? ''} ${editText}`), 25_000, { text: '', style: '' } as CastOut);
+          refPath = cast.cardPath ?? null;
+          extraRefs = cast.extras ?? [];
+        }
+      } else {
         // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
         const cast = await withTimeout(castPrefix(classId, no, checkText), 25_000, { text: '', style: `${STYLE_EN['그림책']} ${SAFE_TAIL}` } as CastOut);
         if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
@@ -1007,11 +1018,11 @@ export const runGeneration = onTaskDispatched(
     try {
       // 주인공 카드가 있으면 내려받아 함께 보낸다
       let refImage: Buffer | undefined;
-      if (g.refPath && !g.editEn) refImage = await getStorage().bucket().file(g.refPath).download().then(([b]) => b).catch(() => undefined);
+      // 고치기에도 쓴다: 이어서 고치기가 안 되면 카드를 보고 새로 만들어 주인공이 바뀌지 않게
+      if (g.refPath) refImage = await getStorage().bucket().file(g.refPath).download().then(([b]) => b).catch(() => undefined);
       // 이 장면에 나오는 등장인물 카드
       const extraRefs: { name: string; png: Buffer }[] = [];
-      if (!g.editEn)
-        for (const x of ((g.extraRefs ?? []) as { name: string; path: string }[]).slice(0, 2)) {
+      for (const x of ((g.extraRefs ?? []) as { name: string; path: string }[]).slice(0, 2)) {
           const b = await getStorage().bucket().file(x.path).download().then(([b]) => b).catch(() => undefined);
           if (b) extraRefs.push({ name: x.name, png: b });
         }
