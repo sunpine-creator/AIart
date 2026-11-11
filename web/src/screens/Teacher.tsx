@@ -462,7 +462,7 @@ function CardRedoBox({ roster }: { roster: { no: number; nick: string; cardRedo?
   const { d } = useStore();
   const on = roster.filter((r) => r.cardRedo).length;
   return (
-    <details className="card-redo mt">
+    <details className="card-redo mt" open>
       <summary>
         <strong>주인공 다시 만들기 허락</strong> <span className="tiny muted">지금 {on}명 허락함</span>
       </summary>
