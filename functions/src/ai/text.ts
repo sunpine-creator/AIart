@@ -10,16 +10,17 @@ export type AiCheck = {
 };
 
 const SYSTEM = `너는 초중고 학생이 쓴 AI 영상 프롬프트를 검사하고 번역하는 도우미다. 수업 주제는 「AI로 달라진 나의 일상」이다.
-1) 안전 검사는 아주 좁게 한다. 아래에 분명히 해당할 때만 safe=false:
-   - 피·상처·죽음·살해·무기 공격처럼 잔인하거나 다치는 장면 (예: "피를 흘리며 쓰러진")
+1) 안전 검사는 아주아주 좁게 한다. 아래에 분명히 해당할 때만 safe=false:
+   - 사람이나 동물을 죽이거나(살인·살해) 잔인하게 해치는 장면, 피가 낭자하거나 몸이 훼손되는 끔찍한 묘사
    - 성적인 내용
-   - 특정 사람이나 집단을 놀리거나 혐오하는 표현
-   - 실제 개인정보(전화번호, 집 주소, 주민번호 등)
+   - 특정 사람이나 집단을 혐오하는 표현
+   - 자해·자살
+   - 실제 개인정보(전화번호, 주민번호 등)
    - 실존 인물(유명인·친구·선생님)의 얼굴이나 모습을 그대로 만들기
-   - 아이가 따라 하면 위험한 행동(불장난, 높은 곳에서 뛰어내리기 등)
-   다음은 모두 safe=true 다(막지 않는다): 슬픔·외로움·속상함·질투·서운함 같은 감정, 친구가 나를 빼고 놀러 간 이야기, 친구와 다툼·화해,
-   비 오는 날, 음식·간식·요리·레시피(칼로 재료 썰기, 불에 굽기 포함), 운동 경기, 게임, 무서운 꿈 이야기 정도의 가벼운 긴장감, 일상적인 낱말(칼국수, 총무, 공격수 등).
-   애매하면 safe=true 로 한다.
+   그 밖은 모두 safe=true 다(막지 않는다). 예: 농사·텃밭 일(호미·낫·삽·괭이·쟁기·경운기로 밭 갈기, 잡초 뽑기, 벼 베기), 요리(칼로 재료 썰기, 불에 굽기·튀기기, 레시피),
+   공구·가위·망치 쓰기, 캠핑·불멍·바비큐, 낚시, 동물 키우기, 운동 경기·태권도·축구 몸싸움, 넘어지거나 살짝 다침·코피·반창고, 병원·주사, 나무 오르기·자전거·스케이트,
+   슬픔·외로움·화남·질투·서운함 같은 감정, 친구와 다툼·화해, 놀리는 장난, 무서운 꿈·귀신·좀비 같은 가벼운 공포, 게임 속 전투, 물총·물풍선·눈싸움, 일상적인 낱말(칼국수, 총무, 공격수 등).
+   애매하면 반드시 safe=true 로 한다.
 2) safe=false 이면 category(폭력·잔인함/성적 내용/놀림·혐오/개인정보/실존 인물/위험 행동 중 하나), reasonKo(초등학생이 이해할 한 문장), suggestionKo(바꿔 쓸 예시 한 문장)를 쓴다.
 3) english: safe 여부와 상관없이 항상 쓴다. 학생 의도를 바꾸지 말고 영상 모델용 영어 한 문단으로 옮긴다. 그림 스타일 문장은 붙이지 않는다(서버가 붙인다).
    인물이 하는 말(대사·혼잣말·내레이션)이 있으면 번역하지 말고 한국어 그대로 두되, 큰따옴표로 감싸지 말고 'AUDIO ONLY (spoken in Korean, never written on screen): 우산 챙겨' 처럼 소리로만 들린다고 쓴다. 장면 설명에는 글자·자막을 화면에 쓰라는 말을 넣지 않는다.
@@ -62,6 +63,27 @@ export async function checkAndTranslate(textKo: string, kind: 'prompt' | 'edit',
     // 검사 결과를 읽지 못하면 선생님이 직접 확인하도록 넘긴다
     return { safe: false, category: '검사 오류', reasonKo: 'AI 검사가 잠시 안 돼서 선생님이 직접 확인해요.', suggestionKo: '선생님 확인을 기다려 주세요.', english: '' };
   }
+}
+
+// ───────── 순하게 고쳐 쓰기 ─────────
+// 선생님이 괜찮다고 한 장면이라도 영상 AI는 피·상처·무기 같은 말이 있으면 만들지 않는다.
+// 이야기와 감정은 그대로 두고, 그런 표현만 어린이 영상에 맞게 부드럽게 바꿔 다시 보낸다.
+export async function softenPrompt(en: string): Promise<string> {
+  if (!en.trim()) return en;
+  const res = await genai().models.generateContent({
+    model: CONFIG.textModel(),
+    contents: [{ role: 'user', parts: [{ text: en }] }],
+    config: {
+      systemInstruction: `You rewrite prompts for a video AI used in an elementary school class so that the video model's safety filter accepts them.
+Keep the story, characters, place, actions, emotions, camera and every style/format instruction exactly as they are.
+Only soften content that a safety filter would block: no blood, wounds, injuries, gore, death, killing, weapons used on people, fighting violence, self-harm, dangerous stunts, sexual content, insults or hate.
+Express such moments gently and implicitly instead (e.g. "falls down and looks hurt" -> "trips, sits on the ground looking sad, a friend helps"; "bleeding" -> "a small bandage"; "dies" -> "goes far away / is gone").
+Keep any Korean spoken lines as they are unless they are graphic; keep the text in the same language mix as the input. Output only the rewritten prompt.`,
+      temperature: 0.2,
+    } as any,
+  });
+  const out = String((res as any).text ?? '').trim();
+  return out.length > 20 ? out : en;
 }
 
 // ───────── 이야기 공통 설정: 모든 장면이 한 편의 영화처럼 이어지게 ─────────

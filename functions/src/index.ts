@@ -11,7 +11,7 @@ import { logger } from 'firebase-functions';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { CONFIG, Kind, MAX_EDITS, OPEN_STAGE_FOR_AI, REGION, pickSec, specFor } from './config';
 import { Builder, buildPromptKo, moderateRules } from './moderation';
-import { World, checkAndTranslate, makeWorld } from './ai/text';
+import { World, checkAndTranslate, makeWorld, softenPrompt } from './ai/text';
 import { SafetyBlockedError, drawImage, provider } from './ai/video';
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -926,10 +926,36 @@ export const runGeneration = onTaskDispatched(
           rmSync(tdir, { recursive: true, force: true });
         }
       }
-      const result = await provider().generate({
-        promptEn: g.promptEn, editEn: g.editEn ?? undefined, previousInteractionId: g.previousInteractionId ?? undefined,
-        res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo, aspect: g.aspect === '9:16' ? '9:16' : '16:9', desub: !!g.desub,
-      });
+      const make = (promptEn: string, editEn?: string) =>
+        provider().generate({
+          promptEn, editEn, previousInteractionId: g.previousInteractionId ?? undefined,
+          res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo, aspect: g.aspect === '9:16' ? '9:16' : '16:9', desub: !!g.desub,
+        });
+      // 안전 검사에 걸렸다가 선생님이 괜찮다고 한 장면은 처음부터 순하게 고쳐 보낸다(영상 AI가 거절하지 않게)
+      const soft = async () => {
+        const [p, e] = await Promise.all([softenPrompt(g.promptEn ?? ''), g.editEn ? softenPrompt(g.editEn) : Promise.resolve(undefined)]);
+        await ref.update({ softened: true }).catch(() => {});
+        return { p, e };
+      };
+      let pIn: string = g.promptEn ?? '';
+      let eIn: string | undefined = g.editEn ?? undefined;
+      let softened = false;
+      if (g.flag && CONFIG.videoProvider() === 'omni' && !srcVideo) {
+        const r = await withTimeout(soft(), 40_000, { p: pIn, e: eIn });
+        pIn = r.p;
+        eIn = r.e;
+        softened = true;
+      }
+      let result;
+      try {
+        result = await make(pIn, eIn);
+      } catch (e) {
+        // 영상 AI가 안전 정책으로 거절하면 한 번은 순하게 고쳐 다시 만든다
+        if (!(e instanceof SafetyBlockedError) || softened || CONFIG.videoProvider() !== 'omni' || srcVideo) throw e;
+        logger.warn('영상 AI가 거절해서 순하게 고쳐 다시 만듭니다', { genId });
+        const r = await withTimeout(soft(), 40_000, { p: pIn, e: eIn });
+        result = await make(r.p, r.e);
+      }
       if (result.keyframe) {
         const kp = `classes/${g.classId}/${g.no}/gens/${genId}_key.png`;
         await getStorage().bucket().file(kp).save(result.keyframe, { contentType: 'image/png' }).catch(() => {});
