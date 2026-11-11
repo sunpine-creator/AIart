@@ -570,6 +570,43 @@ function S1Middle() {
   );
 }
 
+// 활동지 이야기 쓰기: 육하원칙 칸으로 쓰거나, 문장으로 이어서 쓴다(둘 중 편한 것)
+function StoryInput({ ex, freePh }: { ex: [string, string, string][]; freePh: string }) {
+  const { s, d } = useStore();
+  const st = s.story;
+  const mode = st.mode === 'free' ? 'free' : 'fields';
+  const put = (patch: Partial<typeof st>) => d({ t: 'set', patch: { story: { ...st, ...patch } } });
+  return (
+    <>
+      <div className="sheet-mode" role="radiogroup" aria-label="쓰는 방법">
+        <button type="button" role="radio" aria-checked={mode === 'fields'} className={`pill ${mode === 'fields' ? 'on' : ''}`} onClick={() => put({ mode: 'fields' })}>
+          육하원칙으로 쓰기
+        </button>
+        <button type="button" role="radio" aria-checked={mode === 'free'} className={`pill ${mode === 'free' ? 'on' : ''}`} onClick={() => put({ mode: 'free' })}>
+          문장으로 쓰기
+        </button>
+      </div>
+      {mode === 'fields' ? (
+        <>
+          <p className="tiny muted">육하원칙으로 정리해요. 생각나는 칸만 채워도 다음 단계로 갈 수 있어요.</p>
+          <div className="grid3">
+            {ex.map(([k, label, ph]) => (
+              <Field key={k} id={`st-${k}`} label={label} placeholder={ph} value={(st as any)[k] ?? ''} onChange={(v) => put({ [k]: v } as any)} />
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="field sheet-free">
+          <label htmlFor="st-free">내 이야기를 문장으로 써요</label>
+          <textarea id="st-free" rows={5} maxLength={400} placeholder={freePh} value={st.free ?? ''} onChange={(e) => put({ free: e.target.value })} />
+          <span className="tiny muted count mono">{(st.free ?? '').length}/400</span>
+          <p className="tiny muted">누가·언제·어디서·무엇을·어떻게·왜가 들어가면 장면 초안이 더 잘 나와요.</p>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ───────────── 2단계 활동지 ─────────────
 function Sheet() {
   const { s } = useStore();
@@ -591,7 +628,7 @@ function SheetElementary() {
         </div>
         <div className="field">
           <label htmlFor="topic" className="label-human">
-            내가 정한 주제
+            제목
           </label>
           <input
             id="topic"
@@ -603,15 +640,17 @@ function SheetElementary() {
           <span className="tiny muted count mono">{s.topic.length}/40</span>
           <p className="tiny muted">이런 순간을 떠올려 봐요: 아침에 일어날 때, 학교 가는 길, 숙제할 때, 가족과 저녁 먹을 때, 친구와 놀 때</p>
         </div>
-        <p className="tiny muted">육하원칙으로 정리해요. 생각나는 칸만 채워도 다음 단계로 갈 수 있어요.</p>
-        <div className="grid3">
-          <Field id="st-who" label="누가" value={st.who} onChange={set('who')} placeholder="예: 나와 동생" />
-          <Field id="st-when" label="언제" value={st.when ?? ''} onChange={set('when')} placeholder="예: 비 오는 아침" />
-          <Field id="st-where" label="어디서" value={st.where} onChange={set('where')} placeholder="예: 우리 집 거실" />
-          <Field id="st-what" label="무엇을 (어떤 AI와)" value={st.what} onChange={set('what')} placeholder="예: AI 스피커에게 날씨를 물어봤다" />
-          <Field id="st-event" label="어떻게" value={st.event} onChange={set('event')} placeholder="예: 비가 온다고 해서 우산을 챙겼다" />
-          <Field id="st-why" label="왜" value={st.why ?? ''} onChange={set('why')} placeholder="예: 늦잠을 자서 하늘을 못 봤다" />
-        </div>
+        <StoryInput
+          ex={[
+            ['who', '누가', '예: 나와 동생'],
+            ['when', '언제', '예: 비 오는 아침'],
+            ['where', '어디서', '예: 우리 집 거실'],
+            ['what', '무엇을 (어떤 AI와)', '예: AI 스피커에게 날씨를 물어봤다'],
+            ['event', '어떻게', '예: 비가 온다고 해서 우산을 챙겼다'],
+            ['why', '왜', '예: 늦잠을 자서 하늘을 못 봤다'],
+          ]}
+          freePh="예: 비 오는 아침에 늦잠을 자서 하늘을 못 봤다. 동생이 AI 스피커에게 날씨를 물어봤더니 비가 온다고 해서 우산을 챙겼다. 학교 가는 길에 비가 쏟아졌지만 우리는 젖지 않았다."
+        />
         <div className="grid5">
           <FeelingPicker value={st.feeling} onChange={set('feeling')} />
         </div>
@@ -668,7 +707,7 @@ function SheetMiddle() {
           <span className="tiny muted">큰 주제: AI로 달라진 나의 일상 · 영상 {maxSec(s.band)}초 이내</span>
         </div>
         <div className="field">
-          <label htmlFor="topic" className="label-human">내가 정한 주제</label>
+          <label htmlFor="topic" className="label-human">제목</label>
           <input id="topic" maxLength={40} placeholder="예: 번역 앱 덕분에 길을 알려 준 날" value={s.topic} onChange={(e) => d({ t: 'set', patch: { topic: e.target.value } })} />
           <span className="tiny muted count mono">{s.topic.length}/40</span>
         </div>
@@ -677,21 +716,17 @@ function SheetMiddle() {
           <Field id="b-pur" label="왜 (목적)" value={s.brief.purpose} onChange={(v) => d({ t: 'set', patch: { brief: { ...s.brief, purpose: v } } })} />
           <Field id="b-msg" label="무엇을 전할까 (핵심 메시지)" value={s.brief.message} onChange={(v) => d({ t: 'set', patch: { brief: { ...s.brief, message: v } } })} />
         </div>
-        <p className="tiny muted mt">내 경험을 육하원칙으로 정리해요. 생각나는 칸만 채워도 넘어갈 수 있어요.</p>
-        <div className="grid3">
-          {(
-            [
-              ['who', '누가', '예: 나와 외국인 관광객'],
-              ['when', '언제', '예: 토요일 오후'],
-              ['where', '어디서', '예: 동네 버스 정류장'],
-              ['what', '무엇을 (어떤 AI와)', '예: 번역 앱으로 길을 알려 줬다'],
-              ['event', '어떻게', '예: 처음엔 당황했지만 앱 덕분에 대화했다'],
-              ['why', '왜', '예: 관광객이 길을 잃어서'],
-            ] as const
-          ).map(([k, label, ph]) => (
-            <Field key={k} id={`ms-${k}`} label={label} placeholder={ph} value={(s.story as any)[k] ?? ''} onChange={(v) => d({ t: 'set', patch: { story: { ...s.story, [k]: v } } })} />
-          ))}
-        </div>
+        <StoryInput
+          ex={[
+            ['who', '누가', '예: 나와 외국인 관광객'],
+            ['when', '언제', '예: 토요일 오후'],
+            ['where', '어디서', '예: 동네 버스 정류장'],
+            ['what', '무엇을 (어떤 AI와)', '예: 번역 앱으로 길을 알려 줬다'],
+            ['event', '어떻게', '예: 처음엔 당황했지만 앱 덕분에 대화했다'],
+            ['why', '왜', '예: 관광객이 길을 잃어서'],
+          ]}
+          freePh="예: 토요일 오후 버스 정류장에서 길을 잃은 외국인 관광객을 만났다. 처음엔 당황했지만 번역 앱으로 대화해서 길을 알려 줄 수 있었다."
+        />
       </section>
 
       <section className="panel">
@@ -819,12 +854,12 @@ function SheetSummary() {
     <div className="sheet-sum">
       <span className="tag human">내 활동지</span>
       <span>
-        <strong>{s.topic || '주제를 아직 안 정했어요'}</strong>
+        <strong>{s.topic || '제목을 아직 안 정했어요'}</strong>
       </span>
       <span className="muted">
         {s.band === 'middle'
           ? [s.brief.audience && `대상 ${s.brief.audience}`, s.brief.message && `메시지 ${s.brief.message}`, `장면 ${s.scenes.length}개`].filter(Boolean).join(' · ')
-          : [st.who, st.where, st.what].filter(Boolean).join(' · ') + (st.feeling ? ` · 기분: ${st.feeling}` : '')}
+          : (st.mode === 'free' ? (st.free ?? '').slice(0, 60) + ((st.free ?? '').length > 60 ? '…' : '') : [st.who, st.where, st.what].filter(Boolean).join(' · ')) + (st.feeling ? ` · 기분: ${st.feeling}` : '')}
       </span>
       <button className="link" onClick={() => d({ t: 'set', patch: { tab: 2 } })}>
         고치기
@@ -1076,7 +1111,8 @@ function CastPanel() {
   const { s, d } = useStore();
   const c = s.cast;
   const [busy, setBusy] = useState(false);
-  const set = (patch: Partial<typeof c>) => d({ t: 'set', patch: { cast: { ...c, ...patch } } });
+  // 서버가 쓰는 등장인물 카드 결과(extraCards)는 학생 저장본에 넣지 않는다
+  const set = (patch: Partial<typeof c>) => d({ t: 'set', patch: { cast: (({ extraCards, ...rest }) => rest)({ ...c, ...patch }) } });
   const hasCard = !!c.cardUrl;
   const tries = c.tries ?? 0;
   const lookChanged = hasCard && c.cardLook !== c.look;
@@ -1154,6 +1190,87 @@ function CastPanel() {
   );
 }
 
+// ② 등장인물 카드: 가족·친구 등 4명까지. 장면 글에 이름이 나오면 그 장면에 자동으로 함께 쓴다
+function ExtraCast() {
+  const { s, d } = useStore();
+  const c = s.cast;
+  const list = [0, 1, 2, 3].map((i) => c.extras?.[i] ?? { name: '', look: '' });
+  const setX = (i: number, patch: Partial<{ name: string; look: string }>) => {
+    const next = list.map((x, j) => (j === i ? { ...x, ...patch } : x));
+    d({ t: 'set', patch: { cast: (({ extraCards, ...rest }) => rest)({ ...c, extras: next }) } });
+  };
+  const shown = Math.min(4, Math.max(1, list.filter((x) => x.name || x.look).length + 1));
+  return (
+    <section className="panel cast-panel">
+      <div className="panel-head">
+        <h3>② 등장인물 카드 (4명까지)</h3>
+        <span className="tiny muted">가족·친구처럼 여러 장면에 나오는 사람</span>
+      </div>
+      <p className="tiny muted">
+        장면 글에 등장인물 <strong>이름</strong>(예: 엄마, 할머니, 동생)이 나오면 그 장면에 이 카드가 자동으로 함께 들어가서, 장면마다 같은 얼굴·같은 옷으로 나와요. 한 장면에는 주인공과 등장인물 2명까지 들어가요.
+      </p>
+      <div className="extra-list">
+        {list.slice(0, shown).map((x, i) => (
+          <ExtraSlot key={i} slot={i + 1} v={x} card={c.extraCards?.[String(i + 1)]} onChange={(p) => setX(i, p)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ExtraSlot({ slot, v, card, onChange }: { slot: number; v: { name: string; look: string }; card?: import('../store').ExtraCard; onChange: (p: Partial<{ name: string; look: string }>) => void }) {
+  const { s, d } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    if (card?.status !== 'making') return;
+    const t = window.setInterval(() => setNow((x) => x + 1), 15_000);
+    return () => window.clearInterval(t);
+  }, [card?.status]);
+  const tries = card?.tries ?? 0;
+  const stuck = card?.status === 'making' && !!card.at && Date.now() - card.at > 3 * 60_000;
+  const making = card?.status === 'making' && !stuck;
+  const has = !!card?.url;
+  const make = () => {
+    setBusy(true);
+    api
+      .makeExtra({ slot, name: v.name.trim(), look: v.look.trim() })
+      .then((r) => {
+        if (r.blocked) return d({ t: 'toast', msg: `${r.reason ?? '이 설명은 쓸 수 없어요.'} ${r.suggestion ?? ''}` });
+        d({ t: 'toast', msg: `AI가 “${v.name.trim()}” 카드를 그리기 시작했어요. 1~3분쯤 걸려요.` });
+      })
+      .catch((e) => d({ t: 'toast', msg: errText(e) }))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="extra-slot">
+      <div className="extra-form">
+        <div className="field">
+          <label htmlFor={`x-name-${slot}`}>이름 (장면 글에 쓰는 대로)</label>
+          <input id={`x-name-${slot}`} maxLength={10} placeholder="예: 엄마" value={v.name} onChange={(e) => onChange({ name: e.target.value })} />
+        </div>
+        <div className="field">
+          <label htmlFor={`x-look-${slot}`}>모습</label>
+          <input id={`x-look-${slot}`} maxLength={80} placeholder="예: 40살 여자, 짧은 단발머리, 초록색 앞치마" value={v.look} onChange={(e) => onChange({ look: e.target.value })} />
+        </div>
+        <div className="actions">
+          <button className="btn ai" disabled={busy || !v.name.trim() || !v.look.trim() || tries >= 3 || s.cls.paused} onClick={make}>
+            {busy ? '보내는 중…' : making || stuck ? '↺ 처음부터 다시 그리기' : has ? '다시 그리기' : '카드 만들기'}
+          </button>
+          <span className="tiny muted">{tries}/3번</span>
+          {making && <span className="tiny hint">AI가 그리는 중이에요.</span>}
+          {stuck && <span className="tiny hint">오래 걸려요. “처음부터 다시 그리기”를 눌러 주세요(횟수는 줄지 않아요).</span>}
+          {card?.status === 'failed' && card.error && <span className="tiny danger-text">{card.error}</span>}
+          {has && card?.name && card.name !== v.name.trim() && <span className="tiny hint">이름을 바꿨으면 “다시 그리기”를 눌러야 장면에 반영돼요.</span>}
+        </div>
+      </div>
+      <div className="cast-card small">
+        {has ? <img src={card!.url} alt={`${card?.name ?? ''} 카드`} style={making ? { opacity: 0.4 } : undefined} /> : <span className="tiny muted">{making ? '그리는 중…' : '카드가 여기에 나와요'}</span>}
+      </div>
+    </div>
+  );
+}
+
 // ───────────── 초등: 활동지로 장면 초안 만들기 ─────────────
 // 활동지에 쓴 육하원칙·기분으로 장면 3~5개와 장면별 육하원칙 초안을 받는다. 학생이 고쳐서 쓴다.
 // 모든 장면에 자동으로 들어가는 공통 설정(장소·날씨·때·빛·구도). 학생이 매번 쓰지 않아도 된다.
@@ -1208,12 +1325,16 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
   const { s, d } = useStore();
   const [busy, setBusy] = useState(false);
   const st = s.story;
-  const filled = [s.topic, st.who, st.when, st.where, st.what, st.event, st.why].filter((x) => String(x ?? '').trim()).length;
+  const filled = st.mode === 'free' ? (String(st.free ?? '').trim().length >= 10 ? 2 : 0) + (s.topic.trim() ? 1 : 0) : [s.topic, st.who, st.when, st.where, st.what, st.event, st.why].filter((x) => String(x ?? '').trim()).length;
   const used = s.gens.some((g) => ['flagged', 'awaiting_approval', 'queued', 'running', 'succeeded'].includes(g.status));
   const run = () => {
     setBusy(true);
     api
-      .draftScenes({ topic: s.topic, who: st.who, when: st.when ?? '', where: st.where, what: st.what, event: st.event, why: st.why ?? '', feeling: st.feeling })
+      .draftScenes(
+        st.mode === 'free'
+          ? { topic: s.topic, free: st.free ?? '', feeling: st.feeling }
+          : { topic: s.topic, who: st.who, when: st.when ?? '', where: st.where, what: st.what, event: st.event, why: st.why ?? '', feeling: st.feeling },
+      )
       .then((r) => {
         if (r.blocked) return d({ t: 'toast', msg: `활동지에 고쳐야 할 표현이 있어요: ${r.reason}` });
         if (!r.scenes.length) return d({ t: 'toast', msg: '초안을 만들지 못했어요. 활동지를 조금 더 써 보세요.' });
@@ -1238,7 +1359,7 @@ function SceneDraftBox({ onPick }: { onPick: (id: string) => void }) {
       <div>
         <strong>활동지로 장면 초안 만들기</strong>
         <p className="tiny muted">
-          2단계 활동지(누가·언제·어디서·어떤 AI와·어떻게·왜·기분)를 AI가 읽고 장면 3~5개와 장면마다 육하원칙을 채워 줘요. 초안일 뿐이니 내 생각과 다르면 고쳐 써요.
+          2단계 활동지(육하원칙이나 내가 쓴 문장, 기분)를 AI가 읽고 장면 3~5개와 장면마다 육하원칙을 채워 줘요. 초안일 뿐이니 내 생각과 다르면 고쳐 써요.
           {used && ' 이미 영상을 만든 장면은 그대로 두고 나머지만 바꿔요.'}
         </p>
       </div>
@@ -1276,6 +1397,7 @@ function S3() {
       {s.band === 'elementary' && <SceneDraftBox onPick={setSel} />}
       <AspectPanel />
       <CastPanel />
+      <ExtraCast />
       <WorldPanel />
       <div className="make">
         <aside className="scene-list" aria-label="장면 목록">

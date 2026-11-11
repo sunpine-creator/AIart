@@ -386,6 +386,7 @@ async function requestGenerationImpl(req: CallableRequest) {
   let editEn: string | undefined;
   const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
   let refPath: string | null = null; // 주인공 카드: 장면 첫 그림을 이 카드에 맞춰 그린다
+  let extraRefs: { name: string; path: string }[] = []; // 이 장면에 나오는 등장인물 카드
   {
     if (useAi) {
       // 많은 학생이 한꺼번에 누르면 AI 검사가 느려질 수 있다. 40초 안에 안 오면 규칙 검사만으로 넘어가고 한국어 그대로 보낸다
@@ -399,13 +400,14 @@ async function requestGenerationImpl(req: CallableRequest) {
       const english = c.english || checkText;
       if (kind === 'edit') { editEn = `${NO_TEXT_HEAD}${english} ${KO_TAIL} ${speechFit(spec.sec)}`; promptEn = `${parent!.promptEn} Change: ${english}`; } else {
         // 모든 장면에 같은 주인공·그림 스타일을 붙여 장면끼리 이어지게 한다
-        const cast = await withTimeout(castPrefix(classId, no), 25_000, { text: '', style: `${STYLE_EN['그림책']} ${SAFE_TAIL}` } as Awaited<ReturnType<typeof castPrefix>>);
+        const cast = await withTimeout(castPrefix(classId, no, checkText), 25_000, { text: '', style: `${STYLE_EN['그림책']} ${SAFE_TAIL}` } as CastOut);
         if (cast.blocked && !flag) flag = { ...cast.blocked, layer: 'ai' };
         // 공통 설정은 저장된 것이 있으면 바로 쓰고, 새로 정해야 하면 10초까지만 기다린다
         const world = await withTimeout(worldOf(classId, no).catch(() => undefined), 10_000, undefined);
         const cont = world?.en ? `Story continuity (keep the same in every scene unless this scene's text clearly says otherwise): ${world.en} Keep a similar camera height and framing to the other scenes so the scenes connect smoothly. ` : '';
         promptEn = `${NO_TEXT_HEAD}${cast.text}${cont}Scene: ${english} ${cast.style} ${KO_TAIL} ${speechFit(spec.sec)} ${NO_TEXT_HEAD}`;
         refPath = cast.cardPath ?? null;
+        extraRefs = cast.extras ?? [];
       }
     } else {
       if (kind === 'edit') { editEn = `(mock) ${editText}`; promptEn = `${parent!.promptEn} Change: ${editEn}`; } else promptEn = `(mock translation) ${promptKo}`;
@@ -432,7 +434,7 @@ async function requestGenerationImpl(req: CallableRequest) {
     const credits = st.data()?.credits ?? 0;
     if (credits < spec.credits) throw new HttpsError('resource-exhausted', '크레딧이 부족해요. 선생님께 말씀드려요.');
     tx.update(studentRef, { ...(needApproval ? {} : { credits: credits - spec.credits }), status: needApproval ? 'waiting' : 'making' });
-    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, flag: flag ?? null, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null, refPath });
+    tx.set(genRef, { ...base, status, promptEn, editEn: editEn ?? null, credits: spec.credits, charged: !needApproval, costUsd: spec.costUsd, flag: flag ?? null, previousInteractionId: kind === 'edit' ? parent!.interactionId ?? null : null, refPath, extraRefs });
   });
   if (flag) {
     await log({ classId, no, kind: kindLabel, textKo: checkText, textEn: editEn ?? promptEn, verdict: 'blocked', category: flag.category, action: '선생님 확인 대기', layer: flag.layer });
@@ -567,18 +569,28 @@ async function lookEnOf(classId: string, no: number, look: string): Promise<{ en
 }
 
 // 모든 장면 프롬프트에 붙일 주인공·그림체 문장과, 주인공 카드(기준 그림) 위치
-async function castPrefix(classId: string, no: number): Promise<{ text: string; style: string; cardPath?: string; blocked?: { category: string; reason: string; suggestion: string } }> {
+// sceneText 에 등장인물 이름(엄마·할머니 등)이 나오면 그 인물 카드도 함께 쓴다(한 장면에 2명까지)
+type CastOut = { text: string; style: string; cardPath?: string; extras?: { name: string; path: string }[]; blocked?: { category: string; reason: string; suggestion: string } };
+async function castPrefix(classId: string, no: number, sceneText = ''): Promise<CastOut> {
   const p = (await db.doc(`projects/${classId}_${no}`).get()).data() ?? {};
   const card = (await db.doc(`castCache/${classId}_${no}`).get()).data() ?? {};
   // 주인공 카드를 만들었으면 그 카드의 그림체로 고정한다
   const styleKey = card.cardPath ? styleOf(card.cardStyle) : styleOf(p.cast?.style);
   const style = `${STYLE_EN[styleKey]} ${SAFE_TAIL}`;
+  // 등장인물: 이 장면 글에 이름이 나오는 인물만
+  const ex = Object.values((card.extras ?? {}) as Record<string, any>)
+    .filter((x) => x?.status === 'done' && x.path && x.name && x.lookEn && sceneText.includes(String(x.name)))
+    .slice(0, 2);
+  const exText = ex
+    .map((x) => `Another recurring character of this story is "${x.name}": ${x.lookEn} Whenever "${x.name}" appears, draw exactly this same character (same face, same hairstyle, same body, same outfit) and give "${x.name}" one consistent natural Korean voice that fits this person, identical in every scene. `)
+    .join('');
+  const extras = ex.map((x) => ({ name: String(x.name), path: String(x.path) }));
   const look = String(card.cardPath ? card.cardLook ?? '' : p.cast?.look ?? '').trim().slice(0, 120);
-  if (!look) return { text: '', style };
+  if (!look) return { text: exText, style, extras };
   const l = await lookEnOf(classId, no, look);
-  if (l.blocked) return { text: '', style, blocked: l.blocked };
-  const text = `Keep the SAME main character (same face, hair, body and clothes) in every scene of this story. Main character: ${l.en} "I", "me" or "나" in the scene means this main character. `;
-  return { text, style, cardPath: card.cardPath ?? undefined };
+  if (l.blocked) return { text: exText, style, extras, blocked: l.blocked };
+  const text = `CONTINUITY (this clip is one scene of a single continuous film): keep the SAME main character in every scene — identical face, identical hairstyle and hair color, identical body, and the SAME outfit (never change clothes between scenes). Main character: ${l.en} "I", "me" or "나" in the scene means this main character. VOICE: the main character always speaks with one consistent natural Korean voice that fits their age and gender — same pitch, tone and speaking speed in every scene. ${exText}`;
+  return { text, style, cardPath: card.cardPath ?? undefined, extras };
 }
 
 // 이야기 공통 설정(장소·날씨·때·빛·구도). 이야기 내용이 바뀔 때만 새로 만들고 저장해 둔다.
@@ -588,7 +600,9 @@ async function worldOf(classId: string, no: number, force = false): Promise<Worl
   const scenes: any[] = (p.scenes ?? []).filter((x: any) => !x.skip);
   const lines = [
     `주제: ${p.topic ?? ''}`,
-    `누가: ${st.who ?? ''} / 언제: ${st.when ?? ''} / 어디서: ${st.where ?? ''} / 무엇을: ${st.what ?? ''} / 어떻게: ${st.event ?? ''} / 왜: ${st.why ?? ''} / 기분: ${st.feeling ?? ''}`,
+    st.mode === 'free' && st.free
+      ? `이야기: ${st.free} / 기분: ${st.feeling ?? ''}`
+      : `누가: ${st.who ?? ''} / 언제: ${st.when ?? ''} / 어디서: ${st.where ?? ''} / 무엇을: ${st.what ?? ''} / 어떻게: ${st.event ?? ''} / 왜: ${st.why ?? ''} / 기분: ${st.feeling ?? ''}`,
     `주인공: ${p.cast?.look ?? ''}`,
     `시나리오: ${p.scenario?.final || (p.scenario?.draft ?? []).join(' ')}`,
     ...scenes.map((x, i) => `장면 ${i + 1}: ${x.line ?? ''} (언제: ${x.builder?.when ?? ''}, 어디서: ${x.builder?.where ?? ''})`),
@@ -693,6 +707,90 @@ export const runCard = onTaskDispatched(
       }
       await ref.set({ cardStatus: 'failed' }, { merge: true });
       await projRef.set({ card: { status: 'failed', error: safety ? 'AI가 이 주인공은 그릴 수 없대요. 설명을 바꿔 보세요.' : '지금은 주인공 카드를 그리지 못했어요. 잠시 뒤 다시 눌러 주세요. (횟수는 줄지 않았어요)', at: Date.now() } }, { merge: true });
+    }
+  },
+);
+
+// ───────── 학생: 등장인물 카드 (가족·친구 등, 4명까지) ─────────
+// 주인공 카드와 같은 그림체로 그린다. 장면 글에 이름이 나오면 그 장면에 자동으로 함께 쓴다.
+export const makeExtra = onCall({ timeoutSeconds: 120 }, async (req) => {
+  const { classId, no } = requireStudent(req);
+  const slot = Number(req.data?.slot);
+  if (![1, 2, 3, 4].includes(slot)) throw new HttpsError('invalid-argument', '등장인물 칸을 찾을 수 없어요.');
+  const name = String(req.data?.name ?? '').trim().slice(0, 10);
+  const look = String(req.data?.look ?? '').trim().slice(0, 80);
+  if (!name || !look) throw new HttpsError('invalid-argument', '등장인물 이름과 모습을 먼저 써 주세요.');
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (cls?.paused) throw new HttpsError('failed-precondition', '선생님이 화면을 잠시 멈췄어요.');
+  const ref = db.doc(`castCache/${classId}_${no}`);
+  const cur = (await ref.get()).data() ?? {};
+  const prev = (cur.extras ?? {})[String(slot)] ?? {};
+  if ((prev.tries ?? 0) >= 3) throw new HttpsError('resource-exhausted', '이 등장인물 카드는 3번까지 만들 수 있어요.');
+  const r = moderateRules(`${name} ${look}`, cls?.band);
+  if (!r.pass) return { blocked: true, reason: `등장인물: ${r.reason}`, suggestion: r.suggestion };
+  let lookEn = prev.look === look && prev.lookEn ? String(prev.lookEn) : '';
+  const useAi = CONFIG.videoProvider() === 'omni' || process.env.TEXT_CHECK === 'on';
+  if (!lookEn) {
+    if (useAi) {
+      const c = await withTimeout(checkAndTranslate(`등장인물 "${name}"의 모습: ${look}`, 'prompt', cls?.band), 40_000, { safe: true, english: look } as Awaited<ReturnType<typeof checkAndTranslate>>);
+      if (!c.safe && c.category !== '검사 오류') return { blocked: true, reason: `등장인물: ${c.reasonKo ?? ''}`, suggestion: c.suggestionKo ?? '' };
+      lookEn = c.english || look;
+    } else lookEn = `(mock) ${look}`;
+  }
+  const reqId = randomUUID();
+  await ref.set({ extras: { [String(slot)]: { ...prev, status: 'making', reqId, reqAt: Date.now(), reqName: name, reqLook: look, reqLookEn: lookEn } } }, { merge: true });
+  await db.doc(`projects/${classId}_${no}`).set({ extraCards: { [String(slot)]: { status: 'making', at: Date.now(), name: prev.name ?? name, url: prev.url ?? null, tries: prev.tries ?? 0, error: null } } }, { merge: true });
+  await getFunctions().taskQueue(`locations/${REGION}/functions/runExtra`).enqueue({ classId, no, slot, reqId }, { dispatchDeadlineSeconds: 600 });
+  return { blocked: false, queued: true };
+});
+
+export const runExtra = onTaskDispatched(
+  { retryConfig: { maxAttempts: 6, minBackoffSeconds: 10, maxBackoffSeconds: 60 }, rateLimits: { maxConcurrentDispatches: 20 }, timeoutSeconds: 300, memory: '512MiB' },
+  async (req) => {
+    const { classId, no, slot, reqId } = (req.data ?? {}) as { classId: string; no: number; slot: number; reqId: string };
+    if (!classId || !Number.isInteger(no) || !slot) return;
+    const ref = db.doc(`castCache/${classId}_${no}`);
+    const projRef = db.doc(`projects/${classId}_${no}`);
+    const key = String(slot);
+    const entry = async () => ((await ref.get()).data()?.extras ?? {})[key] ?? {};
+    const cur = await entry();
+    if (cur.status !== 'making' || cur.reqId !== reqId) return;
+    const main = (await ref.get()).data() ?? {};
+    const p = (await projRef.get()).data() ?? {};
+    const style = main.cardPath ? styleOf(main.cardStyle) : styleOf(p.cast?.style);
+    const tries = (cur.tries ?? 0) + 1;
+    try {
+      let url = '';
+      let path: string | null = null;
+      if (CONFIG.videoProvider() === 'omni') {
+        const parts: any[] = [];
+        // 주인공 카드를 함께 보여 줘서 같은 그림체·같은 세계의 인물로 그린다
+        const mainPng = main.cardPath ? await getStorage().bucket().file(main.cardPath).download().then(([b]) => b).catch(() => undefined) : undefined;
+        if (mainPng) parts.push({ inlineData: { mimeType: 'image/png', data: mainPng.toString('base64') } });
+        parts.push({
+          text: `${mainPng ? 'Image 1 is the main character of this story; use it ONLY as the art-style reference. Draw a DIFFERENT person (not the character in image 1) in exactly the same art style, line work, colors and proportions. ' : ''}${STYLE_CARD[style]} showing ONE fictional supporting character called "${cur.reqName}" as a character reference: ${cur.reqLookEn} Full body, front view, friendly neutral pose, centered, simple plain background, no text, no other people. ${STYLE_EN[style]} ${SAFE_TAIL}`,
+        });
+        const img = await drawImage(parts, '1:1');
+        const token = randomUUID();
+        path = `classes/${classId}/${no}/cast/x${slot}_${Date.now()}.png`;
+        await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
+        url = mediaUrl(path, token);
+      }
+      if ((await entry()).reqId !== reqId) return; // 그새 다시 그리기를 눌렀으면 버린다
+      await ref.set({ extras: { [key]: { status: 'done', path, url, name: cur.reqName, look: cur.reqLook, lookEn: cur.reqLookEn, style, tries, at: Date.now() } } }, { merge: true });
+      await projRef.set({ extraCards: { [key]: { status: 'done', url, name: cur.reqName, look: cur.reqLook, tries, at: Date.now(), error: null } } }, { merge: true });
+      await log({ classId, no, kind: '등장인물 카드', textKo: `${cur.reqName}: ${cur.reqLook} (${style})`, textEn: cur.reqLookEn, verdict: 'pass', action: `카드 만들기 ${tries}/3` });
+    } catch (e: any) {
+      if ((await entry().catch(() => ({})))?.reqId !== reqId) return;
+      const safety = e instanceof SafetyBlockedError;
+      const last = safety || (req.retryCount ?? 0) >= 5;
+      logger.warn('등장인물 카드 실패', { classId, no, slot, retry: req.retryCount, err: String(e?.message ?? e).slice(0, 300) });
+      if (!last) {
+        await projRef.set({ extraCards: { [key]: { status: 'making', at: Date.now() } } }, { merge: true });
+        throw e;
+      }
+      await ref.set({ extras: { [key]: { status: 'failed' } } }, { merge: true });
+      await projRef.set({ extraCards: { [key]: { status: 'failed', error: safety ? 'AI가 이 인물은 그릴 수 없대요. 설명을 바꿔 보세요.' : '지금은 그리지 못했어요. 다시 눌러 주세요. (횟수는 줄지 않았어요)', at: Date.now() } } }, { merge: true });
     }
   },
 );
@@ -906,6 +1004,13 @@ export const runGeneration = onTaskDispatched(
       // 주인공 카드가 있으면 내려받아 함께 보낸다
       let refImage: Buffer | undefined;
       if (g.refPath && !g.editEn) refImage = await getStorage().bucket().file(g.refPath).download().then(([b]) => b).catch(() => undefined);
+      // 이 장면에 나오는 등장인물 카드
+      const extraRefs: { name: string; png: Buffer }[] = [];
+      if (!g.editEn)
+        for (const x of ((g.extraRefs ?? []) as { name: string; path: string }[]).slice(0, 2)) {
+          const b = await getStorage().bucket().file(x.path).download().then(([b]) => b).catch(() => undefined);
+          if (b) extraRefs.push({ name: x.name, png: b });
+        }
       // 앞 장면의 마지막 화면에서 이어 시작하게 한다(초안만)
       const prevFrame = g.kind === 'draft' && !g.editEn && CONFIG.videoProvider() === 'omni' ? await prevSceneFrame(g.classId, g.no, g.sceneId).catch(() => undefined) : undefined;
       if (prevFrame) await ref.update({ contFrom: prevFrame.genId }).catch(() => {});
@@ -929,7 +1034,7 @@ export const runGeneration = onTaskDispatched(
       const make = (promptEn: string, editEn?: string) =>
         provider().generate({
           promptEn, editEn, previousInteractionId: g.previousInteractionId ?? undefined,
-          res: g.res, sec: g.sec, img: g.img, refImage, prevFrame: prevFrame?.png, srcVideo, aspect: g.aspect === '9:16' ? '9:16' : '16:9', desub: !!g.desub,
+          res: g.res, sec: g.sec, img: g.img, refImage, extraRefs, prevFrame: prevFrame?.png, srcVideo, aspect: g.aspect === '9:16' ? '9:16' : '16:9', desub: !!g.desub,
         });
       // 안전 검사에 걸렸다가 선생님이 괜찮다고 한 장면은 처음부터 순하게 고쳐 보낸다(영상 AI가 거절하지 않게)
       const soft = async () => {
@@ -1072,7 +1177,7 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
   const { classId, no } = requireStudent(req);
   const f = req.data ?? {};
   const t = (k: string) => String(f[k] ?? '').trim().slice(0, 120);
-  const sheet = { topic: t('topic'), who: t('who'), when: t('when'), where: t('where'), what: t('what'), how: t('event'), why: t('why'), feeling: t('feeling') };
+  const sheet = { topic: t('topic'), who: t('who'), when: t('when'), where: t('where'), what: t('what'), how: t('event'), why: t('why'), feeling: t('feeling'), free: String(f.free ?? '').trim().slice(0, 400) };
   const joined = Object.values(sheet).filter(Boolean).join(' / ');
   if (!joined) throw new HttpsError('invalid-argument', '활동지를 먼저 써 주세요.');
   const r = moderateRules(joined);
@@ -1100,7 +1205,9 @@ export const draftScenes = onCall({ timeoutSeconds: 60 }, async (req) => {
           role: 'user',
           parts: [
             {
-              text: `주제: ${sheet.topic}\n누가: ${sheet.who}\n언제: ${sheet.when}\n어디서: ${sheet.where}\n무엇을(어떤 AI와): ${sheet.what}\n어떻게: ${sheet.how}\n왜: ${sheet.why}\n기분: ${sheet.feeling}`,
+              text: sheet.free
+                ? `제목: ${sheet.topic}\n학생이 문장으로 쓴 이야기: ${sheet.free}\n기분: ${sheet.feeling}`
+                : `제목: ${sheet.topic}\n누가: ${sheet.who}\n언제: ${sheet.when}\n어디서: ${sheet.where}\n무엇을(어떤 AI와): ${sheet.what}\n어떻게: ${sheet.how}\n왜: ${sheet.why}\n기분: ${sheet.feeling}`,
             },
           ],
         },

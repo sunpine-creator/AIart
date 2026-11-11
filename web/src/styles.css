@@ -764,6 +764,16 @@ textarea.intent { min-height: 0; font-size: 0.9rem; }
 .cast-card { aspect-ratio: 1; border-radius: 14px; border: 1px dashed var(--line); background: var(--sunk); display: grid; place-items: center; overflow: hidden; text-align: center; padding: 8px; }
 .cast-card img { width: 100%; height: 100%; object-fit: contain; }
 @media (max-width: 640px) { .cast-body { grid-template-columns: minmax(0, 1fr); } .cast-card { max-width: 220px; } }
+/* 등장인물 카드 */
+.extra-list { display: grid; gap: 12px; }
+.extra-slot { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: 12px; }
+.extra-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px 10px; }
+.extra-form .actions { grid-column: 1 / -1; }
+.cast-card.small { max-width: 120px; }
+@media (max-width: 640px) { .extra-slot { grid-template-columns: minmax(0, 1fr); } .extra-form { grid-template-columns: minmax(0, 1fr); } }
+/* 활동지 쓰기 방식 */
+.sheet-mode { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.sheet-free textarea { width: 100%; }
 
 /* 안전 검사 확인 알림 */
 .flag-alert { border: 2px solid var(--critical); background: var(--critical-tint); margin-bottom: 14px; }

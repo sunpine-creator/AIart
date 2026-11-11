@@ -45,6 +45,9 @@ const PROJECT_KEYS = ['sortCards', 'topic', 'story', 'brief', 'scenario', 'scene
 export type PromptPart = 'goal' | 'role' | 'content' | 'cond';
 type ProjectKey = (typeof PROJECT_KEYS)[number];
 
+// 등장인물 카드(서버가 project.extraCards 에 쓴다)
+export type ExtraCard = { status?: 'making' | 'done' | 'failed'; url?: string; name?: string; look?: string; tries?: number; error?: string | null; at?: number };
+
 export type State = {
   role: 'loading' | 'none' | 'student' | 'teacher' | 'teacher-pending';
   view: 'student' | 'teacher';
@@ -60,7 +63,7 @@ export type State = {
   prmSort: Record<string, PromptPart | undefined>;
   prmThink: string;
   prmSortDone: boolean;
-  cast: { look: string; place: string; style: string; cardUrl?: string; cardLook?: string; cardStyle?: string; tries?: number; cardStatus?: 'making' | 'done' | 'failed'; cardError?: string; cardRetry?: number; cardAt?: number };
+  cast: { look: string; place: string; style: string; cardUrl?: string; cardLook?: string; cardStyle?: string; tries?: number; cardStatus?: 'making' | 'done' | 'failed'; cardError?: string; cardRetry?: number; cardAt?: number; extras?: { name: string; look: string }[]; extraCards?: Record<string, ExtraCard> };
   flow: Record<string, { v?: string; note?: string }>;
   editNote: string;
   reflect: string;
@@ -71,7 +74,7 @@ export type State = {
   aspect: '16:9' | '9:16'; // 영상 방향: 가로 또는 세로(공모전 1080x1920)
   tl?: Timeline; // 하나의 타임라인 편집(지운 구간·자막·목소리). 없으면 예전 장면별 편집을 옮겨 온다
   topic: string;
-  story: { who: string; when?: string; where: string; what: string; event: string; why?: string; feeling: string };
+  story: { who: string; when?: string; where: string; what: string; event: string; why?: string; feeling: string; mode?: 'fields' | 'free'; free?: string };
   brief: { audience: string; purpose: string; message: string };
   scenario: { builder: { goal: string; role: string; content: string; cond: string }; draft: string[]; marked: number[]; final: string };
   scenes: Scene[];
@@ -429,7 +432,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       prmThink: p.prmThink ?? '',
       prmSortDone: !!p.prmSortDone,
       // 주인공 카드 결과는 서버가 project.card 에 쓴다(학생 화면이 덮어쓰지 않게 따로 둔다)
-      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책', cardUrl: p.card?.url || p.cast?.cardUrl, cardLook: p.card?.look ?? p.cast?.cardLook, cardStyle: p.card?.style ?? p.cast?.cardStyle, tries: p.card?.tries ?? p.cast?.tries ?? 0, cardStatus: p.card?.status, cardError: p.card?.error, cardRetry: p.card?.retry, cardAt: p.card?.at },
+      cast: { look: p.cast?.look ?? '', place: p.cast?.place ?? '', style: p.cast?.style ?? '그림책', cardUrl: p.card?.url || p.cast?.cardUrl, cardLook: p.card?.look ?? p.cast?.cardLook, cardStyle: p.card?.style ?? p.cast?.cardStyle, tries: p.card?.tries ?? p.cast?.tries ?? 0, cardStatus: p.card?.status, cardError: p.card?.error, cardRetry: p.card?.retry, cardAt: p.card?.at, extras: (p.cast?.extras ?? []) as { name: string; look: string }[], extraCards: (p.extraCards ?? {}) as Record<string, ExtraCard> },
       flow: p.flow ?? {},
       editNote: p.editNote ?? '',
       reflect: p.reflect ?? '',

@@ -10,6 +10,7 @@ export type VideoJob = {
   sec: number;
   img: boolean; // 중등 이미지 모드
   refImage?: Buffer; // 주인공 카드(기준 그림)
+  extraRefs?: { name: string; png: Buffer }[]; // 이 장면에 나오는 등장인물 카드(2명까지)
   prevFrame?: Buffer; // 앞 장면의 마지막 화면(이어지게)
   srcVideo?: Buffer; // 그림체를 바꿀 학생 영상(mp4, 10초 이하)
   aspect?: '16:9' | '9:16'; // 가로 또는 세로 영상
@@ -152,7 +153,8 @@ export const omniProvider: VideoProvider = {
     const T0 = Date.now();
     const END = T0 + 26 * 60_000;
     const upTo = (min: number) => Math.min(END, Date.now() + min * 60_000);
-    if (!job.editEn && (job.refImage || job.prevFrame)) {
+    const extras = (job.extraRefs ?? []).slice(0, 2);
+    if (!job.editEn && (job.refImage || job.prevFrame || extras.length)) {
       // ⓪ 가장 먼저: 주인공 카드(와 앞 장면 마지막 화면)를 "참고 그림"으로 주고 영상을 만든다(reference_to_video).
       //    모델이 카드의 얼굴·옷·그림체를 직접 보고 그려서 장면마다 주인공·그림체가 가장 잘 맞는다.
       try {
@@ -162,8 +164,14 @@ export const omniProvider: VideoProvider = {
           notes.push(`The main character is <IMAGE_REF_${content.length}>: keep EXACTLY this character in every frame (same face, hair, body, clothes and colors) and draw the whole video in exactly the same art style, line work and colors as <IMAGE_REF_${content.length}>.`);
           content.push({ type: 'image', data: job.refImage.toString('base64'), mime_type: 'image/png' });
         }
+        // 참고 그림은 3장까지만(많으면 AI가 헷갈린다). 앞 장면 화면(배경·옷이 이어지게)을 등장인물보다 먼저 챙긴다
+        const room = 3 - content.length - (job.prevFrame ? 1 : 0);
+        for (const x of extras.slice(0, Math.max(0, room))) {
+          notes.push(`<IMAGE_REF_${content.length}> is the character "${x.name}": whenever "${x.name}" appears, draw exactly this character (same face, hair, body, clothes) in the same art style.`);
+          content.push({ type: 'image', data: x.png.toString('base64'), mime_type: 'image/png' });
+        }
         if (job.prevFrame) {
-          notes.push(`<IMAGE_REF_${content.length}> is the last moment of the previous scene of the same story: continue naturally from it with the same art style, color palette, lighting and setting look (change the place only if the scene says so).`);
+          notes.push(`<IMAGE_REF_${content.length}> is the last moment of the previous scene of the same story: continue directly from it — same background and place, same art style, color palette and lighting, and every character keeps exactly the same face, hairstyle and clothes as in this image (change the place only if the scene clearly says so).`);
           content.push({ type: 'image', data: job.prevFrame.toString('base64'), mime_type: 'image/png' });
         }
         content.push({ type: 'text', text: `${notes.join(' ')} Use the given images as references for video generation; they are not literal first frames. One single continuous shot.\n${job.promptEn}` });
@@ -191,6 +199,10 @@ export const omniProvider: VideoProvider = {
         if (job.refImage) {
           parts.push({ inlineData: { mimeType: 'image/png', data: job.refImage.toString('base64') } });
           notes.push(`Image ${parts.length} is the main character reference: keep exactly this character (same face, hair, body, clothes and colors) and exactly the same art style.`);
+        }
+        for (const x of extras) {
+          parts.push({ inlineData: { mimeType: 'image/png', data: x.png.toString('base64') } });
+          notes.push(`Image ${parts.length} is the character "${x.name}": if "${x.name}" is in the scene, draw exactly this character.`);
         }
         if (job.prevFrame) {
           parts.push({ inlineData: { mimeType: 'image/png', data: job.prevFrame.toString('base64') } });
