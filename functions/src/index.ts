@@ -752,6 +752,7 @@ export const styleSamples = onCall({ timeoutSeconds: 300, memory: '512MiB' }, as
     return true;
   });
   if (!got) return { urls, pending: true };
+  const errors: Record<string, string> = {};
   await Promise.all(
     missing.map(async (k) => {
       try {
@@ -761,12 +762,13 @@ export const styleSamples = onCall({ timeoutSeconds: 300, memory: '512MiB' }, as
         await getStorage().bucket().file(path).save(img.bytes, { contentType: img.mimeType, metadata: { metadata: { firebaseStorageDownloadTokens: token, aiGenerated: 'true' } } });
         urls[k] = mediaUrl(path, token);
       } catch (e: any) {
+        errors[k] = String(e?.message ?? e).slice(0, 120);
         logger.warn('그림체 예시 그리기 실패', { style: k, err: String(e?.message ?? e).slice(0, 200) });
       }
     }),
   );
   await ref.set({ urls, lockAt: FieldValue.delete() }, { merge: true });
-  return { urls, pending: keys.some((k) => !urls[k]) };
+  return { urls, pending: keys.some((k) => !urls[k]), errors };
 });
 
 // ───────── 학생: 등장인물 카드 (가족·친구 등, 4명까지) ─────────

@@ -1086,10 +1086,13 @@ const STYLE_NOTE: Record<string, string> = {
 let sampleCache: Record<string, string> | null = null;
 function StylePicker({ value, onPick }: { value: string; onPick: (st: string) => void }) {
   const [urls, setUrls] = useState<Record<string, string>>(sampleCache ?? {});
+  const [err, setErr] = useState('');
+  const [round, setRound] = useState(0);
   useEffect(() => {
     if (sampleCache && STYLES.every((k) => sampleCache![k])) return;
     let stop = false;
     let n = 0;
+    setErr('');
     const load = () =>
       api
         .styleSamples({})
@@ -1097,15 +1100,18 @@ function StylePicker({ value, onPick }: { value: string; onPick: (st: string) =>
           if (stop) return;
           sampleCache = r.urls;
           setUrls(r.urls);
+          const e = Object.values(r.errors ?? {})[0];
+          if (e) setErr(e);
           // 아직 그리는 중이면 잠시 뒤 다시 확인한다(몇 번만)
-          if (r.pending && n++ < 6) window.setTimeout(load, 20_000);
+          if (r.pending && !e && n++ < 6) window.setTimeout(load, 15_000);
         })
-        .catch(() => {});
+        .catch((e) => !stop && setErr(errText(e)));
     load();
     return () => {
       stop = true;
     };
-  }, []);
+  }, [round]);
+  const missing = STYLES.some((k) => !urls[k]);
   return (
     <div className="style-pick" role="radiogroup" aria-label="그림체">
       {STYLES.map((st) => (
@@ -1115,6 +1121,14 @@ function StylePicker({ value, onPick }: { value: string; onPick: (st: string) =>
           <span className="tiny muted">{STYLE_NOTE[st]}</span>
         </button>
       ))}
+      {missing && err && (
+        <p className="tiny danger-text" style={{ gridColumn: '1 / -1' }}>
+          예시 그림을 그리지 못했어요({err}). 그림 없이 이름만 보고 골라도 돼요.{' '}
+          <button type="button" className="link" onClick={() => setRound((x) => x + 1)}>
+            다시 그리기
+          </button>
+        </p>
+      )}
     </div>
   );
 }
