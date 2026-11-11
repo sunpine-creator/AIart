@@ -1728,7 +1728,31 @@ function GenCard({ g, scene, isLatestGood, canPick, finalCost }: { g: Gen; scene
                     아니에요
                   </button>
                 </div>
-                {(fit === 'no' || fit === 'partial') && (
+                {(fit === 'no' || fit === 'partial') && !judged && isLatestGood && (scene.edits < MAX_EDITS || s.cls.ended) && (
+                  // 한 번만 쓰면 된다: 고칠 점을 쓰고 누르면 판단 저장 + 고쳐서 다시 만들기를 함께 한다
+                  <div className="edit-row">
+                    <input
+                      id={`fix-${g.id}`}
+                      aria-label="어떻게 고칠까요"
+                      placeholder="무엇이 달랐고 어떻게 고칠지 써요. 예: 우산이 빨간색이에요. 노란색으로 바꿔 줘"
+                      value={edit}
+                      onChange={(e) => setEdit(e.target.value)}
+                    />
+                    <button
+                      className="btn ai"
+                      disabled={edit.trim().length < 2 || s.cls.paused || s.sending.includes(scene.id)}
+                      onClick={() => {
+                        const t = edit.trim();
+                        d({ t: 'judge', genId: g.id, judgement: { fit: 'no', reason: t } });
+                        d({ t: 'request', sceneId: scene.id, kind: 'edit', editText: t, parentId: g.id });
+                        setEdit('');
+                      }}
+                    >
+                      {s.cls.ended ? '고쳐서 다시 만들기' : '고쳐서 다시 만들기 (한 번만 할 수 있어요)'}
+                    </button>
+                  </div>
+                )}
+                {(fit === 'no' || fit === 'partial') && !(!judged && isLatestGood && (scene.edits < MAX_EDITS || s.cls.ended)) && (
                   <>
                     <input
                       id={`reason-${g.id}`}

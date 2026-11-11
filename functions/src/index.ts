@@ -336,7 +336,11 @@ async function requestGenerationImpl(req: CallableRequest) {
     if (!parentId) throw new HttpsError('invalid-argument', '어떤 결과를 고칠지 알 수 없어요.');
     parent = (await db.doc(`generations/${parentId}`).get()).data();
     if (!parent || parent.classId !== classId || parent.no !== no || parent.status !== 'succeeded') throw new HttpsError('failed-precondition', '고칠 원본을 찾을 수 없어요.');
-    if (!parent.judgement) throw new HttpsError('failed-precondition', '먼저 결과가 의도와 맞는지 판단을 저장해 주세요.');
+    if (!parent.judgement) {
+      // 고칠 점을 쓰고 바로 "고쳐서 다시 만들기"를 누르면 그 글을 판단(아니에요)으로 함께 저장한다
+      if (kind === 'edit' && editText) await db.doc(`generations/${parentId}`).update({ judgement: { fit: 'no', reason: String(editText).slice(0, 200) } });
+      else throw new HttpsError('failed-precondition', '먼저 결과가 의도와 맞는지 판단을 저장해 주세요.');
+    }
   }
   // 수업 중: 장면마다 영상은 2번까지(초안 1번 + 고치기 1번). 수업이 끝난 반은 하루 크레딧 안에서 자유롭게
   if (kind === 'edit' && !cls.ended) {
